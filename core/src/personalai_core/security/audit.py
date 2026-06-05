@@ -1,0 +1,52 @@
+"""Append-only audit log (THREAT-MODEL: auditability).
+
+Records security-relevant events (tool calls, egress decisions, approvals, model routing) as an
+append-only sequence. Event payloads are passed through :func:`redact` so secrets never land in
+the log. An optional file sink appends one JSON object per line (JSONL); entries are never
+modified or deleted in place.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from personalai_core.security.redaction import redact
+
+
+class AuditEvent(BaseModel):
+    """A single audit record. Immutable; the payload is stored already-redacted."""
+
+    model_config = ConfigDict(frozen=True)
+
+    type: str
+    actor: str | None = None
+    payload: Mapping[str, Any] = Field(default_factory=dict)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class AuditLog:
+    """An append-only audit log with an in-memory record and an optional JSONL file sink."""
+
+    def __init__(self, sink_path: Path | None = None) -> None:
+        self._entries: list[AuditEvent] = []
+        self._sink_path = sink_path
+
+    def append(
+        self, event_type: str, payload: Mapping[str, Any] | None = None, actor: str | None = None
+    ) -> AuditEvent:
+        """Append a redacted event. Returns the stored event."""
+        event = AuditEvent(type=event_type, actor=actor, payload=redact(payload or {}))
+        self._entries.append(event)
+        if self._sink_path is not None:
+            with self._sink_path.open("a", encoding="utf-8") as fh:
+                fh.write(event.model_dump_json() + "\n")
+        return event
+
+    def entries(self) -> tuple[AuditEvent, ...]:
+        """Return all recorded events in append order (read-only)."""
+        return tuple(self._entries)

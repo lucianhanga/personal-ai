@@ -25,9 +25,12 @@ _ENV_FIELDS = {
     "BIND_HOST": "bind_host",
     "BIND_PORT": "bind_port",
     "EGRESS_ENABLED": "egress_enabled",
+    "ALLOWED_EGRESS_HOSTS": "allowed_egress_hosts",
     "AUTH_TOKEN": "auth_token",
     "ALLOWED_ORIGINS": "allowed_origins",
 }
+
+_CSV_FIELDS = {"allowed_origins", "allowed_egress_hosts"}
 
 _TRUTHY = {"1", "true", "yes", "on"}
 _DEFAULT_ORIGINS = ("http://127.0.0.1", "http://localhost")
@@ -43,6 +46,10 @@ class CoreConfig(StrictModel):
     bind_host: str = Field(default="127.0.0.1", description="Loopback by default.")
     bind_port: int = Field(default=8765, ge=1, le=65535)
     egress_enabled: bool = Field(default=False, description="Network egress off by default.")
+    allowed_egress_hosts: tuple[str, ...] = Field(
+        default=(),
+        description="When egress is enabled, restrict to these hosts; empty means no restriction.",
+    )
     auth_token: str | None = Field(
         default=None, description="Bearer token required by protected routes; set via env."
     )
@@ -62,7 +69,7 @@ class CoreConfig(StrictModel):
                 values[field_name] = raw.strip().lower() in _TRUTHY
             elif field_name == "bind_port":
                 values[field_name] = int(raw)
-            elif field_name == "allowed_origins":
+            elif field_name in _CSV_FIELDS:
                 values[field_name] = tuple(o.strip() for o in raw.split(",") if o.strip())
             else:
                 values[field_name] = raw

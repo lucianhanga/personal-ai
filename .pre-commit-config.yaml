@@ -1,0 +1,21 @@
+# Local pre-commit hooks. Install once with: uv run pre-commit install
+# Hooks call the uv-managed (pinned) tools via `language: system`, so there are no external
+# hook-repo revisions to keep in sync. See docs/development/toolchain.md.
+repos:
+  - repo: local
+    hooks:
+      - id: detect-secrets
+        name: detect secrets
+        entry: uv run detect-secrets-hook --baseline .secrets.baseline
+        language: system
+        pass_filenames: true
+      - id: ruff
+        name: ruff lint
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]

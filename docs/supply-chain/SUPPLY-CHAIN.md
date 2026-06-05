@@ -9,7 +9,7 @@
 > [Dependency Policy](../policies/DEPENDENCY-POLICY.md). A generated SBOM (CycloneDX) is the
 > machine-readable companion to this human-readable register.
 
-- **Last reviewed:** 2026-06-05 (M0-9: cosign signing adopted)
+- **Last reviewed:** 2026-06-05 (M0-10: detect-secrets + pre-commit adopted)
 - **Status legend:** `planned` (vetted, not yet in code) · `adopted` (in the build) · `evaluating` · `rejected`
 - **Provenance note:** Licenses below are grounded in public sources cited in the architecture
   report. They MUST be re-verified against each project's `LICENSE` file at pin time (Phase 0).
@@ -108,6 +108,8 @@ supply chain (build integrity).
 | **esbuild** | Evan Wallace | MIT | Mature | adopted (M0-3, transitive via Vite/Vitest) | TS transform for tests | Build script approved in pnpm-workspace.yaml | — |
 | **pip-audit** | PyPA | Apache-2.0 | Mature | adopted (M0-8) | Python vulnerability scanning in CI | Queries PyPI advisory DB | Trivy, Grype |
 | **cyclonedx-bom** | CycloneDX (OWASP) | Apache-2.0 | Mature | adopted (M0-8) | Generates the CycloneDX SBOM | — | Syft |
+| **detect-secrets** | Yelp | Apache-2.0 | Mature | adopted (M0-10) | Secret scanning (pre-commit + CI) with a committed baseline | Baseline reviewed on change | gitleaks, trufflehog |
+| **pre-commit** | pre-commit (Anthony Sottile) | MIT | Mature | adopted (M0-10) | Local git hooks (secret scan, ruff) | Hooks call pinned uv tools | — |
 
 ---
 
