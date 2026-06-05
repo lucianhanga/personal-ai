@@ -1,0 +1,1 @@
+{ "tool": "fs.read", "version": "1.0.0", "required_permissions": [ { "type": "telepathy", "scope": "x" } ] }

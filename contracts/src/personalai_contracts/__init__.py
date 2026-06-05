@@ -6,8 +6,8 @@ schemas arrive in M0-3. In-memory reference fakes for every port live in
 ``personalai_contracts.testing`` for use in tests across packages.
 """
 
-from personalai_contracts import ports
+from personalai_contracts import ports, schemas
 
 __version__ = "0.0.0"
 
-__all__ = ["__version__", "ports"]
+__all__ = ["__version__", "ports", "schemas"]

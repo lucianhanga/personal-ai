@@ -1,0 +1,1 @@
+{ "tool": "fs.read", "version": "1.0.0", "args": { "path": "/w/x.txt" }, "required_permissions": [ { "type": "filesystem", "scope": "/w/*" } ] }

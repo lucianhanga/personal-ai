@@ -1,5 +1,9 @@
 # PersonalAI - pnpm workspace for the JS/TS surfaces (UI + browser extension).
 # Python packages are managed separately by uv (see pyproject.toml).
 packages:
+  - "packages/*"
   - "apps/ui"
   - "apps/extension"
+# esbuild (a vitest dependency) needs its post-install to place the platform binary.
+allowBuilds:
+  esbuild: true

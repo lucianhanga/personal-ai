@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [{ name = "Lucian Hanga" }]
-dependencies = []
+dependencies = ["pydantic>=2.7"]
 
 [build-system]
 requires = ["hatchling"]

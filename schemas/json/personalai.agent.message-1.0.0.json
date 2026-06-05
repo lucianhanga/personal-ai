@@ -1,0 +1,43 @@
+{
+  "additionalProperties": false,
+  "description": "A single typed message in an agent conversation/workflow.",
+  "properties": {
+    "from": {
+      "description": "Sender agent/component id.",
+      "title": "From",
+      "type": "string"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "description": "Schema-validated structured body.",
+      "title": "Payload",
+      "type": "object"
+    },
+    "schema_version": {
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "to": {
+      "description": "Recipient agent/component id.",
+      "title": "To",
+      "type": "string"
+    },
+    "type": {
+      "description": "Message type discriminator (e.g. 'plan', 'tool_call').",
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "from",
+    "to",
+    "type"
+  ],
+  "title": "AgentMessage",
+  "type": "object"
+}

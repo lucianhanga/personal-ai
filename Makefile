@@ -2,7 +2,7 @@
 # Python is managed by uv; JS by pnpm. See CONTRIBUTING.md.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup lint format typecheck test arch js-install js-lint check
+.PHONY: help setup lint format typecheck test arch schemas js-install js-typecheck js-test js-lint js check
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -27,10 +27,21 @@ test: ## Run Python tests with coverage
 arch: ## Enforce hexagonal dependency direction (import-linter)
 	uv run lint-imports
 
+schemas: ## Regenerate canonical JSON Schema artifacts (schemas/json)
+	uv run python scripts/generate_schemas.py
+
 js-install: ## Install JS workspace dependencies
 	pnpm install
 
-js-lint: ## Lint JS workspaces (placeholders until M0-6)
+js-typecheck: ## Typecheck JS/TS workspaces
+	pnpm -r --if-present typecheck
+
+js-test: ## Test JS/TS workspaces (Vitest)
+	pnpm -r --if-present test
+
+js-lint: ## Lint JS workspaces
 	pnpm -r --if-present lint
 
-check: lint typecheck test arch ## Run all Python checks (lint, types, tests, architecture)
+js: js-typecheck js-test js-lint ## Run all JS/TS checks
+
+check: lint typecheck test arch js ## Run all checks (Python + JS)
