@@ -17,6 +17,8 @@ Reference & development:
 - **[Structured-output schemas reference](./reference/structured-output-schemas.md)** — the M0-3
   schema backbone: strict/versioned models, the five contracts, the schema registry, the canonical
   JSON Schema + drift test, and the TS/Zod bindings kept aligned by shared fixtures.
+- **[Dependency injection & registries](./reference/dependency-injection.md)** — registries,
+  config-driven selection, the composition root, and how to register an adapter (M0-4).
 - **[Coding standards & conventions](./development/coding-standards.md)** — dependency direction,
   structured-output-first, typing, async, testing/coverage policy.
 - **[Toolchain & monorepo](./development/toolchain.md)** — uv + pnpm workspaces, Makefile targets,
