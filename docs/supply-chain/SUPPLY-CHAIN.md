@@ -9,7 +9,7 @@
 > [Dependency Policy](../policies/DEPENDENCY-POLICY.md). A generated SBOM (CycloneDX) is the
 > machine-readable companion to this human-readable register.
 
-- **Last reviewed:** 2026-06-05 (M0-10: detect-secrets + pre-commit adopted)
+- **Last reviewed:** 2026-06-05 (M0-6: React + Tauri UI; Playwright/Testing Library/jsdom)
 - **Status legend:** `planned` (vetted, not yet in code) · `adopted` (in the build) · `evaluating` · `rejected`
 - **Provenance note:** Licenses below are grounded in public sources cited in the architecture
   report. They MUST be re-verified against each project's `LICENSE` file at pin time (Phase 0).
@@ -67,10 +67,12 @@
 
 | Component | Maintainer / Org | License | Maturity | Status | Reason | Security notes | Alternatives |
 |---|---|---|---|---|---|---|---|
-| **Tauri** | Tauri Programme (Commons Conservancy) | MIT / Apache-2.0 | Mature (~70k★) | planned | Small, secure, capability-based desktop shell | Capability opt-in by default | Electron |
+| **Tauri** | Tauri Programme (Commons Conservancy) | MIT / Apache-2.0 | Mature (~70k★) | **adopted** (M0-6, scaffold) | Small, secure, capability-based desktop shell (ADR-0006) | Capability opt-in by default; built locally (no Rust in CI yet) | Electron |
 | **Electron** | OpenJS Foundation | MIT | Very mature | evaluating | Fallback if WebView issues block delivery | Larger attack surface (Node in renderer) | Tauri |
-| **React** | Meta | MIT | Very mature | evaluating | SPA option | Sanitize untrusted render | Svelte |
-| **Svelte** | Svelte (Rich Harris et al.) | MIT | Mature | evaluating | SPA option (lean) | Sanitize untrusted render | React |
+| **React** | Meta | MIT | Very mature | **adopted** (M0-6) | SPA framework (ADR-0006) | Sanitize untrusted render; strict CSP | Svelte |
+| **react-dom** | Meta | MIT | Very mature | adopted (M0-6) | React DOM renderer | — | — |
+| **Svelte** | Svelte (Rich Harris et al.) | MIT | Mature | rejected | Considered for the SPA; React chosen (ADR-0006) | — | React |
+| **@vitejs/plugin-react** | Vite team (VoidZero) | MIT | Mature | adopted (M0-6) | React support for Vite | — | — |
 
 ## 6. Tooling: protocol, sandbox, security, observability
 
@@ -110,6 +112,9 @@ supply chain (build integrity).
 | **cyclonedx-bom** | CycloneDX (OWASP) | Apache-2.0 | Mature | adopted (M0-8) | Generates the CycloneDX SBOM | — | Syft |
 | **detect-secrets** | Yelp | Apache-2.0 | Mature | adopted (M0-10) | Secret scanning (pre-commit + CI) with a committed baseline | Baseline reviewed on change | gitleaks, trufflehog |
 | **pre-commit** | pre-commit (Anthony Sottile) | MIT | Mature | adopted (M0-10) | Local git hooks (secret scan, ruff) | Hooks call pinned uv tools | — |
+| **Playwright** | Microsoft | Apache-2.0 | Mature | adopted (M0-6) | UI e2e (Chromium) | Browsers pinned via lockfile; installed in CI | Cypress |
+| **Testing Library (react, jest-dom)** | Testing Library (Kent C. Dodds et al.) | MIT | Mature | adopted (M0-6) | React component tests | — | — |
+| **jsdom** | jsdom | MIT | Mature | adopted (M0-6) | DOM env for Vitest | — | happy-dom |
 
 ---
 

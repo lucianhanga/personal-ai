@@ -39,12 +39,12 @@ The dependency direction between members is enforced by import-linter — see
 
 ## JS/TS workspace (pnpm)
 
-A separate **pnpm workspace** holds the frontend apps. Per the planned layout
-([§22.3](../architecture/PersonalAI-Architecture-Research.md#223-suggested-repository-shape-isolation-by-package))
-these are `apps/ui` (Tauri + SPA) and `apps/extension` (MV3 browser extension). They are
-**placeholders until M0-6** — the CI lint step runs `pnpm -r --if-present lint`, which is a no-op
-until each workspace defines a `lint` script. The pnpm version is read from the `packageManager`
-field in `package.json`.
+A separate **pnpm workspace** holds the TS packages and frontend apps: `packages/contracts`
+(Zod bindings, M0-3), `apps/ui` (**React SPA + Tauri shell**, M0-6), and `apps/extension`
+(MV3 browser extension, **placeholder until M9**). `apps/ui` has real `typecheck`/`test`/`build`
+scripts plus `test:e2e` (Playwright) and `tauri` (desktop, local-only). The pnpm version is read
+from the `packageManager` field in `package.json`. The Tauri native build needs Rust and is not
+run in CI (see [apps/ui/src-tauri/README.md](../../apps/ui/src-tauri/README.md)).
 
 ## Makefile targets
 
@@ -75,7 +75,8 @@ cancellation per ref and `contents: read` permissions. Three jobs run in paralle
 |---|---|---|
 | `repo-health` | Repository health | Asserts the required governance files exist (README, LICENSE, SECURITY, CONTRIBUTING, CHANGELOG, the architecture report, threat model, dependency policy, supply-chain register, onboarding). Fails if any are missing. |
 | `python` | Python (lint, types, tests, architecture) | Install uv -> Python 3.12 -> `uv sync --all-packages` -> `ruff check .` -> `ruff format --check .` -> `mypy contracts core apps/backend` -> `lint-imports` -> `pytest` -> upload `coverage.xml` artifact. |
-| `js` | JS/TS (install, lint) | pnpm + Node 22 -> `pnpm install` -> `pnpm -r --if-present typecheck` -> `... test` -> `... lint`. |
+| `js` | JS/TS (install, lint) | pnpm + Node 22 -> `pnpm install` -> `pnpm -r --if-present typecheck` -> `... test` (Vitest: contracts + UI) -> `... lint`. |
+| `ui-e2e` | UI e2e (Playwright) | Install Chromium (`--with-deps`) -> `pnpm --filter @personalai/ui test:e2e` (builds + previews the SPA, drives Chromium). |
 | `supply-chain` | Supply chain (SBOM, audit, drift) | Generate CycloneDX SBOM (artifact) -> `pip-audit` -> `pnpm audit --audit-level high` -> drift check (PR only). |
 | `secret-scan` | Secret scan (detect-secrets) | Scans all tracked files against `.secrets.baseline`; fails on a secret not in the baseline (`scripts/scan_secrets.sh`). |
 | `signing-smoke` | Signing smoke (cosign) | Install cosign -> sign + verify a test artifact offline (`scripts/signing_smoke.sh`). The real keyless release pipeline is `.github/workflows/release.yml` (see [releasing.md](./releasing.md)). |
