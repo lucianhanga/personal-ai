@@ -77,6 +77,7 @@ cancellation per ref and `contents: read` permissions. Three jobs run in paralle
 | `python` | Python (lint, types, tests, architecture) | Install uv -> Python 3.12 -> `uv sync --all-packages` -> `ruff check .` -> `ruff format --check .` -> `mypy contracts core apps/backend` -> `lint-imports` -> `pytest` -> upload `coverage.xml` artifact. |
 | `js` | JS/TS (install, lint) | pnpm + Node 22 -> `pnpm install` -> `pnpm -r --if-present typecheck` -> `... test` -> `... lint`. |
 | `supply-chain` | Supply chain (SBOM, audit, drift) | Generate CycloneDX SBOM (artifact) -> `pip-audit` -> `pnpm audit --audit-level high` -> drift check (PR only). |
+| `signing-smoke` | Signing smoke (cosign) | Install cosign -> sign + verify a test artifact offline (`scripts/signing_smoke.sh`). The real keyless release pipeline is `.github/workflows/release.yml` (see [releasing.md](./releasing.md)). |
 
 The first three jobs (`Repository health`, `Python ...`, `JS/TS ...`) are **required status
 checks** on `main` (M0-7). The `supply-chain` job runs on every PR/push and fails visibly on

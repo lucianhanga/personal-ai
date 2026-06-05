@@ -1,0 +1,81 @@
+name: Release
+
+# Builds the Python packages, generates an SBOM, and signs everything with Sigstore/cosign
+# (keyless, via the workflow's OIDC identity). On a published release the signed artifacts and
+# their signatures/certificates are attached to the release. See docs/development/releasing.md.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write # upload release assets
+  id-token: write # keyless signing (Sigstore OIDC)
+
+jobs:
+  build-sign:
+    name: Build, SBOM, sign, verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Build distributions
+        run: |
+          uv build --all-packages --out-dir dist
+          ls -l dist
+
+      - name: Generate CycloneDX SBOM
+        run: |
+          uv sync --all-packages
+          bash scripts/generate_sbom.sh
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign and verify artifacts (keyless)
+        env:
+          IDENTITY_REGEXP: "https://github.com/${{ github.repository }}/.*"
+          OIDC_ISSUER: "https://token.actions.githubusercontent.com"
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for f in dist/* sbom/python.cdx.json; do
+            echo "signing $f"
+            cosign sign-blob --yes "$f" \
+              --output-signature "$f.sig" \
+              --output-certificate "$f.crt"
+            cosign verify-blob "$f" \
+              --signature "$f.sig" \
+              --certificate "$f.crt" \
+              --certificate-identity-regexp "$IDENTITY_REGEXP" \
+              --certificate-oidc-issuer "$OIDC_ISSUER"
+          done
+
+      - name: Upload signed artifacts to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            dist/* sbom/python.cdx.json sbom/python.cdx.json.sig sbom/python.cdx.json.crt \
+            --clobber
+
+      - name: Upload artifacts (workflow_dispatch dry-run)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-artifacts
+          path: |
+            dist/**
+            sbom/python.cdx.json*
+          retention-days: 7

@@ -25,6 +25,8 @@ Reference & development:
   structured-output-first, typing, async, testing/coverage policy.
 - **[Toolchain & monorepo](./development/toolchain.md)** — uv + pnpm workspaces, Makefile targets,
   and CI jobs.
+- **[Releasing & signing](./development/releasing.md)** — Sigstore/cosign signing, SBOM attachment,
+  verification, and the reproducible-build note (M0-9).
 
 Policies & supply chain:
 
