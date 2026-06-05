@@ -33,6 +33,12 @@ npm-debug.log*
 pnpm-debug.log*
 yarn-error.log*
 .next/
+# Playwright / Vite test + build artifacts
+test-results/
+playwright-report/
+.playwright/
+blob-report/
+*.tsbuildinfo
 .svelte-kit/
 coverage/
 *.tsbuildinfo
