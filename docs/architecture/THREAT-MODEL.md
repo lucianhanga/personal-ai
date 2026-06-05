@@ -49,3 +49,23 @@ model outputs, tool results, and MCP servers (local and remote) may all be adver
   untrusted tools is weaker and needs design attention (open question §20).
 - MCP ecosystem is young and CVE-prone; verification overhead is mandatory.
 - LLM-as-judge is not a security control (it shares the worker's injection exposure).
+
+### 6.1 M0-10 baseline — known limitations (from the security review)
+
+The M0-10 primitives are a foundation; these gaps are deliberate and tracked:
+
+- **Egress guard is a string/host check only.** `assert_egress_allowed` fails closed by default
+  and enforces a host allowlist, but does not defend against IP-literal hosts, loopback/SSRF
+  tricks, DNS rebinding, or redirect-following. Robust egress enforcement belongs to the
+  **Tool/MCP gateway (M4, T3 boundary)**.
+- **Redaction is key-name based.** Secrets embedded in free-text values or URLs under innocuous
+  keys are not yet masked; value-level masking (JWT/AWS/bearer/basic-auth patterns) is deferred to
+  **M1**. Callers must not place raw secrets into free-text payload fields.
+- **Audit log immutability is in-process only** (open mode `a`, owner-only `0o600`, no external
+  tamper-evidence). Hash-chaining / append-only OS attributes are deferred to **M1**. No
+  multi-writer locking yet (single-writer assumption).
+- **API origin allowlist** permits requests with no `Origin` header (deliberate, for loopback CLI
+  clients); the bearer token is the real control. A non-loopback bind without an auth token is
+  refused at startup. CSRF protection beyond this is unnecessary while loopback-only.
+- **Release signature verification** uses a repo-scoped identity regexp; tightening to the exact
+  release workflow/tag is deferred to the hardening milestone (M11).

@@ -2,7 +2,7 @@
 # Python is managed by uv; JS by pnpm. See CONTRIBUTING.md.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup lint format typecheck test arch schemas run-backend sbom audit drift signing-smoke js-install js-typecheck js-test js-lint js check
+.PHONY: help setup lint format typecheck test arch schemas run-backend sbom audit drift secrets hooks signing-smoke js-install js-typecheck js-test js-lint js check
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -42,6 +42,12 @@ audit: ## Vulnerability scan (pip-audit + pnpm audit, blocks on high/critical)
 
 drift: ## Fail if dependency manifests changed without updating SUPPLY-CHAIN.md
 	bash scripts/check_supply_chain_drift.sh
+
+secrets: ## Scan tracked files for secrets (detect-secrets)
+	bash scripts/scan_secrets.sh
+
+hooks: ## Install git pre-commit hooks
+	uv run pre-commit install
 
 signing-smoke: ## Sign + verify a test artifact with cosign (requires cosign on PATH)
 	bash scripts/signing_smoke.sh

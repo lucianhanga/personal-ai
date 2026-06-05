@@ -56,9 +56,18 @@ def _require_token(request: Request, authorization: str | None = Header(default=
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token")
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
 def create_app(boot: Bootstrap | None = None) -> FastAPI:
     """Build the FastAPI app from the assembled wiring."""
     boot = boot or bootstrap()
+    # Refuse to expose a non-loopback bind without an auth token (THREAT-MODEL: fail-closed).
+    if boot.config.bind_host not in _LOOPBACK_HOSTS and not boot.config.auth_token:
+        raise RuntimeError(
+            f"refusing to bind non-loopback host {boot.config.bind_host!r} without an auth token; "
+            "set PERSONALAI_AUTH_TOKEN or bind to loopback"
+        )
     app = FastAPI(title="PersonalAI Backend", version=__version__)
     app.state.bootstrap = boot
     app.state.config = boot.config

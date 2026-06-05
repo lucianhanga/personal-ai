@@ -179,6 +179,27 @@ jobs:
           git fetch --no-tags origin "${{ github.base_ref }}"
           bash scripts/check_supply_chain_drift.sh "origin/${{ github.base_ref }}"
 
+  secret-scan:
+    name: Secret scan (detect-secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-packages
+
+      - name: Scan tracked files for secrets
+        run: bash scripts/scan_secrets.sh
+
   signing-smoke:
     name: Signing smoke (cosign)
     runs-on: ubuntu-latest
