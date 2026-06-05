@@ -9,7 +9,7 @@
 > [Dependency Policy](../policies/DEPENDENCY-POLICY.md). A generated SBOM (CycloneDX) is the
 > machine-readable companion to this human-readable register.
 
-- **Last reviewed:** 2026-06-05 (M0-3: pydantic adopted; zod/typescript/vitest added)
+- **Last reviewed:** 2026-06-05 (M0-8: SBOM + scanning tooling; vitest bumped to >=4.1.0)
 - **Status legend:** `planned` (vetted, not yet in code) · `adopted` (in the build) · `evaluating` · `rejected`
 - **Provenance note:** Licenses below are grounded in public sources cited in the architecture
   report. They MUST be re-verified against each project's `LICENSE` file at pin time (Phase 0).
@@ -102,8 +102,11 @@ supply chain (build integrity).
 | **hatchling** | PyPA (Hatch) | MIT | Mature | adopted (M0-1) | Build backend | — | setuptools, flit |
 | **pnpm** | pnpm (OpenJS-adjacent) | MIT | Mature | adopted (M0-1) | JS workspaces, strict isolation | Lockfile committed; approve build scripts explicitly | npm, yarn |
 | **TypeScript** | Microsoft | Apache-2.0 | Very mature | adopted (M0-3) | Typed TS contracts/UI | — | — |
-| **Vitest** | Vitest team (VoidZero) | MIT | Mature | adopted (M0-3) | TS unit tests | — | Jest |
-| **esbuild** | Evan Wallace | MIT | Mature | adopted (M0-3, transitive via Vitest) | TS transform for tests | Build script approved in pnpm-workspace.yaml | — |
+| **Vitest** | Vitest team (VoidZero) | MIT | Mature | adopted (M0-3, `>=4.1.0`) | TS unit tests | Pinned `>=4.1.0` to clear GHSA-5xrq-8626-4rwp (UI-server RCE) | Jest |
+| **Vite** | Vite team (VoidZero) | MIT | Mature | adopted (M0-8, via Vitest 4) | Build/test toolchain for Vitest 4 | — | — |
+| **esbuild** | Evan Wallace | MIT | Mature | adopted (M0-3, transitive via Vite/Vitest) | TS transform for tests | Build script approved in pnpm-workspace.yaml | — |
+| **pip-audit** | PyPA | Apache-2.0 | Mature | adopted (M0-8) | Python vulnerability scanning in CI | Queries PyPI advisory DB | Trivy, Grype |
+| **cyclonedx-bom** | CycloneDX (OWASP) | Apache-2.0 | Mature | adopted (M0-8) | Generates the CycloneDX SBOM | — | Syft |
 
 ---
 

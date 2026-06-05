@@ -123,5 +123,60 @@ jobs:
       - name: Lint workspaces (placeholders until M0-6)
         run: pnpm -r --if-present lint
 
-  # NOTE: SBOM generation, dependency vulnerability scanning, and supply-chain drift
-  # checks are added in M0-8; release signing in M0-9. See docs/policies/DEPENDENCY-POLICY.md.
+  supply-chain:
+    name: Supply chain (SBOM, audit, drift)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-packages
+
+      - name: Generate CycloneDX SBOM
+        run: bash scripts/generate_sbom.sh
+
+      - name: Upload SBOM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-sbom
+          path: sbom/python.cdx.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Python vulnerability audit (pip-audit)
+        run: uv run pip-audit
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install JS workspace
+        run: pnpm install --no-frozen-lockfile
+
+      - name: JS vulnerability audit (pnpm audit)
+        run: pnpm audit --audit-level high
+
+      - name: Supply-chain drift check (PR only)
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          bash scripts/check_supply_chain_drift.sh "origin/${{ github.base_ref }}"
+
+  # NOTE: release signing (Sigstore/cosign) is added in M0-9. See docs/policies/DEPENDENCY-POLICY.md.

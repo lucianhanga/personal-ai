@@ -2,7 +2,7 @@
 # Python is managed by uv; JS by pnpm. See CONTRIBUTING.md.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup lint format typecheck test arch schemas run-backend js-install js-typecheck js-test js-lint js check
+.PHONY: help setup lint format typecheck test arch schemas run-backend sbom audit drift js-install js-typecheck js-test js-lint js check
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -32,6 +32,16 @@ schemas: ## Regenerate canonical JSON Schema artifacts (schemas/json)
 
 run-backend: ## Run the loopback backend (set PERSONALAI_AUTH_TOKEN for protected routes)
 	uv run python -m personalai_backend
+
+sbom: ## Generate a CycloneDX SBOM of runtime deps (sbom/python.cdx.json)
+	bash scripts/generate_sbom.sh
+
+audit: ## Vulnerability scan (pip-audit + pnpm audit, blocks on high/critical)
+	uv run pip-audit
+	pnpm audit --audit-level high
+
+drift: ## Fail if dependency manifests changed without updating SUPPLY-CHAIN.md
+	bash scripts/check_supply_chain_drift.sh
 
 js-install: ## Install JS workspace dependencies
 	pnpm install
