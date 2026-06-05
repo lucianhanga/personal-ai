@@ -16,13 +16,22 @@ class EgressBlockedError(Exception):
 
 
 def assert_egress_allowed(config: CoreConfig, host: str | None = None) -> None:
-    """Raise :class:`EgressBlockedError` unless egress is enabled (and host allow-listed)."""
+    """Raise :class:`EgressBlockedError` unless egress is enabled (and host allow-listed).
+
+    Fail-closed: if an allowlist is configured, a request with an unknown host (``None``) is
+    refused, and host comparison is case-insensitive (DNS is case-insensitive).
+    """
     if not config.egress_enabled:
         raise EgressBlockedError(
             f"network egress is disabled (attempted host: {host or 'unknown'}); "
             "enable PERSONALAI_EGRESS_ENABLED to allow outbound calls"
         )
-    if host is not None and config.allowed_egress_hosts and host not in config.allowed_egress_hosts:
+    allowlist = config.allowed_egress_hosts
+    if not allowlist:
+        return  # egress enabled, no host restriction
+    if host is None:
         raise EgressBlockedError(
-            f"host {host!r} is not in the egress allowlist {tuple(config.allowed_egress_hosts)}"
+            "an egress allowlist is configured but no host was provided; refusing (fail-closed)"
         )
+    if host.strip().lower() not in {h.strip().lower() for h in allowlist}:
+        raise EgressBlockedError(f"host {host!r} is not in the egress allowlist {tuple(allowlist)}")

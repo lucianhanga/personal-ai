@@ -8,6 +8,7 @@ modified or deleted in place.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,6 +36,11 @@ class AuditLog:
     def __init__(self, sink_path: Path | None = None) -> None:
         self._entries: list[AuditEvent] = []
         self._sink_path = sink_path
+        if sink_path is not None:
+            # Create the sink with owner-only perms (audit data may reference sensitive context).
+            sink_path.parent.mkdir(parents=True, exist_ok=True)
+            if not sink_path.exists():
+                os.close(os.open(sink_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600))
 
     def append(
         self, event_type: str, payload: Mapping[str, Any] | None = None, actor: str | None = None

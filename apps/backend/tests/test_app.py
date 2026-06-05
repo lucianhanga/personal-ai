@@ -65,6 +65,13 @@ def test_auth_unconfigured_is_fail_closed() -> None:
     assert client.get("/api/status").status_code == 503
 
 
+def test_non_loopback_bind_requires_auth_token() -> None:
+    # Refuse to expose a non-loopback host without an auth token (fail-closed startup guard).
+    config = CoreConfig(bind_host="0.0.0.0", auth_token=None)  # noqa: S104 - testing the guard
+    with pytest.raises(RuntimeError, match="non-loopback host"):
+        create_app(bootstrap(config=config))
+
+
 def test_entrypoint_module_importable() -> None:
     # `python -m personalai_backend` entrypoint exists and is callable (not invoked here).
     import personalai_backend.__main__ as entry
