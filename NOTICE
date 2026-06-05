@@ -1,0 +1,9 @@
+PersonalAI
+Copyright 2026 Lucian Hanga
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This repository currently contains documentation and architecture only. Third-party
+components that the project plans to depend on, together with their maintainers and
+licenses, are inventoried in docs/supply-chain/SUPPLY-CHAIN.md. Their respective licenses
+and notices will be reproduced here as those components are adopted into the build.

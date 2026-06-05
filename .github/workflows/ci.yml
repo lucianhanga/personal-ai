@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repo-health:
+    name: Repository health
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify required governance files exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            "README.md"
+            "LICENSE"
+            "SECURITY.md"
+            "CONTRIBUTING.md"
+            "CHANGELOG.md"
+            "docs/architecture/PersonalAI-Architecture-Research.md"
+            "docs/architecture/THREAT-MODEL.md"
+            "docs/policies/DEPENDENCY-POLICY.md"
+            "docs/supply-chain/SUPPLY-CHAIN.md"
+            "docs/ONBOARDING.md"
+          )
+          missing=0
+          for f in "${required[@]}"; do
+            if [[ -f "$f" ]]; then
+              echo "  ok   $f"
+            else
+              echo "  MISS $f"
+              missing=1
+            fi
+          done
+          if [[ "$missing" -ne 0 ]]; then
+            echo "::error::One or more required governance files are missing."
+            exit 1
+          fi
+          echo "All required governance files present."
+
+  # NOTE: Phase 0 is documentation-only. Language-specific jobs (lint, typecheck,
+  # unit tests, SBOM generation, and vulnerability scanning) are added at milestone
+  # M0 when application code and manifests land. See docs/policies/DEPENDENCY-POLICY.md.

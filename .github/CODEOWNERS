@@ -1,0 +1,9 @@
+# Default owner for everything in this repo.
+# As the team grows, add per-path owners (e.g. /apps/extension/ @someone).
+*       @lucianhanga
+
+# Security-sensitive areas (explicit ownership)
+/SECURITY.md                @lucianhanga
+/docs/policies/             @lucianhanga
+/docs/supply-chain/         @lucianhanga
+/docs/architecture/         @lucianhanga

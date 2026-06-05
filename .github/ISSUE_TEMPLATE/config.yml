@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/lucianhanga/personal-ai/security/advisories/new
+    about: Report security vulnerabilities privately. Do NOT open a public issue.
+  - name: Architecture report
+    url: https://github.com/lucianhanga/personal-ai/blob/main/docs/architecture/PersonalAI-Architecture-Research.md
+    about: Read the high-level architecture before proposing large changes.
