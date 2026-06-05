@@ -9,7 +9,7 @@
 > [Dependency Policy](../policies/DEPENDENCY-POLICY.md). A generated SBOM (CycloneDX) is the
 > machine-readable companion to this human-readable register.
 
-- **Last reviewed:** 2026-06-05 (M0-8: SBOM + scanning tooling; vitest bumped to >=4.1.0)
+- **Last reviewed:** 2026-06-05 (M0-9: cosign signing adopted)
 - **Status legend:** `planned` (vetted, not yet in code) · `adopted` (in the build) · `evaluating` · `rejected`
 - **Provenance note:** Licenses below are grounded in public sources cited in the architecture
   report. They MUST be re-verified against each project's `LICENSE` file at pin time (Phase 0).
@@ -85,7 +85,8 @@
 | **CycloneDX / SPDX** | OWASP / Linux Foundation | Apache-2.0 / CC | Standard | planned | SBOM formats | — | — |
 | **Trivy** | Aqua Security | Apache-2.0 | Mature | planned | Vulnerability & SBOM scanning | — | Grype |
 | **Grype** | Anchore | Apache-2.0 | Mature | evaluating | Vulnerability scanning | — | Trivy |
-| **Sigstore / cosign** | OpenSSF / Linux Foundation | Apache-2.0 | Mature | planned | Release signing | — | GPG signing |
+| **Sigstore / cosign** | OpenSSF / Linux Foundation | Apache-2.0 | Mature | **adopted** (M0-9) | Keyless release signing + CI signing smoke | Keyless via GitHub OIDC; verify on consume | GPG signing |
+| **cosign-installer (action)** | sigstore | Apache-2.0 | Mature | adopted (M0-9) | Installs cosign in CI | Pinned to major `@v3` | manual install |
 
 ## 7. Build & development tooling (adopted)
 

@@ -179,4 +179,20 @@ jobs:
           git fetch --no-tags origin "${{ github.base_ref }}"
           bash scripts/check_supply_chain_drift.sh "origin/${{ github.base_ref }}"
 
-  # NOTE: release signing (Sigstore/cosign) is added in M0-9. See docs/policies/DEPENDENCY-POLICY.md.
+  signing-smoke:
+    name: Signing smoke (cosign)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      # Offline ephemeral-key sign + verify proves the signing toolchain works in CI without
+      # touching the public Sigstore transparency log. Real releases use keyless signing
+      # (see .github/workflows/release.yml and docs/development/releasing.md).
+      - name: Sign and verify a test artifact (offline)
+        run: bash scripts/signing_smoke.sh
+
+  # NOTE: real release signing + SBOM attachment runs in .github/workflows/release.yml (M0-9).
