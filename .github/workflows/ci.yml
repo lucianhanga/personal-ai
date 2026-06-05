@@ -85,6 +85,15 @@ jobs:
       - name: Tests + coverage
         run: uv run pytest
 
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-coverage
+          path: coverage.xml
+          if-no-files-found: warn
+          retention-days: 14
+
   js:
     name: JS/TS (install, lint)
     runs-on: ubuntu-latest

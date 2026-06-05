@@ -21,7 +21,8 @@ Thanks for working on PersonalAI. This repo uses **GitHub flow** with a protecte
    Types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `build`, `ci`, `perf`, `security`.
    Example: `feat(contracts): add ModelProvider port and capability schema`.
 4. **Open a PR** into `main`. Fill in the PR template. Link the issue (`Closes #NN`).
-5. **CI must pass.** `main` is protected: no direct pushes, no force-push, no deletion.
+5. **CI must pass.** `main` is protected: no direct pushes, no force-push, no deletion, and the
+   CI checks (repo-health, Python, JS/TS) are **required** to be green before merge.
 6. **Merge** via PR (squash preferred for a linear, readable history).
 7. **Set the ticket status to Done** when the PR merges.
 
