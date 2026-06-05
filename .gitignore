@@ -58,7 +58,7 @@ pgdata/
 qdrant_storage/
 
 # --- Build / SBOM / scan outputs (generated) ---
-sbom/*.json
+sbom/*
 !sbom/.gitkeep
 *.spdx.json
 *.cdx.json
