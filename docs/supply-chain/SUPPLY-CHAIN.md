@@ -27,7 +27,7 @@
 | **Hugging Face (Transformers / TGI)** | Hugging Face | Apache-2.0 | Mature | evaluating | Source of weights/embeddings; alt serving | Verify model cards/weights provenance | Direct downloads |
 | **LM Studio (OpenAI-compatible API)** | LM Studio | Proprietary app (OpenAI-compatible API) | Mature | evaluating | Desktop GUI users; optional endpoint only | App not open source — keep optional, never core | Ollama |
 
-## 2. Agent orchestration & schemas
+## 2. Backend, orchestration & schemas
 
 | Component | Maintainer / Org | License | Maturity | Status | Reason | Security notes | Alternatives |
 |---|---|---|---|---|---|---|---|
@@ -36,6 +36,10 @@
 | **Pydantic** | Pydantic (Samuel Colvin et al.) | MIT | Mature | **adopted** (M0-3) | Python runtime validation; JSON-Schema bridge; strict fail-closed contracts | Pin major; `extra="forbid"` everywhere | attrs |
 | **Zod** | Colin McDonnell | MIT | Mature | **adopted** (M0-3) | TS runtime validation; `.strict()` bindings shared with UI/extension | Pin major | io-ts, valibot |
 | **JSON Schema** | JSON Schema Org / IETF | Spec (open) | Standard | **adopted** (M0-3) | Canonical interchange contract (generated from Pydantic into `schemas/json/`) | — | — |
+| **FastAPI** | Sebastián Ramírez (tiangolo) | MIT | Mature, very active | **adopted** (M0-5) | Loopback API: async, typed, OpenAPI, Pydantic-native | Bind loopback; auth + origin allowlist; validate I/O | Litestar, Flask |
+| **Uvicorn** | Encode | BSD-3-Clause | Mature | **adopted** (M0-5) | ASGI server for the backend | Bind loopback by default | Hypercorn |
+| **Starlette** | Encode | BSD-3-Clause | Mature | **adopted** (M0-5, via FastAPI) | ASGI toolkit underlying FastAPI | — | — |
+| **httpx** | Encode | BSD-3-Clause | Mature | **adopted** (M0-5, dev/test) | Test client transport for FastAPI TestClient | — | — |
 
 ## 3. Storage & retrieval
 

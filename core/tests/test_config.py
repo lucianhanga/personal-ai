@@ -29,3 +29,14 @@ def test_from_env_empty_uses_defaults() -> None:
     config = CoreConfig.from_env({})
     assert config.model_provider == "ollama"
     assert config.egress_enabled is False
+
+
+def test_from_env_parses_port_and_origins() -> None:
+    config = CoreConfig.from_env(
+        {
+            "PERSONALAI_BIND_PORT": "9000",
+            "PERSONALAI_ALLOWED_ORIGINS": "http://a, http://b ,",
+        }
+    )
+    assert config.bind_port == 9000
+    assert config.allowed_origins == ("http://a", "http://b")

@@ -6,7 +6,12 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [{ name = "Lucian Hanga" }]
-dependencies = ["personalai-contracts", "personalai-core"]
+dependencies = [
+    "personalai-contracts",
+    "personalai-core",
+    "fastapi>=0.111",
+    "uvicorn>=0.30",
+]
 
 [build-system]
 requires = ["hatchling"]
