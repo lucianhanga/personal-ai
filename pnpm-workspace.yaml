@@ -1,0 +1,5 @@
+# PersonalAI - pnpm workspace for the JS/TS surfaces (UI + browser extension).
+# Python packages are managed separately by uv (see pyproject.toml).
+packages:
+  - "apps/ui"
+  - "apps/extension"

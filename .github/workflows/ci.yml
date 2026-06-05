@@ -52,6 +52,61 @@ jobs:
           fi
           echo "All required governance files present."
 
-  # NOTE: Phase 0 is documentation-only. Language-specific jobs (lint, typecheck,
-  # unit tests, SBOM generation, and vulnerability scanning) are added at milestone
-  # M0 when application code and manifests land. See docs/policies/DEPENDENCY-POLICY.md.
+  python:
+    name: Python (lint, types, tests, architecture)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-packages
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: mypy type check
+        run: uv run mypy contracts core apps/backend
+
+      - name: Architecture (import-linter)
+        run: uv run lint-imports
+
+      - name: Tests + coverage
+        run: uv run pytest
+
+  js:
+    name: JS/TS (install, lint)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        # Version is read from the "packageManager" field in package.json.
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install workspace
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Lint workspaces (placeholders until M0-6)
+        run: pnpm -r --if-present lint
+
+  # NOTE: SBOM generation, dependency vulnerability scanning, and supply-chain drift
+  # checks are added in M0-8; release signing in M0-9. See docs/policies/DEPENDENCY-POLICY.md.

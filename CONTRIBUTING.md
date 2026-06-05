@@ -4,15 +4,16 @@ Thanks for working on PersonalAI. This repo uses **GitHub flow** with a protecte
 
 ## Workflow (GitHub flow)
 
-1. **Sync** `main`:
+1. **Pick a ticket** and set its Project status to **In Progress** (and assign yourself).
+2. **Create the branch _linked to the issue_** (so it shows under the issue's Development
+   section and the issue auto-closes on merge) — prefer GitHub's native linked branch over a
+   plain `git checkout -b`:
    ```bash
-   git checkout main && git pull
+   gh issue develop <issue-number> --repo lucianhanga/personal-ai \
+     --name <type>/<short-description> --base main
+   git fetch origin && git checkout <type>/<short-description>
    ```
-2. **Branch** off `main` (short-lived, one logical change):
-   ```bash
-   git checkout -b <type>/<short-description>
-   ```
-   Branch name `<type>` mirrors commit types below, e.g. `feat/contracts-model-provider`.
+   Branch name `<type>` mirrors the commit types below, e.g. `feat/contracts-model-provider`.
 3. **Commit** using [Conventional Commits](https://www.conventionalcommits.org/):
    ```
    <type>(<scope>): <summary>
@@ -22,9 +23,24 @@ Thanks for working on PersonalAI. This repo uses **GitHub flow** with a protecte
 4. **Open a PR** into `main`. Fill in the PR template. Link the issue (`Closes #NN`).
 5. **CI must pass.** `main` is protected: no direct pushes, no force-push, no deletion.
 6. **Merge** via PR (squash preferred for a linear, readable history).
+7. **Set the ticket status to Done** when the PR merges.
 
 > `main` requires a pull request to merge. Self-merge is permitted for the solo maintainer,
 > but the PR + CI gate still applies.
+
+## Local development
+
+Python is managed by **uv**; JS by **pnpm**. Common tasks are in the `Makefile`:
+
+```bash
+make setup       # uv sync + pnpm install
+make check       # ruff lint + mypy + pytest (coverage) + import-linter
+make test        # pytest with coverage
+make arch        # enforce hexagonal dependency direction (import-linter)
+```
+
+Or directly: `uv run ruff check .`, `uv run mypy ...`, `uv run pytest`, `uv run lint-imports`,
+`pnpm -r --if-present lint`.
 
 ## Definition of Done
 
