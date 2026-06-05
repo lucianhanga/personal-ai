@@ -380,7 +380,9 @@ The execution contract for a single tool or MCP server action. The full tool/MCP
 (provenance, permissions, I/O schemas, egress, risk, signature) is defined as a schema in
 **M0-3**; permission enforcement and sandboxing live in the Tool/MCP gateway (**M4**). Tool
 handlers are **never invoked directly by agents** — only through the gateway
-([ADR-0004](../architecture/adr/0004-tool-mcp-gateway-sandbox.md)).
+([ADR-0004](../architecture/adr/0004-tool-mcp-gateway-sandbox.md)). The `ToolInvocation` and
+`ToolManifest` schema contracts (provenance, permissions, egress, risk) are documented in the
+[structured-output schemas reference](./structured-output-schemas.md#the-contracts).
 
 ### Protocol
 

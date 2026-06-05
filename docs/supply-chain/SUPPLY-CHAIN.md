@@ -9,7 +9,7 @@
 > [Dependency Policy](../policies/DEPENDENCY-POLICY.md). A generated SBOM (CycloneDX) is the
 > machine-readable companion to this human-readable register.
 
-- **Last reviewed:** 2026-06-05
+- **Last reviewed:** 2026-06-05 (M0-3: pydantic adopted; zod/typescript/vitest added)
 - **Status legend:** `planned` (vetted, not yet in code) · `adopted` (in the build) · `evaluating` · `rejected`
 - **Provenance note:** Licenses below are grounded in public sources cited in the architecture
   report. They MUST be re-verified against each project's `LICENSE` file at pin time (Phase 0).
@@ -33,9 +33,9 @@
 |---|---|---|---|---|---|---|---|
 | **LangGraph** | LangChain | MIT (OSS) | Mature, active | planned | Graph orchestration, checkpointing, human-in-the-loop | Ecosystem churn — pin versions | Microsoft Agent Framework |
 | **Microsoft Agent Framework** | Microsoft | OSS (verify) | GA Q1 2026 | evaluating | Enterprise/.NET alt (AutoGen + Semantic Kernel successor) | Azure-leaning; verify license | LangGraph |
-| **Pydantic** | Pydantic (Samuel Colvin et al.) | MIT | Mature | planned | Python runtime validation; JSON-Schema bridge | — | attrs |
-| **Zod** | Colin McDonnell | MIT | Mature | planned | TS runtime validation; shared types with UI | — | io-ts, valibot |
-| **JSON Schema** | JSON Schema Org / IETF | Spec (open) | Standard | planned | Canonical interchange contract | — | — |
+| **Pydantic** | Pydantic (Samuel Colvin et al.) | MIT | Mature | **adopted** (M0-3) | Python runtime validation; JSON-Schema bridge; strict fail-closed contracts | Pin major; `extra="forbid"` everywhere | attrs |
+| **Zod** | Colin McDonnell | MIT | Mature | **adopted** (M0-3) | TS runtime validation; `.strict()` bindings shared with UI/extension | Pin major | io-ts, valibot |
+| **JSON Schema** | JSON Schema Org / IETF | Spec (open) | Standard | **adopted** (M0-3) | Canonical interchange contract (generated from Pydantic into `schemas/json/`) | — | — |
 
 ## 3. Storage & retrieval
 
@@ -83,9 +83,27 @@
 | **Grype** | Anchore | Apache-2.0 | Mature | evaluating | Vulnerability scanning | — | Trivy |
 | **Sigstore / cosign** | OpenSSF / Linux Foundation | Apache-2.0 | Mature | planned | Release signing | — | GPG signing |
 
+## 7. Build & development tooling (adopted)
+
+Dev/build/test toolchain in use from M0-1/M0-3. Not shipped to end users but part of the
+supply chain (build integrity).
+
+| Component | Maintainer / Org | License | Maturity | Status | Reason | Security notes | Alternatives |
+|---|---|---|---|---|---|---|---|
+| **uv** | Astral | Apache-2.0 / MIT | Mature, very active | adopted (M0-1) | Python workspace + reproducible installs | Lockfile committed | Poetry, pip-tools |
+| **Ruff** | Astral | MIT | Mature | adopted (M0-1) | Lint + format | — | flake8/black/isort |
+| **mypy** | Python / mypy team | MIT | Mature | adopted (M0-1) | Strict static typing | — | pyright |
+| **pytest / pytest-cov** | pytest-dev | MIT | Mature | adopted (M0-1) | Tests + coverage gate | — | unittest |
+| **import-linter** | David Seddon | BSD-2-Clause | Mature | adopted (M0-1) | Enforces hexagonal dependency direction | — | custom checks |
+| **hatchling** | PyPA (Hatch) | MIT | Mature | adopted (M0-1) | Build backend | — | setuptools, flit |
+| **pnpm** | pnpm (OpenJS-adjacent) | MIT | Mature | adopted (M0-1) | JS workspaces, strict isolation | Lockfile committed; approve build scripts explicitly | npm, yarn |
+| **TypeScript** | Microsoft | Apache-2.0 | Very mature | adopted (M0-3) | Typed TS contracts/UI | — | — |
+| **Vitest** | Vitest team (VoidZero) | MIT | Mature | adopted (M0-3) | TS unit tests | — | Jest |
+| **esbuild** | Evan Wallace | MIT | Mature | adopted (M0-3, transitive via Vitest) | TS transform for tests | Build script approved in pnpm-workspace.yaml | — |
+
 ---
 
-## 7. How this register is kept up to date
+## 8. How this register is kept up to date
 
 1. Any PR that touches dependencies updates this file **and** the generated SBOM in the same change.
 2. CI fails if a manifest changes but this register / SBOM does not (drift check — added at M0/M7).

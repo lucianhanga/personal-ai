@@ -14,6 +14,9 @@ Reference & development:
 
 - **[Contracts & ports reference](./reference/contracts-and-ports.md)** — every port, value object,
   and reference fake (M0-2), plus the "how to add an adapter" seam workflow.
+- **[Structured-output schemas reference](./reference/structured-output-schemas.md)** — the M0-3
+  schema backbone: strict/versioned models, the five contracts, the schema registry, the canonical
+  JSON Schema + drift test, and the TS/Zod bindings kept aligned by shared fixtures.
 - **[Coding standards & conventions](./development/coding-standards.md)** — dependency direction,
   structured-output-first, typing, async, testing/coverage policy.
 - **[Toolchain & monorepo](./development/toolchain.md)** — uv + pnpm workspaces, Makefile targets,
