@@ -10,6 +10,15 @@ Start here:
 - **[Threat model](./architecture/THREAT-MODEL.md)** — trust boundaries and threats (v1).
 - **[Onboarding / dev guide](./ONBOARDING.md)** — how to work in this repo.
 
+Reference & development:
+
+- **[Contracts & ports reference](./reference/contracts-and-ports.md)** — every port, value object,
+  and reference fake (M0-2), plus the "how to add an adapter" seam workflow.
+- **[Coding standards & conventions](./development/coding-standards.md)** — dependency direction,
+  structured-output-first, typing, async, testing/coverage policy.
+- **[Toolchain & monorepo](./development/toolchain.md)** — uv + pnpm workspaces, Makefile targets,
+  and CI jobs.
+
 Policies & supply chain:
 
 - **[Dependency policy](./policies/DEPENDENCY-POLICY.md)** — provenance, verification, SBOM, scanning.

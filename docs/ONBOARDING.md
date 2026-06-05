@@ -32,7 +32,13 @@ The seams (extension points) you will work in:
 | Agents / roles | a graph node + typed messages |
 | UI renderers | a component keyed by output type |
 
-## 3. Planned repository layout (from M0)
+The ports behind these seams already exist (M0-2). For exact signatures, value objects, the
+reference fakes, and the step-by-step "how to add an adapter" workflow, see the
+[Contracts & ports reference](./reference/contracts-and-ports.md). For the rules you must follow
+while writing code, see [Coding standards](./development/coding-standards.md) and the
+[Toolchain & monorepo](./development/toolchain.md) guide.
+
+## 3. Repository layout
 
 ```
 /contracts        # schemas, ports, message envelopes (the stable core API)
@@ -48,7 +54,8 @@ The seams (extension points) you will work in:
 /apps/extension   # MV3 browser extension
 ```
 
-> This layout is created during M0. Until then the repo holds documentation only.
+> The package roots and the `contracts` ports exist now (M0-1, M0-2). The `core`,
+> `apps`, and seam (`providers`, `retrieval`, ...) packages fill in over later milestones.
 
 ## 4. How we work
 
