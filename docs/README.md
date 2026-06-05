@@ -19,6 +19,8 @@ Reference & development:
   JSON Schema + drift test, and the TS/Zod bindings kept aligned by shared fixtures.
 - **[Dependency injection & registries](./reference/dependency-injection.md)** — registries,
   config-driven selection, the composition root, and how to register an adapter (M0-4).
+- **[Backend API (loopback)](./reference/backend-api.md)** — running the backend, the endpoints,
+  and the security posture (loopback, auth, origin allowlist, egress-off) (M0-5).
 - **[Coding standards & conventions](./development/coding-standards.md)** — dependency direction,
   structured-output-first, typing, async, testing/coverage policy.
 - **[Toolchain & monorepo](./development/toolchain.md)** — uv + pnpm workspaces, Makefile targets,

@@ -2,7 +2,7 @@
 # Python is managed by uv; JS by pnpm. See CONTRIBUTING.md.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup lint format typecheck test arch schemas js-install js-typecheck js-test js-lint js check
+.PHONY: help setup lint format typecheck test arch schemas run-backend js-install js-typecheck js-test js-lint js check
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -29,6 +29,9 @@ arch: ## Enforce hexagonal dependency direction (import-linter)
 
 schemas: ## Regenerate canonical JSON Schema artifacts (schemas/json)
 	uv run python scripts/generate_schemas.py
+
+run-backend: ## Run the loopback backend (set PERSONALAI_AUTH_TOKEN for protected routes)
+	uv run python -m personalai_backend
 
 js-install: ## Install JS workspace dependencies
 	pnpm install
