@@ -1,0 +1,1 @@
+{ "from": "planner", "to": "researcher", "type": "plan", "payload": { "goal": "summarize" } }

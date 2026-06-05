@@ -1,0 +1,1 @@
+{ "tool": "web.fetch", "version": "1.0.0", "args": { "url": "https://example.com" } }

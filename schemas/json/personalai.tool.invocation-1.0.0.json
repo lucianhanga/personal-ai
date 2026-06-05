@@ -1,0 +1,71 @@
+{
+  "$defs": {
+    "Permission": {
+      "additionalProperties": false,
+      "description": "A single least-privilege grant, e.g. filesystem access to a path glob.",
+      "properties": {
+        "scope": {
+          "description": "What the grant applies to (path glob, host, var name, ...).",
+          "title": "Scope",
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/PermissionType"
+        }
+      },
+      "required": [
+        "type",
+        "scope"
+      ],
+      "title": "Permission",
+      "type": "object"
+    },
+    "PermissionType": {
+      "description": "The class of capability a permission grants.",
+      "enum": [
+        "filesystem",
+        "network",
+        "exec",
+        "env",
+        "clipboard"
+      ],
+      "title": "PermissionType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A validated request to invoke a tool (mirrors the ToolCall port value object).",
+  "properties": {
+    "args": {
+      "additionalProperties": true,
+      "title": "Args",
+      "type": "object"
+    },
+    "required_permissions": {
+      "items": {
+        "$ref": "#/$defs/Permission"
+      },
+      "title": "Required Permissions",
+      "type": "array"
+    },
+    "schema_version": {
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "tool": {
+      "title": "Tool",
+      "type": "string"
+    },
+    "version": {
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "tool",
+    "version"
+  ],
+  "title": "ToolInvocation",
+  "type": "object"
+}

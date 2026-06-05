@@ -1,0 +1,184 @@
+{
+  "$defs": {
+    "Integrity": {
+      "additionalProperties": false,
+      "description": "Integrity reference used to pin a tool/MCP to an exact artifact.",
+      "properties": {
+        "algorithm": {
+          "description": "e.g. 'sha256'.",
+          "title": "Algorithm",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "title": "Integrity",
+      "type": "object"
+    },
+    "Permission": {
+      "additionalProperties": false,
+      "description": "A single least-privilege grant, e.g. filesystem access to a path glob.",
+      "properties": {
+        "scope": {
+          "description": "What the grant applies to (path glob, host, var name, ...).",
+          "title": "Scope",
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/PermissionType"
+        }
+      },
+      "required": [
+        "type",
+        "scope"
+      ],
+      "title": "Permission",
+      "type": "object"
+    },
+    "PermissionType": {
+      "description": "The class of capability a permission grants.",
+      "enum": [
+        "filesystem",
+        "network",
+        "exec",
+        "env",
+        "clipboard"
+      ],
+      "title": "PermissionType",
+      "type": "string"
+    },
+    "Provenance": {
+      "additionalProperties": false,
+      "description": "Who made the tool and where it comes from (verified-provenance policy).",
+      "properties": {
+        "license": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "License"
+        },
+        "maintainer": {
+          "title": "Maintainer",
+          "type": "string"
+        },
+        "repository": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repository"
+        }
+      },
+      "required": [
+        "maintainer"
+      ],
+      "title": "Provenance",
+      "type": "object"
+    },
+    "RiskLevel": {
+      "description": "Declared risk of a tool. Unverified tools default to HIGH.",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "RiskLevel",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The self-declaration every tool/MCP server must provide before it can be enabled.",
+  "properties": {
+    "capabilities": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Capabilities",
+      "type": "array"
+    },
+    "egress": {
+      "description": "Allowed network hosts; empty means no egress (deny).",
+      "items": {
+        "type": "string"
+      },
+      "title": "Egress",
+      "type": "array"
+    },
+    "inputs": {
+      "additionalProperties": true,
+      "description": "JSON Schema of inputs.",
+      "title": "Inputs",
+      "type": "object"
+    },
+    "integrity": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Integrity"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "outputs": {
+      "additionalProperties": true,
+      "description": "JSON Schema of outputs.",
+      "title": "Outputs",
+      "type": "object"
+    },
+    "permissions": {
+      "description": "Least-privilege; empty means no special access.",
+      "items": {
+        "$ref": "#/$defs/Permission"
+      },
+      "title": "Permissions",
+      "type": "array"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "risk": {
+      "$ref": "#/$defs/RiskLevel",
+      "default": "high"
+    },
+    "schema_version": {
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "version": {
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "version",
+    "provenance"
+  ],
+  "title": "ToolManifest",
+  "type": "object"
+}
