@@ -1,0 +1,12 @@
+{
+  "name": "@personalai/extension",
+  "version": "0.0.0",
+  "private": true,
+  "description": "PersonalAI browser extension (Manifest V3). Scaffolded in M9.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "lint": "echo \"(extension) lint placeholder - real config arrives in M9\"",
+    "typecheck": "echo \"(extension) typecheck placeholder - real config arrives in M9\"",
+    "test": "echo \"(extension) test placeholder - arrives in M9\""
+  }
+}

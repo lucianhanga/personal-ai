@@ -1,0 +1,18 @@
+# Enforces the hexagonal dependency direction (ADR-0001):
+# dependencies always point INWARD to contracts.
+#   personalai_backend  ->  personalai_core  ->  personalai_contracts
+# contracts must not import core or backend; core must not import backend.
+
+[importlinter]
+root_packages =
+    personalai_contracts
+    personalai_core
+    personalai_backend
+
+[importlinter:contract:hexagonal-layers]
+name = Hexagonal layering (dependencies point inward to contracts)
+type = layers
+layers =
+    personalai_backend
+    personalai_core
+    personalai_contracts

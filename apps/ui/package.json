@@ -1,0 +1,12 @@
+{
+  "name": "@personalai/ui",
+  "version": "0.0.0",
+  "private": true,
+  "description": "PersonalAI desktop/web UI (Tauri shell + SPA). Framework chosen in M0-6.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "lint": "echo \"(ui) lint placeholder - real config arrives in M0-6\"",
+    "typecheck": "echo \"(ui) typecheck placeholder - real config arrives in M0-6\"",
+    "test": "echo \"(ui) test placeholder - Vitest + Playwright arrive in M0-6\""
+  }
+}

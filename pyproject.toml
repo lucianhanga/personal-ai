@@ -1,0 +1,61 @@
+# PersonalAI - Python workspace root (uv virtual workspace).
+# Members are the Python packages of the modular monolith. See ADR-0001 and
+# docs/architecture/PersonalAI-Architecture-Research.md (Section 22).
+
+[tool.uv.workspace]
+members = ["contracts", "core", "apps/backend"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "import-linter>=2.0",
+]
+
+# ---------------------------------------------------------------------------
+# Ruff: lint + format (replaces black/isort/flake8).
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["contracts/src", "core/src", "apps/backend/src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "PTH"]
+ignore = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["personalai_contracts", "personalai_core", "personalai_backend"]
+
+# ---------------------------------------------------------------------------
+# mypy: strict-ish typing for the core contracts.
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+mypy_path = ["contracts/src", "core/src", "apps/backend/src"]
+explicit_package_bases = true
+
+# ---------------------------------------------------------------------------
+# pytest + coverage.
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra -q --import-mode=importlib --cov --cov-report=term-missing --cov-report=xml"
+testpaths = ["contracts/tests", "core/tests", "apps/backend/tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["personalai_contracts", "personalai_core", "personalai_backend"]
+
+[tool.coverage.report]
+show_missing = true
+# Conservative gate at bootstrap; raised as real logic lands (see M0-7).
+fail_under = 90
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "\\.\\.\\."]
