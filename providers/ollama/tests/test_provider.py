@@ -126,6 +126,53 @@ def test_context_manager_does_not_close_injected_client() -> None:
 
 
 @respx.mock
+def test_stream_yields_ordered_chunks_and_thinking() -> None:
+    body = (
+        b'{"message":{"thinking":"hmm","content":""}}\n'
+        b"\n"  # blank keep-alive line should be skipped
+        b'{"message":{"content":"He"}}\n'
+        b'{"message":{"content":"llo"},"done":true,"done_reason":"stop"}\n'
+    )
+    respx.post(f"{BASE}/api/chat").mock(return_value=httpx.Response(200, content=body))
+
+    async def _collect() -> list[tuple[str, str | None, bool]]:
+        provider = OllamaProvider(base_url=BASE)
+        try:
+            return [
+                (c.delta, c.thinking, c.done)
+                async for c in provider.stream(
+                    GenerationRequest(messages=[ChatMessage(Role.USER, "hi")], model="qwen3:8b")
+                )
+            ]
+        finally:
+            await provider.aclose()
+
+    chunks = asyncio.run(_collect())
+    assert [c[0] for c in chunks] == ["", "He", "llo"]
+    assert chunks[0][1] == "hmm"
+    assert chunks[-1][2] is True
+
+
+@respx.mock
+def test_generate_forwards_think_flag_and_captures_thinking() -> None:
+    route = respx.post(f"{BASE}/api/chat").mock(
+        return_value=httpx.Response(
+            200, json={"message": {"content": "answer", "thinking": "reasoning"}}
+        )
+    )
+    req = GenerationRequest(
+        messages=[ChatMessage(Role.USER, "hi")], model="qwen3.6:35b-a3b", think=False
+    )
+    result = run(lambda p: p.generate(req))
+    assert result.text == "answer"
+    assert result.thinking == "reasoning"
+    import json as _json
+
+    sent = _json.loads(route.calls.last.request.content)
+    assert sent["think"] is False
+
+
+@respx.mock
 def test_embed_returns_vectors_and_dimensions() -> None:
     respx.post(f"{BASE}/api/embed").mock(
         return_value=httpx.Response(

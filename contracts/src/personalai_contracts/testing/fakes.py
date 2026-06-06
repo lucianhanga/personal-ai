@@ -7,7 +7,7 @@ They are NOT production adapters. They depend only on the ports (ADR-0001).
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 
 from personalai_contracts.ports.agent import AgentContext, AgentNode, AgentState
 from personalai_contracts.ports.modality import (
@@ -17,6 +17,7 @@ from personalai_contracts.ports.modality import (
 )
 from personalai_contracts.ports.model_provider import (
     EmbeddingResult,
+    GenerationChunk,
     GenerationRequest,
     GenerationResult,
     ModelCapabilities,
@@ -54,6 +55,12 @@ class FakeModelProvider:
     async def generate(self, request: GenerationRequest) -> GenerationResult:
         last = request.messages[-1].content if request.messages else ""
         return GenerationResult(text=f"echo: {last}", model=request.model, finish_reason="stop")
+
+    async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+        last = request.messages[-1].content if request.messages else ""
+        for token in f"echo: {last}".split(" "):
+            yield GenerationChunk(delta=token + " ")
+        yield GenerationChunk(done=True, finish_reason="stop")
 
     async def embed(self, texts: Sequence[str], model: str) -> EmbeddingResult:
         vectors = [_deterministic_vector(t) for t in texts]

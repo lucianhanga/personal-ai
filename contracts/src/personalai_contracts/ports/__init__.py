@@ -19,6 +19,7 @@ from personalai_contracts.ports.modality import (
 from personalai_contracts.ports.model_provider import (
     ChatMessage,
     EmbeddingResult,
+    GenerationChunk,
     GenerationRequest,
     GenerationResult,
     ModelCapabilities,
@@ -59,6 +60,7 @@ __all__ = [
     # model provider
     "ChatMessage",
     "EmbeddingResult",
+    "GenerationChunk",
     "GenerationRequest",
     "GenerationResult",
     "ModelCapabilities",

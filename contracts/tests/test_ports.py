@@ -61,6 +61,17 @@ def test_model_provider() -> None:
     assert len(emb.vectors) == 2
     assert all(len(v) == 8 for v in emb.vectors)
 
+    async def _collect() -> list[str]:
+        return [
+            c.delta
+            async for c in provider.stream(
+                GenerationRequest(messages=[ChatMessage(Role.USER, "hi")], model="m")
+            )
+        ]
+
+    chunks = asyncio.run(_collect())
+    assert "".join(chunks).strip() == "echo: hi"
+
 
 def test_retriever() -> None:
     items = [
