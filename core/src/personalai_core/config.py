@@ -35,7 +35,15 @@ _ENV_FIELDS = {
 _CSV_FIELDS = {"allowed_origins", "allowed_egress_hosts"}
 
 _TRUTHY = {"1", "true", "yes", "on"}
-_DEFAULT_ORIGINS = ("http://127.0.0.1", "http://localhost")
+_DEFAULT_ORIGINS = (
+    "http://127.0.0.1",
+    "http://localhost",
+    # Vite dev (5173) and preview (4173) servers, loopback only — for local UI development.
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+)
 
 
 class CoreConfig(StrictModel):
