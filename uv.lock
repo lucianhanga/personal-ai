@@ -12,6 +12,7 @@ members = [
     "personalai-contracts",
     "personalai-core",
     "personalai-provider-ollama",
+    "personalai-provider-openai",
 ]
 
 [manifest.dependency-groups]
@@ -1029,6 +1030,21 @@ requires-dist = [{ name = "personalai-contracts", editable = "contracts" }]
 name = "personalai-provider-ollama"
 version = "0.0.0"
 source = { editable = "providers/ollama" }
+dependencies = [
+    { name = "httpx" },
+    { name = "personalai-contracts" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "personalai-contracts", editable = "contracts" },
+]
+
+[[package]]
+name = "personalai-provider-openai"
+version = "0.0.0"
+source = { editable = "providers/openai_compat" }
 dependencies = [
     { name = "httpx" },
     { name = "personalai-contracts" },

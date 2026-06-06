@@ -10,6 +10,7 @@ root_packages =
     personalai_core
     personalai_backend
     personalai_provider_ollama
+    personalai_provider_openai
 
 [importlinter:contract:hexagonal-layers]
 name = Hexagonal layering (dependencies point inward to contracts)
@@ -24,6 +25,7 @@ name = Provider adapters depend only on contracts
 type = forbidden
 source_modules =
     personalai_provider_ollama
+    personalai_provider_openai
 forbidden_modules =
     personalai_core
     personalai_backend

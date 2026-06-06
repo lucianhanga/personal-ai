@@ -3,7 +3,7 @@
 # docs/architecture/PersonalAI-Architecture-Research.md (Section 22).
 
 [tool.uv.workspace]
-members = ["contracts", "core", "apps/backend", "providers/ollama"]
+members = ["contracts", "core", "apps/backend", "providers/ollama", "providers/openai_compat"]
 
 [dependency-groups]
 dev = [
@@ -26,7 +26,7 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["contracts/src", "core/src", "apps/backend/src", "providers/ollama/src"]
+src = ["contracts/src", "core/src", "apps/backend/src", "providers/ollama/src", "providers/openai_compat/src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4", "PTH"]
@@ -38,6 +38,7 @@ known-first-party = [
     "personalai_core",
     "personalai_backend",
     "personalai_provider_ollama",
+    "personalai_provider_openai",
 ]
 
 # ---------------------------------------------------------------------------
@@ -50,7 +51,7 @@ warn_unused_configs = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 show_error_codes = true
-mypy_path = ["contracts/src", "core/src", "apps/backend/src", "providers/ollama/src"]
+mypy_path = ["contracts/src", "core/src", "apps/backend/src", "providers/ollama/src", "providers/openai_compat/src"]
 explicit_package_bases = true
 
 # ---------------------------------------------------------------------------
@@ -59,7 +60,7 @@ explicit_package_bases = true
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-ra -q --import-mode=importlib --cov --cov-report=term-missing --cov-report=xml"
-testpaths = ["contracts/tests", "core/tests", "apps/backend/tests", "providers/ollama/tests"]
+testpaths = ["contracts/tests", "core/tests", "apps/backend/tests", "providers/ollama/tests", "providers/openai_compat/tests"]
 filterwarnings = [
     # Third-party: starlette's TestClient warns to migrate to httpx2; tracked, not ours.
     "ignore:Using `httpx` with `starlette.testclient`.*",
@@ -72,6 +73,7 @@ source = [
     "personalai_core",
     "personalai_backend",
     "personalai_provider_ollama",
+    "personalai_provider_openai",
 ]
 
 [tool.coverage.report]
