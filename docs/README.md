@@ -10,6 +10,8 @@ Start here:
 - **[Threat model](./architecture/THREAT-MODEL.md)** — trust boundaries and threats (v1).
 - **[Onboarding / dev guide](./ONBOARDING.md)** — how to work in this repo.
 - **[Local chat guide (M1)](./guides/local-chat.md)** — run streaming chat over local Ollama models.
+- **[Remote / frontier providers (M2)](./guides/remote-providers.md)** — opt into OpenAI-compatible
+  providers (OpenAI/Azure/vLLM/...) with egress + secrets controls.
 
 Reference & development:
 

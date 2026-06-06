@@ -54,7 +54,7 @@ Browser SPA (React)  --SSE-->  /api/chat  -->  ModelProvider (ollama)  -->  Olla
 - The chat is **stateless** at M1 (the client sends the message history each turn); conversation
   persistence arrives in **M3**.
 - The Ollama adapter is one implementation of the `ModelProvider` seam; a remote/OpenAI provider
-  (M2) plugs into the same seam, gated by the egress allowlist + secrets handling.
+  plugs into the same seam — see [Remote / frontier providers](./remote-providers.md) (M2).
 
 ## Verify against your real Ollama
 
