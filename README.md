@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/lucianhanga/personal-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/lucianhanga/personal-ai/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![Status: Phase 0 — Architecture](https://img.shields.io/badge/status-Phase%200%20%E2%80%94%20architecture-yellow.svg)](./docs/architecture/PersonalAI-Architecture-Research.md)
+[![Status: M1 — local chat](https://img.shields.io/badge/status-M1%20%E2%80%94%20local%20chat-brightgreen.svg)](./docs/guides/local-chat.md)
 [![Local-first](https://img.shields.io/badge/local--first-yes-brightgreen.svg)](#principles)
 [![Structured-output-first](https://img.shields.io/badge/structured--output--first-yes-brightgreen.svg)](#principles)
 [![Security-first](https://img.shields.io/badge/security--first-yes-brightgreen.svg)](./SECURITY.md)
@@ -16,8 +16,22 @@ PersonalAI is **extensible** (tools + MCP), **structured-output-first** (schemas
 **open-source-first** (verified provenance only), and **security-first** (zero-trust toward
 tools, files, prompts, model outputs, and MCP servers).
 
-> **Current state:** Phase 0 — research and high-level architecture. No application code yet.
-> The architecture is ratified in [`docs/architecture/PersonalAI-Architecture-Research.md`](./docs/architecture/PersonalAI-Architecture-Research.md).
+> **Current state:** **M0 complete** (foundation) and **M1 complete** — streaming local chat over
+> Ollama in a React UI. See the [architecture report](./docs/architecture/PersonalAI-Architecture-Research.md)
+> and the [local chat guide](./docs/guides/local-chat.md).
+
+## Quickstart (local chat)
+
+```bash
+make setup
+# terminal 1 — backend
+PERSONALAI_AUTH_TOKEN=demo PERSONALAI_DEFAULT_MODEL=qwen3.6:35b-a3b make run-backend
+# terminal 2 — UI -> http://localhost:5173 (token: demo)
+pnpm --filter @personalai/ui dev
+```
+
+Requires a local [Ollama](https://ollama.com) with a model pulled. Full guide:
+[docs/guides/local-chat.md](./docs/guides/local-chat.md).
 
 ---
 
