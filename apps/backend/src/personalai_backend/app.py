@@ -20,9 +20,9 @@ from contextlib import asynccontextmanager
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from starlette.middleware.base import RequestResponseEndpoint
-from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.responses import StreamingResponse
 
 from personalai_backend import __version__
 from personalai_backend.composition import Bootstrap, bootstrap
@@ -104,18 +104,17 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     app = FastAPI(title="PersonalAI Backend", version=__version__, lifespan=lifespan)
     app.state.bootstrap = boot
     app.state.config = boot.config
-    allowed_origins = set(boot.config.allowed_origins)
 
-    @app.middleware("http")
-    async def origin_allowlist(request: Request, call_next: RequestResponseEndpoint) -> Response:
-        """Reject browser requests whose ``Origin`` is not in the configured allowlist."""
-        origin = request.headers.get("origin")
-        if origin is not None and origin not in allowed_origins:
-            return JSONResponse(
-                status_code=status.HTTP_403_FORBIDDEN,
-                content={"detail": f"origin not allowed: {origin}"},
-            )
-        return await call_next(request)
+    # CORS restricted to the configured (loopback) origins: enables the browser SPA while still
+    # acting as an origin allowlist. The bearer token remains the real auth control; credentials
+    # (cookies) are not used. Non-browser clients send no Origin and are unaffected.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(boot.config.allowed_origins),
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:

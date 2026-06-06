@@ -64,8 +64,10 @@ The M0-10 primitives are a foundation; these gaps are deliberate and tracked:
 - **Audit log immutability is in-process only** (open mode `a`, owner-only `0o600`, no external
   tamper-evidence). Hash-chaining / append-only OS attributes are deferred to **M1**. No
   multi-writer locking yet (single-writer assumption).
-- **API origin allowlist** permits requests with no `Origin` header (deliberate, for loopback CLI
-  clients); the bearer token is the real control. A non-loopback bind without an auth token is
-  refused at startup. CSRF protection beyond this is unnecessary while loopback-only.
+- **API CORS allowlist** (`CORSMiddleware`) restricts browser origins to the configured
+  (loopback) allowlist and handles preflight; requests with no `Origin` (curl, tests) are
+  unaffected. The bearer token is the real auth control (credentials/cookies are not used). A
+  non-loopback bind without an auth token is refused at startup. CSRF protection beyond this is
+  unnecessary while loopback-only.
 - **Release signature verification** uses a repo-scoped identity regexp; tightening to the exact
   release workflow/tag is deferred to the hardening milestone (M11).
