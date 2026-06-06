@@ -72,14 +72,29 @@ def test_protected_route_with_valid_token_returns_structured_result(client: Test
     assert body["schema_version"] == "1.0.0"
 
 
-def test_disallowed_origin_is_rejected(client: TestClient) -> None:
-    resp = client.get("/health", headers={"Origin": "http://evil.example"})
-    assert resp.status_code == 403
-
-
-def test_allowed_origin_passes(client: TestClient) -> None:
+def test_allowed_origin_gets_cors_header(client: TestClient) -> None:
     resp = client.get("/health", headers={"Origin": "http://localhost"})
     assert resp.status_code == 200
+    assert resp.headers.get("access-control-allow-origin") == "http://localhost"
+
+
+def test_disallowed_origin_gets_no_cors_header(client: TestClient) -> None:
+    # CORS is an allowlist: a disallowed origin gets no ACAO header, so the browser blocks it.
+    resp = client.get("/health", headers={"Origin": "http://evil.example"})
+    assert "access-control-allow-origin" not in resp.headers
+
+
+def test_cors_preflight_allows_protected_route(client: TestClient) -> None:
+    resp = client.options(
+        "/api/models",
+        headers={
+            "Origin": "http://localhost",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("access-control-allow-origin") == "http://localhost"
 
 
 def test_auth_unconfigured_is_fail_closed() -> None:
