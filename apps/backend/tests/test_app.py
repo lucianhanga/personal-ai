@@ -24,6 +24,28 @@ from personalai_core import CoreConfig
 TOKEN = "test-secret-token"
 
 
+class RaisingProvider:
+    """A provider whose calls fail — used to exercise error paths."""
+
+    name = "boom"
+
+    async def capabilities(self, model: str) -> ModelCapabilities:
+        raise NotImplementedError
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        raise NotImplementedError
+
+    async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+        raise RuntimeError("ollama down")
+        yield GenerationChunk()  # pragma: no cover - unreachable; makes this an async generator
+
+    async def list_models(self) -> Sequence[ModelDescriptor]:
+        raise RuntimeError("models unavailable")
+
+    async def embed(self, texts: Sequence[str], model: str) -> EmbeddingResult:
+        raise NotImplementedError
+
+
 def _app_with_provider(provider_name: str, provider: ModelProvider) -> TestClient:
     config = CoreConfig(
         model_provider=provider_name,
@@ -126,6 +148,66 @@ def test_models_requires_token() -> None:
     assert client.get("/api/models").status_code == 401
 
 
+def test_providers_lists_registered() -> None:
+    client = _app_with_provider("fake", FakeModelProvider(name="fake"))
+    data = client.get("/api/providers", headers={"Authorization": f"Bearer {TOKEN}"}).json()["data"]
+    assert "ollama" in data["providers"]
+    assert "fake" in data["providers"]
+    assert data["default"] == "fake"
+
+
+def test_models_unknown_provider_is_400() -> None:
+    client = _app_with_provider("fake", FakeModelProvider(name="fake"))
+    resp = client.get(
+        "/api/models", params={"provider": "ghost"}, headers={"Authorization": f"Bearer {TOKEN}"}
+    )
+    assert resp.status_code == 400
+
+
+def test_models_error_surfaces_structured_result() -> None:
+    client = _app_with_provider("boom", RaisingProvider())
+    resp = client.get(
+        "/api/models", params={"provider": "boom"}, headers={"Authorization": f"Bearer {TOKEN}"}
+    )
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "E_MODELS"
+
+
+def test_chat_unknown_provider_is_400() -> None:
+    client = _app_with_provider("fake", FakeModelProvider(name="fake"))
+    resp = client.post(
+        "/api/chat",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={"messages": [{"role": "user", "content": "hi"}], "provider": "ghost"},
+    )
+    assert resp.status_code == 400
+
+
+def test_openai_registered_and_egress_blocked_by_default() -> None:
+    # An API key registers the remote provider; with egress off, using it fails closed.
+    config = CoreConfig(auth_token=TOKEN, openai_api_key="sk-test")
+    client = TestClient(create_app(bootstrap(config=config)))
+    providers = client.get("/api/providers", headers={"Authorization": f"Bearer {TOKEN}"}).json()[
+        "data"
+    ]["providers"]
+    assert "openai" in providers
+
+    with client.stream(
+        "POST",
+        "/api/chat",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={
+            "messages": [{"role": "user", "content": "hi"}],
+            "provider": "openai",
+            "model": "gpt-x",
+        },
+    ) as resp:
+        body = "".join(resp.iter_text())
+    assert "event: error" in body
+    assert "egress is disabled" in body
+
+
 def test_chat_requires_token() -> None:
     client = _app_with_provider("fake", FakeModelProvider(name="fake"))
     resp = client.post("/api/chat", json={"messages": [{"role": "user", "content": "hi"}]})
@@ -160,26 +242,7 @@ def test_chat_invalid_body_is_rejected() -> None:
 
 
 def test_chat_errors_surface_as_sse_error_event() -> None:
-    class BoomProvider:
-        name = "boom"
-
-        async def capabilities(self, model: str) -> ModelCapabilities:
-            raise NotImplementedError
-
-        async def generate(self, request: GenerationRequest) -> GenerationResult:
-            raise NotImplementedError
-
-        async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
-            raise RuntimeError("ollama down")
-            yield GenerationChunk()  # pragma: no cover - unreachable; makes this an async generator
-
-        async def list_models(self) -> Sequence[ModelDescriptor]:
-            raise NotImplementedError
-
-        async def embed(self, texts: Sequence[str], model: str) -> EmbeddingResult:
-            raise NotImplementedError
-
-    client = _app_with_provider("boom", BoomProvider())
+    client = _app_with_provider("boom", RaisingProvider())
     with client.stream(
         "POST",
         "/api/chat",

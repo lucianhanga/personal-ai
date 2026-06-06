@@ -1,8 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 
-import { fetchModels, streamChat, type ChatMessage, type ModelInfo } from "./api";
+import {
+  fetchModels,
+  fetchProviders,
+  streamChat,
+  type ChatMessage,
+  type ModelInfo,
+} from "./api";
 
 export function Chat({ token }: { token: string }): React.ReactElement {
+  const [providers, setProviders] = useState<string[]>([]);
+  const [provider, setProvider] = useState<string>("");
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [model, setModel] = useState<string>("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -13,17 +21,33 @@ export function Chat({ token }: { token: string }): React.ReactElement {
 
   useEffect(() => {
     let active = true;
-    fetchModels(token)
-      .then(({ defaultModel, models }) => {
+    fetchProviders(token)
+      .then(({ default: def, providers }) => {
         if (!active) return;
-        setModels(models);
-        setModel(defaultModel || models[0]?.name || "");
+        setProviders(providers);
+        setProvider(def || providers[0] || "");
       })
       .catch((e: unknown) => active && setError(String(e)));
     return () => {
       active = false;
     };
   }, [token]);
+
+  useEffect(() => {
+    if (!provider) return;
+    let active = true;
+    setError(null);
+    fetchModels(token, provider)
+      .then(({ defaultModel, models }) => {
+        if (!active) return;
+        setModels(models);
+        setModel(models.some((m) => m.name === defaultModel) ? defaultModel : models[0]?.name || "");
+      })
+      .catch((e: unknown) => active && setError(String(e)));
+    return () => {
+      active = false;
+    };
+  }, [token, provider]);
 
   useEffect(() => {
     listRef.current?.scrollTo(0, listRef.current.scrollHeight);
@@ -40,7 +64,7 @@ export function Chat({ token }: { token: string }): React.ReactElement {
     setBusy(true);
     try {
       let acc = "";
-      await streamChat({ messages: history, model, token }, (delta) => {
+      await streamChat({ messages: history, model, provider, token }, (delta) => {
         acc += delta;
         setMessages([...history, { role: "assistant", content: acc }]);
       });
@@ -55,7 +79,20 @@ export function Chat({ token }: { token: string }): React.ReactElement {
 
   return (
     <section aria-label="chat" style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+        <label htmlFor="provider">Provider:</label>
+        <select
+          id="provider"
+          data-testid="provider-select"
+          value={provider}
+          onChange={(e) => setProvider(e.target.value)}
+        >
+          {providers.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
         <label htmlFor="model">Model:</label>
         <select
           id="model"

@@ -39,15 +39,31 @@ export async function fetchHealth(): Promise<boolean> {
   }
 }
 
-/** List available models (with capabilities) and the default model. */
+/** List the registered providers and the default one. */
+export async function fetchProviders(
+  token: string,
+): Promise<{ default: string; providers: string[] }> {
+  const res = await fetch(`${API_BASE}/api/providers`, { headers: authHeaders(token) });
+  if (!res.ok) throw new Error(`providers request failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { default?: string; providers?: string[] } };
+  return { default: body.data?.default ?? "", providers: body.data?.providers ?? [] };
+}
+
+/** List a provider's models (with capabilities) and the default model. */
 export async function fetchModels(
   token: string,
+  provider?: string,
 ): Promise<{ defaultModel: string; models: ModelInfo[] }> {
-  const res = await fetch(`${API_BASE}/api/models`, { headers: authHeaders(token) });
+  const url = new URL(`${API_BASE}/api/models`);
+  if (provider) url.searchParams.set("provider", provider);
+  const res = await fetch(url, { headers: authHeaders(token) });
   if (!res.ok) throw new Error(`models request failed: ${res.status}`);
   const body = (await res.json()) as {
+    ok?: boolean;
+    error?: { message?: string };
     data?: { default_model?: string; models?: ModelInfo[] };
   };
+  if (body.ok === false) throw new Error(body.error?.message ?? "models request failed");
   return { defaultModel: body.data?.default_model ?? "", models: body.data?.models ?? [] };
 }
 
@@ -56,13 +72,17 @@ export async function fetchModels(
  * Parses the SSE frames emitted by POST /api/chat.
  */
 export async function streamChat(
-  params: { messages: ChatMessage[]; model?: string; token: string },
+  params: { messages: ChatMessage[]; model?: string; provider?: string; token: string },
   onDelta: (delta: string) => void,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders(params.token) },
-    body: JSON.stringify({ messages: params.messages, model: params.model }),
+    body: JSON.stringify({
+      messages: params.messages,
+      model: params.model,
+      provider: params.provider,
+    }),
   });
   if (!res.ok || res.body === null) throw new Error(`chat request failed: ${res.status}`);
 

@@ -30,6 +30,8 @@ _ENV_FIELDS = {
     "ALLOWED_EGRESS_HOSTS": "allowed_egress_hosts",
     "AUTH_TOKEN": "auth_token",
     "ALLOWED_ORIGINS": "allowed_origins",
+    "OPENAI_API_KEY": "openai_api_key",  # pragma: allowlist secret  (env var name, not a secret)
+    "OPENAI_BASE_URL": "openai_base_url",
 }
 
 _CSV_FIELDS = {"allowed_origins", "allowed_egress_hosts"}
@@ -67,6 +69,13 @@ class CoreConfig(StrictModel):
     )
     allowed_origins: tuple[str, ...] = Field(
         default=_DEFAULT_ORIGINS, description="Browser origins permitted to call the API."
+    )
+    openai_api_key: str | None = Field(
+        default=None, description="API key for the OpenAI-compatible remote provider (secret)."
+    )
+    openai_base_url: str = Field(
+        default="https://api.openai.com/v1",
+        description="Base URL for the OpenAI-compatible remote provider.",
     )
 
     @classmethod

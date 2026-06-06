@@ -28,7 +28,7 @@ from personalai_backend import __version__
 from personalai_backend.composition import Bootstrap, bootstrap
 from personalai_contracts.ports import ChatMessage, GenerationRequest, ModelProvider, Role
 from personalai_contracts.schemas import ErrorInfo, StructuredResult
-from personalai_core import CoreConfig
+from personalai_core import CoreConfig, RegistryError
 from personalai_core.registries import Registries
 
 
@@ -57,6 +57,7 @@ class ChatRequest(BaseModel):
 
     messages: list[ChatMessageIn]
     model: str | None = None
+    provider: str | None = None
     # Default reasoning off for clean chat; clients can opt into a model's thinking trace.
     think: bool | None = False
 
@@ -137,11 +138,37 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             },
         )
 
-    @app.get("/api/models", response_model=StructuredResult, dependencies=[Depends(_require_token)])
-    async def api_models() -> StructuredResult:
+    def _resolve_provider(name: str | None) -> ModelProvider:
         config: CoreConfig = app.state.config
         registries: Registries = app.state.bootstrap.registries
-        provider: ModelProvider = registries.model_providers.get(config.model_provider)
+        try:
+            provider: ModelProvider = registries.model_providers.get(name or config.model_provider)
+        except RegistryError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        return provider
+
+    @app.get(
+        "/api/providers", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+    )
+    def api_providers() -> StructuredResult:
+        config: CoreConfig = app.state.config
+        registries: Registries = app.state.bootstrap.registries
+        return StructuredResult(
+            ok=True,
+            data={
+                "default": config.model_provider,
+                "providers": list(registries.model_providers.names()),
+            },
+        )
+
+    @app.get("/api/models", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    async def api_models(provider: str | None = None) -> StructuredResult:
+        config: CoreConfig = app.state.config
+        resolved = _resolve_provider(provider)
+        try:
+            descriptors = await resolved.list_models()
+        except Exception as exc:  # noqa: BLE001 - report as a structured error (e.g. egress blocked)
+            return StructuredResult(ok=False, error=ErrorInfo(code="E_MODELS", message=str(exc)))
         models = [
             {
                 "name": d.name,
@@ -156,7 +183,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     "max_context_tokens": d.capabilities.max_context_tokens,
                 },
             }
-            for d in await provider.list_models()
+            for d in descriptors
         ]
         return StructuredResult(
             ok=True, data={"default_model": config.default_model, "models": models}
@@ -165,8 +192,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.post("/api/chat", dependencies=[Depends(_require_token)])
     async def chat(req: ChatRequest) -> StreamingResponse:
         config: CoreConfig = app.state.config
-        registries: Registries = app.state.bootstrap.registries
-        provider: ModelProvider = registries.model_providers.get(config.model_provider)
+        provider = _resolve_provider(req.provider)
         generation = GenerationRequest(
             messages=[ChatMessage(Role(m.role), m.content) for m in req.messages],
             model=req.model or config.default_model,

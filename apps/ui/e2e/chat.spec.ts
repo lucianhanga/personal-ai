@@ -33,7 +33,14 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   await page.route("**/health", (r) =>
     r.fulfill({ status: 200, contentType: "application/json", body: '{"status":"ok"}' }),
   );
-  await page.route("**/api/models", (r) =>
+  await page.route("**/api/providers", (r) =>
+    r.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: '{"ok":true,"data":{"default":"ollama","providers":["ollama","openai"]}}',
+    }),
+  );
+  await page.route("**/api/models**", (r) =>
     r.fulfill({ status: 200, contentType: "application/json", body: MODELS_BODY }),
   );
   await page.route("**/api/chat", (r) =>
@@ -42,6 +49,7 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
 
   await page.goto("/");
   await expect(page.getByTestId("backend-status")).toHaveText(/connected/i);
+  await expect(page.getByTestId("provider-select")).toHaveValue("ollama");
   await expect(page.getByTestId("model-select")).toHaveValue("qwen3:8b");
 
   await page.getByTestId("composer").fill("hi there");
