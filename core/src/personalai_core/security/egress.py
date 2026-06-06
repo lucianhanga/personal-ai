@@ -10,17 +10,27 @@ from __future__ import annotations
 
 from personalai_core.config import CoreConfig
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
 
 class EgressBlockedError(Exception):
     """Raised when an outbound network call is attempted without explicit permission."""
 
 
-def assert_egress_allowed(config: CoreConfig, host: str | None = None) -> None:
-    """Raise :class:`EgressBlockedError` unless egress is enabled (and host allow-listed).
+def _is_loopback(host: str) -> bool:
+    normalized = host.strip().lower()
+    return normalized in _LOOPBACK_HOSTS or normalized.startswith("127.")
 
-    Fail-closed: if an allowlist is configured, a request with an unknown host (``None``) is
-    refused, and host comparison is case-insensitive (DNS is case-insensitive).
+
+def assert_egress_allowed(config: CoreConfig, host: str | None = None) -> None:
+    """Raise :class:`EgressBlockedError` unless the call is permitted.
+
+    Local-first: connections to loopback (e.g. a local Ollama server) are always allowed.
+    Otherwise egress must be enabled; and if an allowlist is configured, an unknown host
+    (``None``) is refused (fail-closed) and host comparison is case-insensitive.
     """
+    if host is not None and _is_loopback(host):
+        return
     if not config.egress_enabled:
         raise EgressBlockedError(
             f"network egress is disabled (attempted host: {host or 'unknown'}); "

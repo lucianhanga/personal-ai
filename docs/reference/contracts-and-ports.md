@@ -24,8 +24,8 @@ If this document disagrees with the code, the code wins — please open a fix.
 - Each port is a `typing.Protocol` decorated with `@runtime_checkable`, so
   `isinstance(adapter, ModelProvider)` works structurally (the tests rely on this).
 - Value objects are `@dataclass(frozen=True)` (immutable); enums are `enum.StrEnum`.
-- I/O-bound methods are `async def`; cheap, CPU-only lookups (`capabilities`, `can_handle`) are
-  plain `def`.
+- I/O-bound methods are `async def` (including `capabilities`, which may query the runtime, e.g.
+  Ollama's `/api/show`); cheap, CPU-only lookups (`can_handle`) are plain `def`.
 - Mappings use `collections.abc.Mapping`; sequences use `collections.abc.Sequence` (read-only,
   variance-friendly). `from __future__ import annotations` is on in every module.
 - Adapters depend **inward on `personalai_contracts` only** and **never import each other**
@@ -37,7 +37,7 @@ If this document disagrees with the code, the code wins — please open a fix.
 
 | Port | Module | Sync methods | Async methods | Establishing milestone |
 |---|---|---|---|---|
-| `ModelProvider` | `ports/model_provider.py` | `capabilities` | `generate`, `embed` | M1 |
+| `ModelProvider` | `ports/model_provider.py` | — | `capabilities`, `generate`, `embed` | M1 |
 | `Retriever` | `ports/retriever.py` | — | `retrieve` | M3 |
 | `Repository[T]` | `ports/storage.py` | — | `add`, `get`, `list`, `delete` | M3 |
 | `VectorRepository` | `ports/storage.py` | — | `upsert`, `query`, `delete` | M3 |
@@ -66,7 +66,7 @@ provider registry (M0-4). Streaming is intentionally omitted at M0-2 and added i
 class ModelProvider(Protocol):
     name: str
 
-    def capabilities(self, model: str) -> ModelCapabilities: ...
+    async def capabilities(self, model: str) -> ModelCapabilities: ...
     async def generate(self, request: GenerationRequest) -> GenerationResult: ...
     async def embed(self, texts: Sequence[str], model: str) -> EmbeddingResult: ...
 ```
@@ -84,8 +84,9 @@ class ModelProvider(Protocol):
 
 `GenerationRequest.json_schema` requests structured output constrained to that JSON Schema,
 validated by the structured-output layer (M0-3) — see
-[ADR-0003](../architecture/adr/0003-structured-output-first.md). `capabilities()` is cheap and
-cacheable; the router uses it for capability-based routing.
+[ADR-0003](../architecture/adr/0003-structured-output-first.md). `capabilities()` may query the
+runtime (e.g. Ollama's `/api/show`) and is `async`; the router uses it for capability-based
+routing. The first real implementation is `personalai_provider_ollama.OllamaProvider` (M1).
 
 ### Minimal adapter
 
@@ -102,7 +103,7 @@ class StaticProvider:
 
     name = "static"
 
-    def capabilities(self, model: str) -> ModelCapabilities:
+    async def capabilities(self, model: str) -> ModelCapabilities:
         return ModelCapabilities(text=True)
 
     async def generate(self, request: GenerationRequest) -> GenerationResult:

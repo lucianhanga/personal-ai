@@ -19,7 +19,7 @@ format: ## Ruff format (Python)
 	uv run ruff format .
 
 typecheck: ## mypy type check (Python)
-	uv run mypy contracts core apps/backend
+	uv run mypy contracts core apps/backend providers/ollama
 
 test: ## Run Python tests with coverage
 	uv run pytest
