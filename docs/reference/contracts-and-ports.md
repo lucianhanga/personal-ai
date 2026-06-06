@@ -37,7 +37,7 @@ If this document disagrees with the code, the code wins — please open a fix.
 
 | Port | Module | Sync methods | Async methods | Establishing milestone |
 |---|---|---|---|---|
-| `ModelProvider` | `ports/model_provider.py` | — | `capabilities`, `generate`, `embed` | M1 |
+| `ModelProvider` | `ports/model_provider.py` | — | `capabilities`, `generate`, `stream`, `embed` | M1 |
 | `Retriever` | `ports/retriever.py` | — | `retrieve` | M3 |
 | `Repository[T]` | `ports/storage.py` | — | `add`, `get`, `list`, `delete` | M3 |
 | `VectorRepository` | `ports/storage.py` | — | `upsert`, `query`, `delete` | M3 |
@@ -68,8 +68,14 @@ class ModelProvider(Protocol):
 
     async def capabilities(self, model: str) -> ModelCapabilities: ...
     async def generate(self, request: GenerationRequest) -> GenerationResult: ...
+    def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]: ...
     async def embed(self, texts: Sequence[str], model: str) -> EmbeddingResult: ...
 ```
+
+`stream()` yields `GenerationChunk(delta, thinking, done, finish_reason)` increments (M1-2).
+`GenerationRequest.think` controls a reasoning model's thinking trace (e.g. set `think=False` for
+clean chat from qwen3 "thinking" models); `GenerationResult.thinking` / `GenerationChunk.thinking`
+carry the reasoning separately from the answer.
 
 ### Value objects
 

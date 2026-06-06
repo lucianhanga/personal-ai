@@ -7,7 +7,8 @@ registered with the backend composition root. Streaming is added in M1-2, model 
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import json
+from collections.abc import AsyncIterator, Mapping, Sequence
 from types import TracebackType
 from typing import Any
 
@@ -15,6 +16,7 @@ import httpx
 
 from personalai_contracts.ports.model_provider import (
     EmbeddingResult,
+    GenerationChunk,
     GenerationRequest,
     GenerationResult,
     ModelCapabilities,
@@ -38,6 +40,20 @@ def _options(request: GenerationRequest) -> dict[str, Any]:
     if request.max_tokens is not None:
         options["num_predict"] = request.max_tokens
     return options
+
+
+def _chat_payload(request: GenerationRequest, *, stream: bool) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": request.model,
+        "messages": [{"role": m.role.value, "content": m.content} for m in request.messages],
+        "stream": stream,
+        "options": _options(request),
+    }
+    if request.json_schema is not None:
+        payload["format"] = dict(request.json_schema)
+    if request.think is not None:
+        payload["think"] = request.think
+    return payload
 
 
 def _usage(data: Mapping[str, Any]) -> dict[str, int]:
@@ -92,26 +108,37 @@ class OllamaProvider:
             tool_calling="tools" in caps,
             # Ollama can constrain any completion model's output to a JSON schema.
             structured_output="completion" in caps,
+            thinking="thinking" in caps,
             max_context_tokens=_context_length(data.get("model_info") or {}),
         )
 
     async def generate(self, request: GenerationRequest) -> GenerationResult:
-        payload: dict[str, Any] = {
-            "model": request.model,
-            "messages": [{"role": m.role.value, "content": m.content} for m in request.messages],
-            "stream": False,
-            "options": _options(request),
-        }
-        if request.json_schema is not None:
-            payload["format"] = dict(request.json_schema)
-        data = await self._post("/api/chat", payload)
+        data = await self._post("/api/chat", _chat_payload(request, stream=False))
         message = data.get("message") or {}
         return GenerationResult(
             text=message.get("content", ""),
             model=data.get("model", request.model),
             finish_reason=data.get("done_reason"),
+            thinking=message.get("thinking"),
             usage=_usage(data),
         )
+
+    async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+        async with self._client.stream(
+            "POST", f"{self._base}/api/chat", json=_chat_payload(request, stream=True)
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line.strip():
+                    continue
+                data = json.loads(line)
+                message = data.get("message") or {}
+                yield GenerationChunk(
+                    delta=message.get("content", ""),
+                    thinking=message.get("thinking"),
+                    done=bool(data.get("done")),
+                    finish_reason=data.get("done_reason"),
+                )
 
     async def embed(self, texts: Sequence[str], model: str) -> EmbeddingResult:
         data = await self._post("/api/embed", {"model": model, "input": list(texts)})

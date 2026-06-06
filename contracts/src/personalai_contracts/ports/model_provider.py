@@ -9,7 +9,7 @@ Streaming is intentionally omitted at M0-2 and added in M1 alongside chat.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
@@ -41,6 +41,7 @@ class ModelCapabilities:
     embeddings: bool = False
     tool_calling: bool = False
     structured_output: bool = False
+    thinking: bool = False
     max_context_tokens: int | None = None
 
 
@@ -57,6 +58,8 @@ class GenerationRequest:
     temperature: float | None = None
     max_tokens: int | None = None
     json_schema: Mapping[str, Any] | None = None
+    think: bool | None = None
+    """Control a thinking/reasoning model's reasoning trace (None = the model's default)."""
 
 
 @dataclass(frozen=True)
@@ -66,7 +69,18 @@ class GenerationResult:
     text: str
     model: str
     finish_reason: str | None = None
+    thinking: str | None = None
     usage: Mapping[str, int] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class GenerationChunk:
+    """One streamed increment of a generation."""
+
+    delta: str = ""
+    thinking: str | None = None
+    done: bool = False
+    finish_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -90,6 +104,10 @@ class ModelProvider(Protocol):
 
     async def generate(self, request: GenerationRequest) -> GenerationResult:
         """Generate a completion for ``request``."""
+        ...
+
+    def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+        """Stream a completion for ``request`` as incremental chunks."""
         ...
 
     async def embed(self, texts: Sequence[str], model: str) -> EmbeddingResult:
