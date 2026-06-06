@@ -84,6 +84,15 @@ class GenerationChunk:
 
 
 @dataclass(frozen=True)
+class ModelDescriptor:
+    """A model offered by a provider, with its detected capabilities."""
+
+    name: str
+    capabilities: ModelCapabilities
+    local: bool = True
+
+
+@dataclass(frozen=True)
 class EmbeddingResult:
     """Embedding vectors for one or more inputs."""
 
@@ -108,6 +117,10 @@ class ModelProvider(Protocol):
 
     def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
         """Stream a completion for ``request`` as incremental chunks."""
+        ...
+
+    async def list_models(self) -> Sequence[ModelDescriptor]:
+        """List the models this provider offers, with detected capabilities."""
         ...
 
     async def embed(self, texts: Sequence[str], model: str) -> EmbeddingResult:

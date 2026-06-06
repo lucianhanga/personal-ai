@@ -21,6 +21,7 @@ from personalai_contracts.ports.model_provider import (
     GenerationRequest,
     GenerationResult,
     ModelCapabilities,
+    ModelDescriptor,
 )
 from personalai_contracts.ports.retriever import RetrievalQuery, RetrievedItem
 from personalai_contracts.ports.storage import (
@@ -61,6 +62,9 @@ class FakeModelProvider:
         for token in f"echo: {last}".split(" "):
             yield GenerationChunk(delta=token + " ")
         yield GenerationChunk(done=True, finish_reason="stop")
+
+    async def list_models(self) -> Sequence[ModelDescriptor]:
+        return [ModelDescriptor(name="fake", capabilities=self._capabilities)]
 
     async def embed(self, texts: Sequence[str], model: str) -> EmbeddingResult:
         vectors = [_deterministic_vector(t) for t in texts]

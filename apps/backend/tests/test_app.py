@@ -15,6 +15,7 @@ from personalai_contracts.ports import (
     GenerationRequest,
     GenerationResult,
     ModelCapabilities,
+    ModelDescriptor,
     ModelProvider,
 )
 from personalai_contracts.testing import FakeModelProvider
@@ -94,6 +95,22 @@ def test_non_loopback_bind_requires_auth_token() -> None:
         create_app(bootstrap(config=config))
 
 
+def test_models_endpoint_lists_capabilities() -> None:
+    client = _app_with_provider("fake", FakeModelProvider(name="fake"))
+    resp = client.get("/api/models", headers={"Authorization": f"Bearer {TOKEN}"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    names = [m["name"] for m in body["data"]["models"]]
+    assert "fake" in names
+    assert "capabilities" in body["data"]["models"][0]
+
+
+def test_models_requires_token() -> None:
+    client = _app_with_provider("fake", FakeModelProvider(name="fake"))
+    assert client.get("/api/models").status_code == 401
+
+
 def test_chat_requires_token() -> None:
     client = _app_with_provider("fake", FakeModelProvider(name="fake"))
     resp = client.post("/api/chat", json={"messages": [{"role": "user", "content": "hi"}]})
@@ -140,6 +157,9 @@ def test_chat_errors_surface_as_sse_error_event() -> None:
         async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
             raise RuntimeError("ollama down")
             yield GenerationChunk()  # pragma: no cover - unreachable; makes this an async generator
+
+        async def list_models(self) -> Sequence[ModelDescriptor]:
+            raise NotImplementedError
 
         async def embed(self, texts: Sequence[str], model: str) -> EmbeddingResult:
             raise NotImplementedError

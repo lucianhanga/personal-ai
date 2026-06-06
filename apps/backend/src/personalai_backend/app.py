@@ -138,6 +138,31 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             },
         )
 
+    @app.get("/api/models", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    async def api_models() -> StructuredResult:
+        config: CoreConfig = app.state.config
+        registries: Registries = app.state.bootstrap.registries
+        provider: ModelProvider = registries.model_providers.get(config.model_provider)
+        models = [
+            {
+                "name": d.name,
+                "local": d.local,
+                "capabilities": {
+                    "text": d.capabilities.text,
+                    "vision": d.capabilities.vision,
+                    "embeddings": d.capabilities.embeddings,
+                    "tool_calling": d.capabilities.tool_calling,
+                    "structured_output": d.capabilities.structured_output,
+                    "thinking": d.capabilities.thinking,
+                    "max_context_tokens": d.capabilities.max_context_tokens,
+                },
+            }
+            for d in await provider.list_models()
+        ]
+        return StructuredResult(
+            ok=True, data={"default_model": config.default_model, "models": models}
+        )
+
     @app.post("/api/chat", dependencies=[Depends(_require_token)])
     async def chat(req: ChatRequest) -> StreamingResponse:
         config: CoreConfig = app.state.config

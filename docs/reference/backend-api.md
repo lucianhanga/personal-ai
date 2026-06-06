@@ -22,6 +22,7 @@ OpenAPI docs are served at `/docs`.
 | GET | `/health` | public | `{"status":"ok"}` | Liveness. |
 | GET | `/version` | public | `{name, version}` | Service identity. |
 | GET | `/api/status` | bearer token | `StructuredResult` | Example protected route returning a validated structured-output envelope. |
+| GET | `/api/models` | bearer token | `StructuredResult` | Lists available models + detected capabilities (M1-4). |
 | POST | `/api/chat` | bearer token | `text/event-stream` (SSE) | Streaming chat over the active model provider (M1-3). |
 
 ```bash
