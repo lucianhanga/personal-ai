@@ -9,7 +9,7 @@
 > [Dependency Policy](../policies/DEPENDENCY-POLICY.md). A generated SBOM (CycloneDX) is the
 > machine-readable companion to this human-readable register.
 
-- **Last reviewed:** 2026-06-05 (M0-6: React + Tauri UI; Playwright/Testing Library/jsdom)
+- **Last reviewed:** 2026-06-06 (M1-1: Ollama adopted; httpx runtime; respx dev)
 - **Status legend:** `planned` (vetted, not yet in code) · `adopted` (in the build) · `evaluating` · `rejected`
 - **Provenance note:** Licenses below are grounded in public sources cited in the architecture
   report. They MUST be re-verified against each project's `LICENSE` file at pin time (Phase 0).
@@ -20,7 +20,7 @@
 
 | Component | Maintainer / Org | License | Maturity | Status | Reason | Security notes | Alternatives |
 |---|---|---|---|---|---|---|---|
-| **Ollama** | Ollama | MIT (OSS) | Mature, very active | planned | Default local runtime; easy model mgmt; native JSON-Schema structured outputs + tool calling | Runs models locally; keep bound to loopback; validate all outputs | llama.cpp, vLLM, LM Studio API |
+| **Ollama** | Ollama | MIT (OSS) | Mature, very active | **adopted** (M1) | Default local runtime; `OllamaProvider` adapter via REST API | Loopback by default (egress guard allows loopback); validate all outputs | llama.cpp, vLLM, LM Studio API |
 | **llama.cpp** | ggml-org / Georgi Gerganov | MIT | Mature (~109k★) | planned | Low-level inference, CPU/GGUF, max hardware reach | C/C++ surface; pin releases | Ollama (wraps it) |
 | **vLLM** | vLLM project (OSS) | Apache-2.0 | Mature, active | planned | High-throughput GPU serving; guided decoding | Linux+GPU; server hardening | HF TGI |
 | **LiteLLM** | BerriAI | MIT (Enterprise tier paid) | Mature, active | planned | Opt-in remote provider gateway + egress chokepoint | Handles provider API keys — keep in vault; egress logged | Direct provider SDKs |
@@ -39,7 +39,7 @@
 | **FastAPI** | Sebastián Ramírez (tiangolo) | MIT | Mature, very active | **adopted** (M0-5) | Loopback API: async, typed, OpenAPI, Pydantic-native | Bind loopback; auth + origin allowlist; validate I/O | Litestar, Flask |
 | **Uvicorn** | Encode | BSD-3-Clause | Mature | **adopted** (M0-5) | ASGI server for the backend | Bind loopback by default | Hypercorn |
 | **Starlette** | Encode | BSD-3-Clause | Mature | **adopted** (M0-5, via FastAPI) | ASGI toolkit underlying FastAPI | — | — |
-| **httpx** | Encode | BSD-3-Clause | Mature | **adopted** (M0-5, dev/test) | Test client transport for FastAPI TestClient | — | — |
+| **httpx** | Encode | BSD-3-Clause | Mature | **adopted** (M0-5 test; M1 runtime) | FastAPI TestClient transport; runtime HTTP client for the Ollama provider | — | — |
 
 ## 3. Storage & retrieval
 
@@ -115,6 +115,7 @@ supply chain (build integrity).
 | **Playwright** | Microsoft | Apache-2.0 | Mature | adopted (M0-6) | UI e2e (Chromium) | Browsers pinned via lockfile; installed in CI | Cypress |
 | **Testing Library (react, jest-dom)** | Testing Library (Kent C. Dodds et al.) | MIT | Mature | adopted (M0-6) | React component tests | — | — |
 | **jsdom** | jsdom | MIT | Mature | adopted (M0-6) | DOM env for Vitest | — | happy-dom |
+| **respx** | Jonas Lundberg | BSD-3-Clause | Mature | adopted (M1) | Mock httpx in tests (Ollama provider) | — | pytest-httpx |
 
 ---
 

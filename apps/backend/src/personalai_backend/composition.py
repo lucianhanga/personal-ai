@@ -25,14 +25,14 @@ class Bootstrap:
 
 
 def register_adapters(registries: Registries, config: CoreConfig) -> None:
-    """Register concrete adapters into the registries.
+    """Register concrete adapters into the registries (the only place that knows about them).
 
-    Intentionally empty at M0-4. Concrete adapters are registered here from M0-5 onward, e.g.::
-
-        from personalai_providers.ollama import OllamaProvider
-        registries.model_providers.register("ollama", OllamaProvider(...))
+    M1 registers the local Ollama provider. More adapters (remote/OpenAI via the same
+    ``ModelProvider`` seam, retrievers, storage, ...) are added here in later milestones.
     """
-    return None
+    from personalai_provider_ollama import OllamaProvider
+
+    registries.model_providers.register("ollama", OllamaProvider(base_url=config.ollama_host))
 
 
 def bootstrap(

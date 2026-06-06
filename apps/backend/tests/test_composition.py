@@ -15,8 +15,8 @@ from personalai_core import CoreConfig, build_services
 def test_bootstrap_reads_config_from_env() -> None:
     boot = bootstrap(environ={"PERSONALAI_MODEL_PROVIDER": "fake"})
     assert boot.config.model_provider == "fake"
-    # No production adapters are registered yet at M0-4.
-    assert len(boot.registries.model_providers) == 0
+    # M1 registers the Ollama provider by default.
+    assert "ollama" in boot.registries.model_providers
 
 
 def test_bootstrap_wiring_resolves_registered_adapters() -> None:

@@ -48,7 +48,7 @@ from personalai_contracts.testing import (
 def test_model_provider() -> None:
     provider = FakeModelProvider()
     assert isinstance(provider, ModelProvider)
-    assert provider.capabilities("m").text is True
+    assert asyncio.run(provider.capabilities("m")).text is True
 
     result = asyncio.run(
         provider.generate(GenerationRequest(messages=[ChatMessage(Role.USER, "hi")], model="m"))

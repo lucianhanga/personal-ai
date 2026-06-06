@@ -48,7 +48,7 @@ class FakeModelProvider:
             text=True, embeddings=True, tool_calling=True, structured_output=True
         )
 
-    def capabilities(self, model: str) -> ModelCapabilities:
+    async def capabilities(self, model: str) -> ModelCapabilities:
         return self._capabilities
 
     async def generate(self, request: GenerationRequest) -> GenerationResult:

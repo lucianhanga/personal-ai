@@ -19,6 +19,8 @@ _ENV_PREFIX = "PERSONALAI_"
 # Maps an env var (without prefix) to a CoreConfig field.
 _ENV_FIELDS = {
     "MODEL_PROVIDER": "model_provider",
+    "DEFAULT_MODEL": "default_model",
+    "OLLAMA_HOST": "ollama_host",
     "RETRIEVER": "retriever",
     "VECTOR_REPOSITORY": "vector_repository",
     "OBJECT_STORE": "object_store",
@@ -40,6 +42,8 @@ class CoreConfig(StrictModel):
     """Selection of active adapters plus local-first runtime defaults."""
 
     model_provider: str = "ollama"
+    default_model: str = "qwen3.6:35b-a3b"
+    ollama_host: str = "http://127.0.0.1:11434"
     retriever: str = "pgvector"
     vector_repository: str = "pgvector"
     object_store: str = "local"

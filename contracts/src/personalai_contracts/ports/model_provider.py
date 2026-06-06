@@ -84,8 +84,8 @@ class ModelProvider(Protocol):
 
     name: str
 
-    def capabilities(self, model: str) -> ModelCapabilities:
-        """Return the capabilities of ``model`` (cheap / cacheable)."""
+    async def capabilities(self, model: str) -> ModelCapabilities:
+        """Return the capabilities of ``model`` (may query the runtime; cache as needed)."""
         ...
 
     async def generate(self, request: GenerationRequest) -> GenerationResult:

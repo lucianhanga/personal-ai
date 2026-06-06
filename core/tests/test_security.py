@@ -43,6 +43,12 @@ def test_egress_blocked_by_default() -> None:
         assert_egress_allowed(CoreConfig(), host="api.example.com")
 
 
+def test_egress_allows_loopback_even_when_disabled() -> None:
+    # Local-first: talking to a local Ollama server is not "egress".
+    for host in ("127.0.0.1", "localhost", "::1", "127.0.0.5"):
+        assert_egress_allowed(CoreConfig(egress_enabled=False), host=host)
+
+
 def test_egress_allowed_when_enabled() -> None:
     assert_egress_allowed(CoreConfig(egress_enabled=True), host="api.example.com")  # no raise
 
