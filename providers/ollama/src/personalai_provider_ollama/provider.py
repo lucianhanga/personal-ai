@@ -8,6 +8,7 @@ registered with the backend composition root. Streaming is added in M1-2, model 
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator, Mapping, Sequence
 from types import TracebackType
 from typing import Any
@@ -25,6 +26,8 @@ from personalai_contracts.ports.model_provider import (
 
 DEFAULT_HOST = "http://127.0.0.1:11434"
 
+logger = logging.getLogger(__name__)
+
 
 def _context_length(model_info: Mapping[str, Any]) -> int | None:
     """Pull the context length from Ollama's architecture-keyed model_info (e.g. qwen35moe.*)."""
@@ -32,6 +35,21 @@ def _context_length(model_info: Mapping[str, Any]) -> int | None:
         if key.endswith("context_length") and isinstance(value, int):
             return value
     return None
+
+
+def _capabilities_from(caps: Sequence[str], context_length: int | None) -> ModelCapabilities:
+    """Build ModelCapabilities from Ollama's capability list (from /api/show or /api/tags)."""
+    present = set(caps)
+    return ModelCapabilities(
+        text="completion" in present,
+        vision="vision" in present,
+        embeddings="embedding" in present,
+        tool_calling="tools" in present,
+        # Ollama can constrain any completion model's output to a JSON schema.
+        structured_output="completion" in present,
+        thinking="thinking" in present,
+        max_context_tokens=context_length,
+    )
 
 
 def _options(request: GenerationRequest) -> dict[str, Any]:
@@ -77,6 +95,9 @@ class OllamaProvider:
         self._base = base_url.rstrip("/")
         self._client = client or httpx.AsyncClient(timeout=httpx.Timeout(120.0))
         self._owns_client = client is None
+        # Names of models Ollama proxies to the cloud (remote_host set); populated by list_models.
+        # Used to warn before a request silently leaves the machine (stop-gap until M2).
+        self._remote_models: set[str] = set()
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -101,19 +122,20 @@ class OllamaProvider:
 
     async def capabilities(self, model: str) -> ModelCapabilities:
         data = await self._post("/api/show", {"model": model})
-        caps = set(data.get("capabilities") or [])
-        return ModelCapabilities(
-            text="completion" in caps,
-            vision="vision" in caps,
-            embeddings="embedding" in caps,
-            tool_calling="tools" in caps,
-            # Ollama can constrain any completion model's output to a JSON schema.
-            structured_output="completion" in caps,
-            thinking="thinking" in caps,
-            max_context_tokens=_context_length(data.get("model_info") or {}),
+        return _capabilities_from(
+            data.get("capabilities") or [], _context_length(data.get("model_info") or {})
         )
 
+    def _warn_if_remote(self, model: str) -> None:
+        if model in self._remote_models:
+            logger.warning(
+                "model %r is a remote/cloud model (Ollama proxies it off this machine); "
+                "explicit remote-provider routing arrives in M2",
+                model,
+            )
+
     async def generate(self, request: GenerationRequest) -> GenerationResult:
+        self._warn_if_remote(request.model)
         data = await self._post("/api/chat", _chat_payload(request, stream=False))
         message = data.get("message") or {}
         return GenerationResult(
@@ -125,6 +147,7 @@ class OllamaProvider:
         )
 
     async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+        self._warn_if_remote(request.model)
         async with self._client.stream(
             "POST", f"{self._base}/api/chat", json=_chat_payload(request, stream=True)
         ) as response:
@@ -148,19 +171,35 @@ class OllamaProvider:
         return result
 
     async def list_models(self) -> Sequence[ModelDescriptor]:
+        # Ollama 0.30 returns capabilities + details.context_length and remote_host in /api/tags,
+        # so we build descriptors from one call and fall back to /api/show only when a model is
+        # missing context_length. remote_host marks cloud models (not local).
         data = await self._get("/api/tags")
         descriptors: list[ModelDescriptor] = []
+        remote: set[str] = set()
         for entry in data.get("models") or []:
             name = entry.get("name")
             if not name:
                 continue
-            descriptors.append(
-                ModelDescriptor(name=name, capabilities=await self.capabilities(name), local=True)
-            )
+            local = not entry.get("remote_host")
+            if not local:
+                remote.add(name)
+            caps_list = entry.get("capabilities")
+            context_length = (entry.get("details") or {}).get("context_length")
+            if caps_list is not None and context_length is not None:
+                capabilities = _capabilities_from(caps_list, context_length)
+            else:
+                capabilities = await self.capabilities(name)  # fallback: /api/show
+            descriptors.append(ModelDescriptor(name=name, capabilities=capabilities, local=local))
+        self._remote_models = remote
         return descriptors
 
-    async def embed(self, texts: Sequence[str], model: str) -> EmbeddingResult:
-        data = await self._post("/api/embed", {"model": model, "input": list(texts)})
+    async def embed(
+        self, texts: Sequence[str], model: str, *, truncate: bool = True
+    ) -> EmbeddingResult:
+        data = await self._post(
+            "/api/embed", {"model": model, "input": list(texts), "truncate": truncate}
+        )
         vectors: list[list[float]] = data.get("embeddings") or []
         dimensions = len(vectors[0]) if vectors else 0
         return EmbeddingResult(
