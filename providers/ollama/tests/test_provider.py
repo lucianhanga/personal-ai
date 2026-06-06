@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json as _json
+import logging
 from collections.abc import Awaitable, Callable
 
 import httpx
@@ -205,6 +207,87 @@ def test_list_models_combines_tags_and_capabilities() -> None:
     assert models[0].capabilities.tool_calling is True
     assert models[1].capabilities.embeddings is True
     assert models[0].local is True
+
+
+@respx.mock
+def test_list_models_fast_path_uses_only_tags() -> None:
+    # capabilities + context_length present in /api/tags -> no /api/show call (none is mocked).
+    respx.get(f"{BASE}/api/tags").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "models": [
+                    {
+                        "name": "qwen3:8b",
+                        "capabilities": ["completion", "tools", "thinking"],
+                        "details": {"context_length": 40960},
+                    }
+                ]
+            },
+        )
+    )
+    models = run(lambda p: p.list_models())
+    assert models[0].name == "qwen3:8b"
+    assert models[0].local is True
+    assert models[0].capabilities.tool_calling is True
+    assert models[0].capabilities.max_context_tokens == 40960
+
+
+@respx.mock
+def test_list_models_flags_cloud_and_warns_on_use(caplog: pytest.LogCaptureFixture) -> None:
+    respx.get(f"{BASE}/api/tags").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "models": [
+                    {
+                        "name": "qwen3:8b",
+                        "capabilities": ["completion"],
+                        "details": {"context_length": 40960},
+                    },
+                    {
+                        "name": "kimi-k2.6:cloud",
+                        "capabilities": ["completion", "vision"],
+                        "details": {"context_length": 256000},
+                        "remote_host": "https://ollama.com:443",
+                    },
+                ]
+            },
+        )
+    )
+    respx.post(f"{BASE}/api/chat").mock(
+        return_value=httpx.Response(200, json={"message": {"content": "hi"}})
+    )
+
+    async def _run() -> None:
+        provider = OllamaProvider(base_url=BASE)
+        try:
+            models = await provider.list_models()
+            by_name = {m.name: m for m in models}
+            assert by_name["qwen3:8b"].local is True
+            assert by_name["kimi-k2.6:cloud"].local is False
+            with caplog.at_level(logging.WARNING):
+                await provider.generate(
+                    GenerationRequest(
+                        messages=[ChatMessage(Role.USER, "hi")], model="kimi-k2.6:cloud"
+                    )
+                )
+            assert "remote/cloud" in caplog.text
+        finally:
+            await provider.aclose()
+
+    asyncio.run(_run())
+
+
+@respx.mock
+def test_embed_sends_truncate_flag() -> None:
+    route = respx.post(f"{BASE}/api/embed").mock(
+        return_value=httpx.Response(200, json={"embeddings": [[0.1]]})
+    )
+    run(lambda p: p.embed(["x"], "m"))
+    assert _json.loads(route.calls.last.request.content)["truncate"] is True
+    run(lambda p: p.embed(["x"], "m", truncate=False))
+    assert _json.loads(route.calls.last.request.content)["truncate"] is False
 
 
 @respx.mock
