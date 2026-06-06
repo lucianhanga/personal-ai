@@ -22,11 +22,26 @@ OpenAPI docs are served at `/docs`.
 | GET | `/health` | public | `{"status":"ok"}` | Liveness. |
 | GET | `/version` | public | `{name, version}` | Service identity. |
 | GET | `/api/status` | bearer token | `StructuredResult` | Example protected route returning a validated structured-output envelope. |
+| POST | `/api/chat` | bearer token | `text/event-stream` (SSE) | Streaming chat over the active model provider (M1-3). |
 
 ```bash
 curl http://127.0.0.1:8765/health
 curl -H "Authorization: Bearer $PERSONALAI_AUTH_TOKEN" http://127.0.0.1:8765/api/status
+
+# Streaming chat (SSE). Body is stateless: send the full message history.
+curl -N -X POST http://127.0.0.1:8765/api/chat \
+  -H "Authorization: Bearer $PERSONALAI_AUTH_TOKEN" -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"hello"}]}'
 ```
+
+### `/api/chat`
+
+- **Request:** `{ "messages": [{"role","content"}], "model"?: str, "think"?: bool }`. `model`
+  defaults to `CoreConfig.default_model` (`qwen3.6:35b-a3b`); `think` defaults to `false` so
+  reasoning ("thinking") models answer cleanly. Invalid bodies are rejected (422, fail-closed).
+- **Response:** Server-Sent Events. Each `data:` frame is
+  `{delta, thinking, done, finish_reason}`; on failure an `event: error` frame carries a
+  `StructuredResult` error envelope. Conversation persistence arrives in M3.
 
 ## Security posture (M0-5)
 

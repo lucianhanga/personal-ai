@@ -2,14 +2,36 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Sequence
+
 import pytest
 from fastapi.testclient import TestClient
 
 from personalai_backend import create_app
 from personalai_backend.composition import bootstrap
+from personalai_contracts.ports import (
+    EmbeddingResult,
+    GenerationChunk,
+    GenerationRequest,
+    GenerationResult,
+    ModelCapabilities,
+    ModelProvider,
+)
+from personalai_contracts.testing import FakeModelProvider
 from personalai_core import CoreConfig
 
 TOKEN = "test-secret-token"
+
+
+def _app_with_provider(provider_name: str, provider: ModelProvider) -> TestClient:
+    config = CoreConfig(
+        model_provider=provider_name,
+        auth_token=TOKEN,
+        allowed_origins=("http://localhost",),
+    )
+    boot = bootstrap(config=config)
+    boot.registries.model_providers.register(provider_name, provider, overwrite=True)
+    return TestClient(create_app(boot))
 
 
 @pytest.fixture
@@ -70,6 +92,80 @@ def test_non_loopback_bind_requires_auth_token() -> None:
     config = CoreConfig(bind_host="0.0.0.0", auth_token=None)  # noqa: S104 - testing the guard
     with pytest.raises(RuntimeError, match="non-loopback host"):
         create_app(bootstrap(config=config))
+
+
+def test_chat_requires_token() -> None:
+    client = _app_with_provider("fake", FakeModelProvider(name="fake"))
+    resp = client.post("/api/chat", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert resp.status_code == 401
+
+
+def test_chat_streams_deltas() -> None:
+    client = _app_with_provider("fake", FakeModelProvider(name="fake"))
+    with client.stream(
+        "POST",
+        "/api/chat",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={"messages": [{"role": "user", "content": "hi there"}]},
+    ) as resp:
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/event-stream")
+        body = "".join(resp.iter_text())
+    # FakeModelProvider streams "echo: hi there" across SSE data frames.
+    assert "echo:" in body
+    assert "hi" in body and "there" in body
+    assert '"done": true' in body
+
+
+def test_chat_invalid_body_is_rejected() -> None:
+    client = _app_with_provider("fake", FakeModelProvider(name="fake"))
+    resp = client.post(
+        "/api/chat",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={"messages": [{"role": "bogus", "content": "hi"}]},
+    )
+    assert resp.status_code == 422  # schema validation (fail-closed)
+
+
+def test_chat_errors_surface_as_sse_error_event() -> None:
+    class BoomProvider:
+        name = "boom"
+
+        async def capabilities(self, model: str) -> ModelCapabilities:
+            raise NotImplementedError
+
+        async def generate(self, request: GenerationRequest) -> GenerationResult:
+            raise NotImplementedError
+
+        async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+            raise RuntimeError("ollama down")
+            yield GenerationChunk()  # pragma: no cover - unreachable; makes this an async generator
+
+        async def embed(self, texts: Sequence[str], model: str) -> EmbeddingResult:
+            raise NotImplementedError
+
+    client = _app_with_provider("boom", BoomProvider())
+    with client.stream(
+        "POST",
+        "/api/chat",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    ) as resp:
+        body = "".join(resp.iter_text())
+    assert "event: error" in body
+    assert "E_GENERATION" in body
+    assert "ollama down" in body
+
+
+def test_lifespan_closes_providers() -> None:
+    # Using the client as a context manager runs lifespan startup/shutdown; shutdown closes the
+    # bootstrap-registered Ollama provider's HTTP client.
+    config = CoreConfig(auth_token=TOKEN)
+    boot = bootstrap(config=config)
+    # "ollama" (has aclose) + a fake (no aclose) exercises both shutdown branches.
+    boot.registries.model_providers.register("fake", FakeModelProvider(name="fake"))
+    with TestClient(create_app(boot)) as ctx_client:
+        assert ctx_client.get("/health").status_code == 200
 
 
 def test_entrypoint_module_importable() -> None:
