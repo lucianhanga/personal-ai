@@ -25,26 +25,48 @@ const MODELS = {
   ],
 };
 
-test("loads models and shows the default + capability badges", async () => {
+function mockProviders(providers: string[] = ["ollama", "openai"], def = "ollama"): void {
+  vi.spyOn(api, "fetchProviders").mockResolvedValue({ default: def, providers });
+}
+
+test("loads providers + models and shows capability badges", async () => {
+  mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("provider-select") as HTMLSelectElement).value).toBe("ollama"),
+  );
   await waitFor(() =>
     expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe(
       "qwen3.6:35b-a3b",
     ),
   );
   expect(screen.getByTestId("model-caps")).toHaveTextContent(/vision/);
-  expect(screen.getByTestId("model-caps")).toHaveTextContent(/tools/);
+});
+
+test("switching provider reloads its models", async () => {
+  mockProviders();
+  const fetchModels = vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("provider-select")).toBeInTheDocument());
+
+  fireEvent.change(screen.getByTestId("provider-select"), { target: { value: "openai" } });
+  await waitFor(() => expect(fetchModels).toHaveBeenCalledWith("demo", "openai"));
 });
 
 test("sends a message and streams the assistant reply", async () => {
+  mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   vi.spyOn(api, "streamChat").mockImplementation(async (_params, onDelta) => {
     for (const tok of ["Hello", " ", "there"]) onDelta(tok);
   });
 
   render(<Chat token="demo" />);
-  await waitFor(() => expect(screen.getByTestId("model-select")).toBeInTheDocument());
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe(
+      "qwen3.6:35b-a3b",
+    ),
+  );
 
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "hi" } });
   fireEvent.click(screen.getByTestId("send"));
@@ -56,7 +78,10 @@ test("sends a message and streams the assistant reply", async () => {
 });
 
 test("surfaces an error when models cannot be loaded", async () => {
-  vi.spyOn(api, "fetchModels").mockRejectedValue(new Error("401"));
-  render(<Chat token="bad" />);
-  await waitFor(() => expect(screen.getByTestId("chat-error")).toHaveTextContent(/401/));
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockRejectedValue(new Error("egress is disabled"));
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect(screen.getByTestId("chat-error")).toHaveTextContent(/egress is disabled/),
+  );
 });

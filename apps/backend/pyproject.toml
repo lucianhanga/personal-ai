@@ -10,6 +10,7 @@ dependencies = [
     "personalai-contracts",
     "personalai-core",
     "personalai-provider-ollama",
+    "personalai-provider-openai",
     "fastapi>=0.111",
     "uvicorn>=0.30",
 ]
@@ -25,3 +26,4 @@ packages = ["src/personalai_backend"]
 personalai-contracts = { workspace = true }
 personalai-core = { workspace = true }
 personalai-provider-ollama = { workspace = true }
+personalai-provider-openai = { workspace = true }

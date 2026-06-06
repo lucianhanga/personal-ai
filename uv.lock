@@ -992,6 +992,7 @@ dependencies = [
     { name = "personalai-contracts" },
     { name = "personalai-core" },
     { name = "personalai-provider-ollama" },
+    { name = "personalai-provider-openai" },
     { name = "uvicorn" },
 ]
 
@@ -1001,6 +1002,7 @@ requires-dist = [
     { name = "personalai-contracts", editable = "contracts" },
     { name = "personalai-core", editable = "core" },
     { name = "personalai-provider-ollama", editable = "providers/ollama" },
+    { name = "personalai-provider-openai", editable = "providers/openai_compat" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
 

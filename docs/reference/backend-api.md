@@ -22,8 +22,9 @@ OpenAPI docs are served at `/docs`.
 | GET | `/health` | public | `{"status":"ok"}` | Liveness. |
 | GET | `/version` | public | `{name, version}` | Service identity. |
 | GET | `/api/status` | bearer token | `StructuredResult` | Example protected route returning a validated structured-output envelope. |
-| GET | `/api/models` | bearer token | `StructuredResult` | Lists available models + detected capabilities (M1-4). |
-| POST | `/api/chat` | bearer token | `text/event-stream` (SSE) | Streaming chat over the active model provider (M1-3). |
+| GET | `/api/providers` | bearer token | `StructuredResult` | Lists registered providers + the default (M2-2). |
+| GET | `/api/models` | bearer token | `StructuredResult` | Lists a provider's models + capabilities; `?provider=` to choose (M1-4/M2-2). |
+| POST | `/api/chat` | bearer token | `text/event-stream` (SSE) | Streaming chat; optional `"provider"` in the body selects local vs remote (M1-3/M2-2). |
 
 ```bash
 curl http://127.0.0.1:8765/health
@@ -43,6 +44,15 @@ curl -N -X POST http://127.0.0.1:8765/api/chat \
 - **Response:** Server-Sent Events. Each `data:` frame is
   `{delta, thinking, done, finish_reason}`; on failure an `event: error` frame carries a
   `StructuredResult` error envelope. Conversation persistence arrives in M3.
+
+### Providers (local + remote)
+
+The active provider is `PERSONALAI_MODEL_PROVIDER` (default `ollama`); requests may override it
+per call (`?provider=` / `"provider"`). A **remote OpenAI-compatible** provider (`openai`) is
+registered when `PERSONALAI_OPENAI_API_KEY` is set. Remote calls go through the egress allowlist,
+so they require `PERSONALAI_EGRESS_ENABLED=true` and the host in `PERSONALAI_ALLOWED_EGRESS_HOSTS`
+(e.g. `api.openai.com`); otherwise they fail closed with an egress error. The full remote setup
+guide is M2-4.
 
 ## Security posture (M0-5)
 

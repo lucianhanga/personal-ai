@@ -9,7 +9,7 @@
 > [Dependency Policy](../policies/DEPENDENCY-POLICY.md). A generated SBOM (CycloneDX) is the
 > machine-readable companion to this human-readable register.
 
-- **Last reviewed:** 2026-06-06 (M2-1: OpenAI-compatible remote provider adapter)
+- **Last reviewed:** 2026-06-06 (M2-2: backend wires the OpenAI provider via config/egress; no new third-party deps)
 - **Status legend:** `planned` (vetted, not yet in code) · `adopted` (in the build) · `evaluating` · `rejected`
 - **Provenance note:** Licenses below are grounded in public sources cited in the architecture
   report. They MUST be re-verified against each project's `LICENSE` file at pin time (Phase 0).
