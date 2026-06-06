@@ -9,7 +9,7 @@
 > [Dependency Policy](../policies/DEPENDENCY-POLICY.md). A generated SBOM (CycloneDX) is the
 > machine-readable companion to this human-readable register.
 
-- **Last reviewed:** 2026-06-06 (M1-1: Ollama adopted; httpx runtime; respx dev)
+- **Last reviewed:** 2026-06-06 (M2-1: OpenAI-compatible remote provider adapter)
 - **Status legend:** `planned` (vetted, not yet in code) · `adopted` (in the build) · `evaluating` · `rejected`
 - **Provenance note:** Licenses below are grounded in public sources cited in the architecture
   report. They MUST be re-verified against each project's `LICENSE` file at pin time (Phase 0).
@@ -26,6 +26,7 @@
 | **LiteLLM** | BerriAI | MIT (Enterprise tier paid) | Mature, active | planned | Opt-in remote provider gateway + egress chokepoint | Handles provider API keys — keep in vault; egress logged | Direct provider SDKs |
 | **Hugging Face (Transformers / TGI)** | Hugging Face | Apache-2.0 | Mature | evaluating | Source of weights/embeddings; alt serving | Verify model cards/weights provenance | Direct downloads |
 | **LM Studio (OpenAI-compatible API)** | LM Studio | Proprietary app (OpenAI-compatible API) | Mature | evaluating | Desktop GUI users; optional endpoint only | App not open source — keep optional, never core | Ollama |
+| **OpenAI-compatible APIs** (OpenAI/Azure/Together/Groq/OpenRouter/vLLM) | various | Service (per provider) | Mature | **adopted** (M2, via `personalai_provider_openai`) | Remote/frontier models via one adapter (httpx); opt-in | API key in secrets (never logged); egress allowlisted; off by default | LiteLLM (broader matrix, later) |
 
 ## 2. Backend, orchestration & schemas
 
