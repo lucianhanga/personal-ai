@@ -185,6 +185,29 @@ def test_embed_returns_vectors_and_dimensions() -> None:
 
 
 @respx.mock
+def test_list_models_combines_tags_and_capabilities() -> None:
+    respx.get(f"{BASE}/api/tags").mock(
+        return_value=httpx.Response(
+            200, json={"models": [{"name": "qwen3:8b"}, {"name": "mxbai-embed-large"}, {}]}
+        )
+    )
+    respx.post(f"{BASE}/api/show").mock(
+        side_effect=[
+            httpx.Response(200, json={"capabilities": ["completion", "tools"], "model_info": {}}),
+            httpx.Response(200, json={"capabilities": ["embedding"], "model_info": {}}),
+        ]
+    )
+    models = run(lambda p: p.list_models())
+    assert [m.name for m in models] == [
+        "qwen3:8b",
+        "mxbai-embed-large",
+    ]  # entry without name skipped
+    assert models[0].capabilities.tool_calling is True
+    assert models[1].capabilities.embeddings is True
+    assert models[0].local is True
+
+
+@respx.mock
 def test_http_error_propagates() -> None:
     respx.post(f"{BASE}/api/chat").mock(return_value=httpx.Response(500))
     req = GenerationRequest(messages=[ChatMessage(Role.USER, "hi")], model="qwen3:8b")

@@ -20,6 +20,7 @@ from personalai_contracts.ports.model_provider import (
     GenerationRequest,
     GenerationResult,
     ModelCapabilities,
+    ModelDescriptor,
 )
 
 DEFAULT_HOST = "http://127.0.0.1:11434"
@@ -139,6 +140,24 @@ class OllamaProvider:
                     done=bool(data.get("done")),
                     finish_reason=data.get("done_reason"),
                 )
+
+    async def _get(self, path: str) -> dict[str, Any]:
+        response = await self._client.get(f"{self._base}{path}")
+        response.raise_for_status()
+        result: dict[str, Any] = response.json()
+        return result
+
+    async def list_models(self) -> Sequence[ModelDescriptor]:
+        data = await self._get("/api/tags")
+        descriptors: list[ModelDescriptor] = []
+        for entry in data.get("models") or []:
+            name = entry.get("name")
+            if not name:
+                continue
+            descriptors.append(
+                ModelDescriptor(name=name, capabilities=await self.capabilities(name), local=True)
+            )
+        return descriptors
 
     async def embed(self, texts: Sequence[str], model: str) -> EmbeddingResult:
         data = await self._post("/api/embed", {"model": model, "input": list(texts)})

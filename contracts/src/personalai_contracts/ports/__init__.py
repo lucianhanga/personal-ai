@@ -23,6 +23,7 @@ from personalai_contracts.ports.model_provider import (
     GenerationRequest,
     GenerationResult,
     ModelCapabilities,
+    ModelDescriptor,
     ModelProvider,
     Role,
 )
@@ -64,6 +65,7 @@ __all__ = [
     "GenerationRequest",
     "GenerationResult",
     "ModelCapabilities",
+    "ModelDescriptor",
     "ModelProvider",
     "Role",
     # retriever
