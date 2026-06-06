@@ -9,6 +9,7 @@ Start here:
 - **[ADRs](./architecture/adr/)** — Architecture Decision Records.
 - **[Threat model](./architecture/THREAT-MODEL.md)** — trust boundaries and threats (v1).
 - **[Onboarding / dev guide](./ONBOARDING.md)** — how to work in this repo.
+- **[Local chat guide (M1)](./guides/local-chat.md)** — run streaming chat over local Ollama models.
 
 Reference & development:
 
