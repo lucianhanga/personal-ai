@@ -38,12 +38,20 @@ from personalai_contracts.ports import (
     Role,
 )
 from personalai_contracts.schemas import ErrorInfo, StructuredResult
-from personalai_core import CoreConfig, RegistryError, VectorRetriever, split_recent, summarize
+from personalai_core import (
+    CoreConfig,
+    RegistryError,
+    VectorRetriever,
+    remember,
+    split_recent,
+    summarize,
+)
 from personalai_core.registries import Registries
 from personalai_modality_files import UnsupportedFileTypeError
 from personalai_storage_postgres import (
     PgConversationStore,
     PgDocumentStore,
+    PgMemoryStore,
     PgVectorRepository,
     apply_migrations,
     create_pool,
@@ -60,6 +68,7 @@ class Storage:
     vectors: PgVectorRepository
     documents: PgDocumentStore
     conversations: PgConversationStore
+    memories: PgMemoryStore
 
 
 class HealthResponse(BaseModel):
@@ -147,6 +156,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 vectors=vectors,
                 documents=PgDocumentStore(pool),
                 conversations=PgConversationStore(pool),
+                memories=PgMemoryStore(pool),
             )
         except Exception as exc:  # noqa: BLE001 - storage is optional; degrade gracefully
             logger.warning("storage unavailable (file/RAG features disabled): %s", exc)
@@ -336,10 +346,13 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         # Persist the user turn now (if a conversation is targeted and storage is available).
         storage: Storage | None = app.state.storage
         persist_id: str | None = None
+        incognito = False
         last_user = next((m.content for m in reversed(req.messages) if m.role == "user"), None)
         if req.conversation_id and storage is not None:
-            if await storage.conversations.get(req.conversation_id) is None:
+            conv = await storage.conversations.get(req.conversation_id)
+            if conv is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation")
+            incognito = conv.incognito
             persist_id = req.conversation_id
             if last_user is not None:
                 await storage.conversations.add_message(
@@ -371,6 +384,22 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 await storage.conversations.add_message(
                     conversation_id=persist_id, role="assistant", content=answer
                 )
+                # Long-term memory: extract durable facts from this exchange (skip incognito).
+                if config.memory_enabled and not incognito:
+                    turn = [ChatMessage(Role(m.role), m.content) for m in req.messages]
+                    turn.append(ChatMessage(Role.ASSISTANT, answer))
+                    try:
+                        await remember(
+                            messages=turn,
+                            gen_provider=provider,
+                            gen_model=req.model or config.default_model,
+                            embed_provider=_resolve_provider(config.embed_provider),
+                            embed_model=config.embed_model,
+                            store=storage.memories,
+                            source={"conversation_id": persist_id},
+                        )
+                    except Exception as exc:  # noqa: BLE001 - memory is best-effort, never break chat
+                        logger.warning("memory extraction failed: %s", exc)
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 

@@ -35,6 +35,9 @@ from personalai_contracts.ports.retriever import (
 )
 from personalai_contracts.ports.storage import (
     GraphStore,
+    MemoryItem,
+    MemoryKind,
+    MemoryStore,
     ObjectStore,
     Repository,
     VectorMatch,
@@ -75,6 +78,9 @@ __all__ = [
     "Retriever",
     # storage
     "GraphStore",
+    "MemoryItem",
+    "MemoryKind",
+    "MemoryStore",
     "ObjectStore",
     "Repository",
     "VectorMatch",
