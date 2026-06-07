@@ -114,6 +114,7 @@ class ConversationCreate(BaseModel):
     """Request body for creating a conversation."""
 
     title: str | None = None
+    incognito: bool = False
 
 
 class MemoryUpdate(BaseModel):
@@ -525,11 +526,16 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     async def create_conversation(body: ConversationCreate) -> StructuredResult:
         storage = _require_storage()
         conv = await storage.conversations.create(
-            id=str(uuid.uuid4()), title=body.title or "New chat"
+            id=str(uuid.uuid4()), title=body.title or "New chat", incognito=body.incognito
         )
         return StructuredResult(
             ok=True,
-            data={"id": conv.id, "title": conv.title, "updated_at": conv.updated_at.isoformat()},
+            data={
+                "id": conv.id,
+                "title": conv.title,
+                "updated_at": conv.updated_at.isoformat(),
+                "incognito": conv.incognito,
+            },
         )
 
     @app.get(

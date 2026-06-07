@@ -7,6 +7,7 @@ import {
   fetchConversation,
   fetchConversations,
   fetchFiles,
+  fetchMemories,
   fetchModels,
   fetchProviders,
   streamChat,
@@ -18,6 +19,7 @@ import {
   type ModelInfo,
 } from "./api";
 import { Markdown } from "./Markdown";
+import { Memory } from "./Memory";
 
 export function Chat({ token }: { token: string }): React.ReactElement {
   const [providers, setProviders] = useState<string[]>([]);
@@ -27,6 +29,9 @@ export function Chat({ token }: { token: string }): React.ReactElement {
   const [files, setFiles] = useState<DocumentInfo[]>([]);
   const [useRag, setUseRag] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [useMemory, setUseMemory] = useState(false);
+  const [incognito, setIncognito] = useState(false);
+  const [showMemory, setShowMemory] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [persistence, setPersistence] = useState(false);
@@ -78,6 +83,17 @@ export function Chat({ token }: { token: string }): React.ReactElement {
         // ungrounded answers after a reload).
         if (f.length > 0) setUseRag(true);
       })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [token]);
+
+  useEffect(() => {
+    let active = true;
+    // Default "use my memory" on when there is anything remembered (mirrors the RAG default).
+    fetchMemories(token)
+      .then((m) => active && m.length > 0 && setUseMemory(true))
       .catch(() => undefined);
     return () => {
       active = false;
@@ -169,13 +185,21 @@ export function Chat({ token }: { token: string }): React.ReactElement {
       // Persist into a conversation (create one lazily on the first message).
       let convId = conversationId;
       if (persistence && convId === null) {
-        const conv = await createConversation(token, content.slice(0, 60));
+        const conv = await createConversation(token, content.slice(0, 60), incognito);
         convId = conv.id;
         setConversationId(conv.id);
       }
       let acc = "";
       await streamChat(
-        { messages: history, model, provider, useRag, conversationId: convId ?? undefined, token },
+        {
+          messages: history,
+          model,
+          provider,
+          useRag,
+          useMemory,
+          conversationId: convId ?? undefined,
+          token,
+        },
         (delta) => {
           acc += delta;
           setMessages([...history, { role: "assistant", content: acc }]);
@@ -202,6 +226,15 @@ export function Chat({ token }: { token: string }): React.ReactElement {
           <button data-testid="new-chat" onClick={() => newChat()}>
             + New chat
           </button>
+          <label style={{ fontSize: "0.8rem" }} title="Incognito chats are not remembered">
+            <input
+              data-testid="incognito-toggle"
+              type="checkbox"
+              checked={incognito}
+              onChange={(e) => setIncognito(e.target.checked)}
+            />{" "}
+            incognito
+          </label>
           {conversations.map((c) => (
             <span key={c.id} style={{ fontSize: "0.8rem" }}>
               <button
@@ -305,7 +338,21 @@ export function Chat({ token }: { token: string }): React.ReactElement {
           />{" "}
           Use my documents
         </label>
+        <label>
+          <input
+            data-testid="memory-toggle"
+            type="checkbox"
+            checked={useMemory}
+            onChange={(e) => setUseMemory(e.target.checked)}
+          />{" "}
+          Use my memory
+        </label>
+        <button data-testid="memory-show" onClick={() => setShowMemory((v) => !v)}>
+          {showMemory ? "Hide memory" : "Memory"}
+        </button>
       </div>
+
+      {showMemory && <Memory token={token} />}
 
       {files.length > 0 && (
         <ul data-testid="file-list" style={{ margin: 0, paddingLeft: "1rem", fontSize: "0.8rem" }}>
