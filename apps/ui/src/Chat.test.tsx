@@ -27,7 +27,17 @@ const MODELS = {
 
 function mockProviders(providers: string[] = ["ollama", "openai"], def = "ollama"): void {
   vi.spyOn(api, "fetchProviders").mockResolvedValue({ default: def, providers });
+  vi.spyOn(api, "fetchFiles").mockResolvedValue([]);
 }
+
+const DOC = {
+  id: "d1",
+  name: "geo.txt",
+  mime: "text/plain",
+  size_bytes: 5,
+  chunk_count: 2,
+  created_at: "2026-06-07T00:00:00Z",
+};
 
 test("loads providers + models and shows capability badges", async () => {
   mockProviders();
@@ -84,4 +94,42 @@ test("surfaces an error when models cannot be loaded", async () => {
   await waitFor(() =>
     expect(screen.getByTestId("chat-error")).toHaveTextContent(/egress is disabled/),
   );
+});
+
+test("uploads a document, lists it, and enables RAG", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchFiles").mockResolvedValueOnce([]).mockResolvedValue([DOC]);
+  const upload = vi.spyOn(api, "uploadFile").mockResolvedValue(DOC);
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("file-input")).toBeInTheDocument());
+
+  const file = new File(["hi"], "geo.txt", { type: "text/plain" });
+  fireEvent.change(screen.getByTestId("file-input"), { target: { files: [file] } });
+
+  await waitFor(() => expect(upload).toHaveBeenCalled());
+  await waitFor(() => expect(screen.getByTestId("file-list")).toHaveTextContent("geo.txt"));
+  expect(screen.getByTestId("rag-toggle")).toBeChecked();
+});
+
+test("renders citations returned with a RAG answer", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "streamChat").mockImplementation(async (_params, onDelta, onCitations) => {
+    onDelta("The capital is Lisbon [1]");
+    onCitations?.([{ n: 1, source_id: "d1", locator: "chunk 0", score: 0.9, name: "geo.txt" }]);
+  });
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe(
+      "qwen3.6:35b-a3b",
+    ),
+  );
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "capital?" } });
+  fireEvent.click(screen.getByTestId("send"));
+
+  await waitFor(() => expect(screen.getByTestId("citations")).toHaveTextContent("geo.txt"));
+  expect(screen.getByTestId("citations")).toHaveTextContent("[1]");
 });
