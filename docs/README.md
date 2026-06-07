@@ -12,6 +12,8 @@ Start here:
 - **[Local chat guide (M1)](./guides/local-chat.md)** — run streaming chat over local Ollama models.
 - **[Remote / frontier providers (M2)](./guides/remote-providers.md)** — opt into OpenAI-compatible
   providers (OpenAI/Azure/vLLM/...) with egress + secrets controls.
+- **[Files + RAG (M3)](./guides/files-and-rag.md)** — ingest documents, chat with citations, and
+  persistent conversation history (PostgreSQL + pgvector).
 
 Reference & development:
 
