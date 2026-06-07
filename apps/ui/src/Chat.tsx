@@ -7,6 +7,7 @@ import {
   type ChatMessage,
   type ModelInfo,
 } from "./api";
+import { Markdown } from "./Markdown";
 
 export function Chat({ token }: { token: string }): React.ReactElement {
   const [providers, setProviders] = useState<string[]>([]);
@@ -132,11 +133,20 @@ export function Chat({ token }: { token: string }): React.ReactElement {
         }}
       >
         {messages.length === 0 && <p style={{ color: "#888" }}>Ask your local model anything.</p>}
-        {messages.map((m, i) => (
-          <p key={i} data-testid={`msg-${m.role}`} style={{ margin: "0.4rem 0" }}>
-            <strong>{m.role === "user" ? "You" : "AI"}:</strong> {m.content}
-          </p>
-        ))}
+        {messages.map((m, i) =>
+          m.role === "assistant" ? (
+            // Assistant replies render as Markdown (block elements, so not inside a <p>).
+            <div key={i} data-testid="msg-assistant" style={{ margin: "0.4rem 0" }}>
+              <strong>AI:</strong>
+              <Markdown content={m.content} />
+            </div>
+          ) : (
+            // User input stays literal text.
+            <p key={i} data-testid="msg-user" style={{ margin: "0.4rem 0" }}>
+              <strong>You:</strong> {m.content}
+            </p>
+          ),
+        )}
       </div>
 
       {error && (
