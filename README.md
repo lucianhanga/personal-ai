@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/lucianhanga/personal-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/lucianhanga/personal-ai/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![Status: M3 — files + RAG](https://img.shields.io/badge/status-M3%20%E2%80%94%20files%20%2B%20RAG-brightgreen.svg)](./docs/guides/files-and-rag.md)
+[![Status: M4 — memory](https://img.shields.io/badge/status-M4%20%E2%80%94%20memory-brightgreen.svg)](./docs/guides/memory.md)
 [![Local-first](https://img.shields.io/badge/local--first-yes-brightgreen.svg)](#principles)
 [![Structured-output-first](https://img.shields.io/badge/structured--output--first-yes-brightgreen.svg)](#principles)
 [![Security-first](https://img.shields.io/badge/security--first-yes-brightgreen.svg)](./SECURITY.md)
@@ -16,12 +16,13 @@ PersonalAI is **extensible** (tools + MCP), **structured-output-first** (schemas
 **open-source-first** (verified provenance only), and **security-first** (zero-trust toward
 tools, files, prompts, model outputs, and MCP servers).
 
-> **Current state:** **M0–M3 complete** — streaming chat in a React UI over **local Ollama models**
-> or **remote OpenAI-compatible providers**, plus **chat-with-your-documents** (file ingestion →
-> pgvector RAG with citations) and **persistent conversation history**. See the
+> **Current state:** **M0–M4 complete** — streaming chat in a React UI over **local Ollama models**
+> or **remote OpenAI-compatible providers**, **chat-with-your-documents** (file ingestion → pgvector
+> RAG with citations), **persistent conversation history**, and **memory** (per-chat short-term
+> summary + cross-chat long-term memory you can view/edit/erase). See the
 > [architecture report](./docs/architecture/PersonalAI-Architecture-Research.md), the
 > [local chat guide](./docs/guides/local-chat.md), [remote providers](./docs/guides/remote-providers.md),
-> and [files + RAG](./docs/guides/files-and-rag.md).
+> [files + RAG](./docs/guides/files-and-rag.md), and [memory](./docs/guides/memory.md).
 
 ## Quickstart (local chat)
 
