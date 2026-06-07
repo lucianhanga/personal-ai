@@ -112,10 +112,8 @@ def test_chat_without_user_message_persists_only_assistant() -> None:
             },
         ) as resp:
             "".join(resp.iter_text())
-        roles = [
-            m["role"]
-            for m in client.get(f"/api/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
-        ]
+        got = client.get(f"/api/conversations/{cid}", headers=AUTH).json()["data"]
+        roles = [m["role"] for m in got["messages"]]
         assert "user" not in roles  # no user turn was present, so none was persisted
 
 
