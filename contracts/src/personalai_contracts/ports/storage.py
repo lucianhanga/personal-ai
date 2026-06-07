@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
+from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -70,8 +72,59 @@ class ObjectStore(Protocol):
 
 @runtime_checkable
 class GraphStore(Protocol):
-    """Graph/KAG store stub (optional, M10). Minimal edge + neighbour interface."""
+    """Graph/KAG store stub (optional, M11). Minimal edge + neighbour interface."""
 
     async def add_edge(self, src: str, relation: str, dst: str) -> None: ...
 
     async def neighbors(self, node: str) -> Sequence[str]: ...
+
+
+class MemoryKind(StrEnum):
+    """Category of a long-term memory (M4)."""
+
+    SEMANTIC = "semantic"  # durable facts ("X works at Y")
+    EPISODIC = "episodic"  # events ("on <date> you asked ...")
+    PREFERENCE = "preference"  # how the user likes things ("answer concisely")
+
+
+@dataclass(frozen=True)
+class MemoryItem:
+    """A stored long-term memory with provenance (read shape)."""
+
+    id: str
+    kind: MemoryKind
+    text: str
+    confidence: float
+    source: Mapping[str, str]
+    created_at: datetime
+    updated_at: datetime
+    superseded: bool = False
+    score: float | None = None  # similarity score when returned from search()
+
+
+@runtime_checkable
+class MemoryStore(Protocol):
+    """Long-term semantic memory: store, vector-search, list, delete (M4)."""
+
+    async def add(
+        self,
+        *,
+        id: str,
+        kind: MemoryKind,
+        text: str,
+        embedding: Sequence[float],
+        confidence: float,
+        source: Mapping[str, str],
+    ) -> MemoryItem: ...
+
+    async def search(self, embedding: Sequence[float], top_k: int = 5) -> Sequence[MemoryItem]: ...
+
+    async def list(self) -> Sequence[MemoryItem]: ...
+
+    async def get(self, memory_id: str) -> MemoryItem | None: ...
+
+    async def update_text(self, memory_id: str, text: str) -> MemoryItem | None: ...
+
+    async def delete(self, memory_id: str) -> None: ...
+
+    async def clear(self) -> None: ...

@@ -7,7 +7,9 @@ They are NOT production adapters. They depend only on the ports (ADR-0001).
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from dataclasses import replace
+from datetime import UTC, datetime
 
 from personalai_contracts.ports.agent import AgentContext, AgentNode, AgentState
 from personalai_contracts.ports.modality import (
@@ -25,6 +27,8 @@ from personalai_contracts.ports.model_provider import (
 )
 from personalai_contracts.ports.retriever import RetrievalQuery, RetrievedItem
 from personalai_contracts.ports.storage import (
+    MemoryItem,
+    MemoryKind,
     VectorMatch,
     VectorRecord,
 )
@@ -128,6 +132,71 @@ class InMemoryVectorRepository:
     async def delete(self, ids: Sequence[str]) -> None:
         for vid in ids:
             self._records.pop(vid, None)
+
+
+class InMemoryMemoryStore:
+    """A dict-backed long-term memory store ranking by dot-product similarity."""
+
+    def __init__(self) -> None:
+        self._items: dict[str, MemoryItem] = {}
+        self._vectors: dict[str, Sequence[float]] = {}
+
+    async def add(
+        self,
+        *,
+        id: str,
+        kind: MemoryKind,
+        text: str,
+        embedding: Sequence[float],
+        confidence: float,
+        source: Mapping[str, str],
+    ) -> MemoryItem:
+        now = datetime.now(tz=UTC)
+        item = MemoryItem(
+            id=id,
+            kind=kind,
+            text=text,
+            confidence=confidence,
+            source=source,
+            created_at=now,
+            updated_at=now,
+        )
+        self._items[id] = item
+        self._vectors[id] = embedding
+        return item
+
+    async def search(self, embedding: Sequence[float], top_k: int = 5) -> Sequence[MemoryItem]:
+        scored = [
+            replace(
+                item,
+                score=sum(a * b for a, b in zip(embedding, self._vectors[mid], strict=False)),
+            )
+            for mid, item in self._items.items()
+        ]
+        scored.sort(key=lambda m: m.score or 0.0, reverse=True)
+        return scored[:top_k]
+
+    async def list(self) -> Sequence[MemoryItem]:
+        return list(self._items.values())
+
+    async def get(self, memory_id: str) -> MemoryItem | None:
+        return self._items.get(memory_id)
+
+    async def update_text(self, memory_id: str, text: str) -> MemoryItem | None:
+        item = self._items.get(memory_id)
+        if item is None:
+            return None
+        updated = replace(item, text=text, updated_at=datetime.now(tz=UTC))
+        self._items[memory_id] = updated
+        return updated
+
+    async def delete(self, memory_id: str) -> None:
+        self._items.pop(memory_id, None)
+        self._vectors.pop(memory_id, None)
+
+    async def clear(self) -> None:
+        self._items.clear()
+        self._vectors.clear()
 
 
 class InMemoryObjectStore:

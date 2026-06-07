@@ -11,6 +11,7 @@ from personalai_contracts.schemas.base import (
     VersionedModel,
     parse_semver,
 )
+from personalai_contracts.schemas.memory import ExtractedFact, ExtractionResult
 from personalai_contracts.schemas.messages import AgentMessage
 from personalai_contracts.schemas.outputs import (
     ErrorInfo,
@@ -41,6 +42,9 @@ __all__ = [
     "parse_semver",
     # messages
     "AgentMessage",
+    # memory extraction
+    "ExtractedFact",
+    "ExtractionResult",
     # outputs
     "ErrorInfo",
     "RepairRequest",

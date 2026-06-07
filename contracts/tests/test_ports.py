@@ -123,6 +123,50 @@ def test_vector_repository() -> None:
     assert all(m.id != "a" for m in asyncio.run(repo.query([1.0, 0.0])))
 
 
+def test_memory_store() -> None:
+    from personalai_contracts.ports import MemoryKind, MemoryStore
+    from personalai_contracts.testing import InMemoryMemoryStore
+
+    store = InMemoryMemoryStore()
+    assert isinstance(store, MemoryStore)
+
+    item = asyncio.run(
+        store.add(
+            id="m1",
+            kind=MemoryKind.SEMANTIC,
+            text="fact one",
+            embedding=[1.0, 0.0],
+            confidence=0.9,
+            source={"conversation_id": "c1"},
+        )
+    )
+    assert item.kind is MemoryKind.SEMANTIC
+    asyncio.run(
+        store.add(
+            id="m2",
+            kind=MemoryKind.PREFERENCE,
+            text="fact two",
+            embedding=[0.0, 1.0],
+            confidence=0.7,
+            source={},
+        )
+    )
+    hits = asyncio.run(store.search([1.0, 0.0], top_k=2))
+    assert hits[0].id == "m1"
+    assert hits[0].score is not None and hits[0].score >= (hits[1].score or 0.0)
+    assert len(asyncio.run(store.list())) == 2
+    assert asyncio.run(store.get("m1")) is not None
+
+    updated = asyncio.run(store.update_text("m1", "fact one v2"))
+    assert updated is not None and updated.text == "fact one v2"
+    assert asyncio.run(store.update_text("missing", "x")) is None
+
+    asyncio.run(store.delete("m1"))
+    assert asyncio.run(store.get("m1")) is None
+    asyncio.run(store.clear())
+    assert asyncio.run(store.list()) == []
+
+
 def test_object_store() -> None:
     store = InMemoryObjectStore()
     assert isinstance(store, ObjectStore)

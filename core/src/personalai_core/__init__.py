@@ -7,6 +7,7 @@ and resolve the configured singletons via :func:`build_services`.
 
 from personalai_core.config import CoreConfig
 from personalai_core.memory import split_recent, summarize
+from personalai_core.memory_extraction import extract_facts, remember
 from personalai_core.registries import Registries
 from personalai_core.registry import Registry, RegistryError
 from personalai_core.retrieval import VectorRetriever
@@ -23,6 +24,8 @@ __all__ = [
     "VectorRetriever",
     "__version__",
     "build_services",
+    "extract_facts",
+    "remember",
     "split_recent",
     "summarize",
 ]

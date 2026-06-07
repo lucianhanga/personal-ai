@@ -38,10 +38,11 @@ _ENV_FIELDS = {
     "MAX_UPLOAD_BYTES": "max_upload_bytes",
     "STM_KEEP_RECENT": "stm_keep_recent",
     "STM_SUMMARIZE": "stm_summarize",
+    "MEMORY_ENABLED": "memory_enabled",
 }
 
 _INT_FIELDS = {"bind_port", "max_upload_bytes", "stm_keep_recent"}
-_BOOL_FIELDS = {"egress_enabled", "stm_summarize"}
+_BOOL_FIELDS = {"egress_enabled", "stm_summarize", "memory_enabled"}
 
 _CSV_FIELDS = {"allowed_origins", "allowed_egress_hosts"}
 
@@ -74,6 +75,8 @@ class CoreConfig(StrictModel):
     # Short-term memory: keep the last N messages verbatim; fold older turns into a rolling summary.
     stm_keep_recent: int = 10
     stm_summarize: bool = True
+    # Long-term memory: extract durable facts after a turn (skipped for incognito conversations).
+    memory_enabled: bool = True
     bind_host: str = Field(default="127.0.0.1", description="Loopback by default.")
     bind_port: int = Field(default=8765, ge=1, le=65535)
     egress_enabled: bool = Field(default=False, description="Network egress off by default.")
