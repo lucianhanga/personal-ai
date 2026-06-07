@@ -315,16 +315,11 @@ def test_memory_extracted_after_chat() -> None:
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_incognito_conversation_skips_memory() -> None:
     with _mem_client() as client:
-        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
-
-        async def _set_incognito() -> None:
-            pool = await create_pool(DB_URL)
-            try:
-                await pool.execute("UPDATE conversations SET incognito = true WHERE id = $1", cid)
-            finally:
-                await pool.close()
-
-        asyncio.run(_set_incognito())
+        created = client.post("/api/conversations", headers=AUTH, json={"incognito": True}).json()[
+            "data"
+        ]
+        assert created["incognito"] is True
+        cid = created["id"]
         with client.stream(
             "POST",
             "/api/chat",

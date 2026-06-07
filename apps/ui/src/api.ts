@@ -46,6 +46,16 @@ export interface ConversationSummary {
   updated_at: string;
 }
 
+export interface MemoryItem {
+  id: string;
+  kind: string;
+  text: string;
+  confidence: number;
+  source: Record<string, string>;
+  created_at: string;
+  updated_at: string;
+}
+
 function authHeaders(token: string): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -126,20 +136,57 @@ export async function deleteFile(token: string, id: string): Promise<void> {
   if (!res.ok) throw new Error(`delete failed: ${res.status}`);
 }
 
-/** Create a new conversation. */
+/** Create a new conversation (optionally incognito = no long-term memory writes). */
 export async function createConversation(
   token: string,
   title?: string,
+  incognito = false,
 ): Promise<ConversationSummary> {
   const res = await fetch(`${API_BASE}/api/conversations`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
-    body: JSON.stringify({ title }),
+    body: JSON.stringify({ title, incognito }),
   });
   if (!res.ok) throw new Error(`create conversation failed: ${res.status}`);
   const body = (await res.json()) as { data?: ConversationSummary };
   if (!body.data) throw new Error("create conversation failed");
   return body.data;
+}
+
+/** List long-term memories. */
+export async function fetchMemories(token: string): Promise<MemoryItem[]> {
+  const res = await fetch(`${API_BASE}/api/memory`, { headers: authHeaders(token) });
+  if (!res.ok) throw new Error(`memory request failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { memories?: MemoryItem[] } };
+  return body.data?.memories ?? [];
+}
+
+/** Edit a memory's text. */
+export async function updateMemory(token: string, id: string, text: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/memory/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) throw new Error(`update memory failed: ${res.status}`);
+}
+
+/** Delete a single memory. */
+export async function deleteMemory(token: string, id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/memory/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error(`delete memory failed: ${res.status}`);
+}
+
+/** Forget everything (delete all memories). */
+export async function forgetAllMemory(token: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/memory`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error(`forget all failed: ${res.status}`);
 }
 
 /** List conversations (most-recent first). */
@@ -183,6 +230,7 @@ export async function streamChat(
     model?: string;
     provider?: string;
     useRag?: boolean;
+    useMemory?: boolean;
     conversationId?: string;
     token: string;
   },
@@ -197,6 +245,7 @@ export async function streamChat(
       model: params.model,
       provider: params.provider,
       use_rag: params.useRag ?? false,
+      use_memory: params.useMemory ?? false,
       conversation_id: params.conversationId,
     }),
   });

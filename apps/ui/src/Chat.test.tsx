@@ -28,6 +28,7 @@ const MODELS = {
 function mockProviders(providers: string[] = ["ollama", "openai"], def = "ollama"): void {
   vi.spyOn(api, "fetchProviders").mockResolvedValue({ default: def, providers });
   vi.spyOn(api, "fetchFiles").mockResolvedValue([]);
+  vi.spyOn(api, "fetchMemories").mockResolvedValue([]);
   // Persistence off by default (no storage); persistence tests override this.
   vi.spyOn(api, "fetchConversations").mockRejectedValue(new Error("no storage"));
 }
