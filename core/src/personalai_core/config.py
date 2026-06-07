@@ -32,6 +32,7 @@ _ENV_FIELDS = {
     "ALLOWED_ORIGINS": "allowed_origins",
     "OPENAI_API_KEY": "openai_api_key",  # pragma: allowlist secret  (env var name, not a secret)
     "OPENAI_BASE_URL": "openai_base_url",
+    "DATABASE_URL": "database_url",
 }
 
 _CSV_FIELDS = {"allowed_origins", "allowed_egress_hosts"}
@@ -57,6 +58,8 @@ class CoreConfig(StrictModel):
     retriever: str = "pgvector"
     vector_repository: str = "pgvector"
     object_store: str = "local"
+    # Dev default: local pgvector via docker-compose (trust auth, no password in code).
+    database_url: str = "postgresql://personalai@127.0.0.1:5432/personalai"
     bind_host: str = Field(default="127.0.0.1", description="Loopback by default.")
     bind_port: int = Field(default=8765, ge=1, le=65535)
     egress_enabled: bool = Field(default=False, description="Network egress off by default.")

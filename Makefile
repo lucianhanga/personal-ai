@@ -2,7 +2,7 @@
 # Python is managed by uv; JS by pnpm. See CONTRIBUTING.md.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup lint format typecheck test arch schemas run-backend sbom audit drift secrets hooks signing-smoke js-install js-typecheck js-test js-lint js check
+.PHONY: help setup lint format typecheck test arch schemas run-backend sbom audit drift secrets hooks signing-smoke db db-down js-install js-typecheck js-test js-lint js check
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -19,7 +19,7 @@ format: ## Ruff format (Python)
 	uv run ruff format .
 
 typecheck: ## mypy type check (Python)
-	uv run mypy contracts core apps/backend providers/ollama providers/openai_compat
+	uv run mypy contracts core apps/backend providers/ollama providers/openai_compat storage/postgres
 
 test: ## Run Python tests with coverage
 	uv run pytest
@@ -32,6 +32,12 @@ schemas: ## Regenerate canonical JSON Schema artifacts (schemas/json)
 
 run-backend: ## Run the loopback backend (set PERSONALAI_AUTH_TOKEN for protected routes)
 	uv run python -m personalai_backend
+
+db: ## Start the local Postgres + pgvector (docker compose)
+	docker compose up -d db
+
+db-down: ## Stop the local Postgres
+	docker compose down
 
 sbom: ## Generate a CycloneDX SBOM of runtime deps (sbom/python.cdx.json)
 	bash scripts/generate_sbom.sh
