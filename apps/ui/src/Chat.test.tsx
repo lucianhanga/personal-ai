@@ -117,6 +117,28 @@ test("uploads a document, lists it, and enables RAG", async () => {
   expect(screen.getByTestId("rag-toggle")).toBeChecked();
 });
 
+test("defaults 'Use my documents' on when documents already exist", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchFiles").mockResolvedValue([DOC]);
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("file-list")).toHaveTextContent("geo.txt"));
+  expect(screen.getByTestId("rag-toggle")).toBeChecked();
+  expect(screen.queryByTestId("rag-hint")).toBeNull();
+});
+
+test("hints when documents exist but RAG is off", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchFiles").mockResolvedValue([DOC]);
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("rag-toggle")).toBeChecked());
+  fireEvent.click(screen.getByTestId("rag-toggle")); // turn it off
+  expect(screen.getByTestId("rag-hint")).toBeInTheDocument();
+});
+
 test("renders citations returned with a RAG answer", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);

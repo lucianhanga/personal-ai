@@ -71,7 +71,13 @@ export function Chat({ token }: { token: string }): React.ReactElement {
     let active = true;
     // Files require storage; if unavailable the list just stays empty (no hard error).
     fetchFiles(token)
-      .then((f) => active && setFiles(f))
+      .then((f) => {
+        if (!active) return;
+        setFiles(f);
+        // If documents are already present, default to using them (avoids silently
+        // ungrounded answers after a reload).
+        if (f.length > 0) setUseRag(true);
+      })
       .catch(() => undefined);
     return () => {
       active = false;
@@ -285,7 +291,12 @@ export function Chat({ token }: { token: string }): React.ReactElement {
           />
         </label>
         {uploading && <span data-testid="upload-status">uploading…</span>}
-        <label style={{ marginLeft: "auto" }}>
+        {files.length > 0 && !useRag && (
+          <span data-testid="rag-hint" style={{ marginLeft: "auto", color: "#b06f00" }}>
+            Not using your documents — turn on to ground answers.
+          </span>
+        )}
+        <label style={{ marginLeft: files.length > 0 && !useRag ? "0.5rem" : "auto" }}>
           <input
             data-testid="rag-toggle"
             type="checkbox"
