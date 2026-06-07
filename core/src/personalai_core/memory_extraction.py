@@ -21,6 +21,22 @@ from personalai_contracts.ports import (
 )
 from personalai_contracts.schemas.memory import ExtractedFact, ExtractionResult
 
+
+async def recall(
+    *,
+    query: str,
+    embed_provider: ModelProvider,
+    embed_model: str,
+    store: MemoryStore,
+    top_k: int = 5,
+) -> list[MemoryItem]:
+    """Return the memories most relevant to ``query`` (empty if nothing embeds/matches)."""
+    embeddings = await embed_provider.embed([query], embed_model)
+    if not embeddings.vectors:
+        return []
+    return list(await store.search(embeddings.vectors[0], top_k))
+
+
 _PROMPT = (
     "Extract durable, user-relevant long-term memories from the conversation excerpt below. "
     "Only include things worth remembering across future chats — stable facts about the user, "
