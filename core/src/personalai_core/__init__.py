@@ -8,6 +8,7 @@ and resolve the configured singletons via :func:`build_services`.
 from personalai_core.config import CoreConfig
 from personalai_core.registries import Registries
 from personalai_core.registry import Registry, RegistryError
+from personalai_core.retrieval import VectorRetriever
 from personalai_core.services import Services, build_services
 
 __version__ = "0.0.0"
@@ -18,6 +19,7 @@ __all__ = [
     "Registry",
     "RegistryError",
     "Services",
+    "VectorRetriever",
     "__version__",
     "build_services",
 ]

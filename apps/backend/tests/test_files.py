@@ -15,7 +15,7 @@ from personalai_backend.composition import bootstrap
 from personalai_contracts.ports import EmbeddingResult
 from personalai_contracts.testing import FakeModelProvider
 from personalai_core import CoreConfig
-from personalai_storage_postgres import VECTOR_DIM, create_pool
+from personalai_storage_postgres import VECTOR_DIM, apply_migrations, create_pool
 
 TOKEN = "test-secret-token"
 DB_URL = os.environ.get(
@@ -102,3 +102,84 @@ def test_delete_unknown_document_404() -> None:
     boot.registries.model_providers.register("fakeembed", _Embed1024(name="fakeembed"))
     with TestClient(create_app(boot)) as client:
         assert client.delete("/api/files/does-not-exist", headers=AUTH).status_code == 404
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_chat_with_rag_emits_citations() -> None:
+    config = CoreConfig(
+        auth_token=TOKEN,
+        model_provider="fakeembed",
+        embed_provider="fakeembed",
+        database_url=DB_URL,
+    )
+    boot = bootstrap(config=config)
+    boot.registries.model_providers.register("fakeembed", _Embed1024(name="fakeembed"))
+    with TestClient(create_app(boot)) as client:
+        up = client.post(
+            "/api/files",
+            headers=AUTH,
+            files={"file": ("geo.txt", b"Lisbon is the capital of Portugal. " * 10, "text/plain")},
+        )
+        assert up.json()["data"]["chunk_count"] > 0
+        with client.stream(
+            "POST",
+            "/api/chat",
+            headers=AUTH,
+            json={
+                "messages": [{"role": "user", "content": "What is the capital?"}],
+                "use_rag": True,
+            },
+        ) as resp:
+            body = "".join(resp.iter_text())
+        assert "event: citations" in body
+        assert "source_id" in body
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_chat_with_rag_no_matches_emits_no_citations() -> None:
+    async def _truncate() -> None:
+        pool = await create_pool(DB_URL)
+        try:
+            await apply_migrations(pool)
+            await pool.execute("TRUNCATE vectors")
+        finally:
+            await pool.close()
+
+    asyncio.run(_truncate())
+    config = CoreConfig(
+        auth_token=TOKEN,
+        model_provider="fakeembed",
+        embed_provider="fakeembed",
+        database_url=DB_URL,
+    )
+    boot = bootstrap(config=config)
+    boot.registries.model_providers.register("fakeembed", _Embed1024(name="fakeembed"))
+    with TestClient(create_app(boot)) as client:
+        with client.stream(
+            "POST",
+            "/api/chat",
+            headers=AUTH,
+            json={"messages": [{"role": "user", "content": "anything?"}], "use_rag": True},
+        ) as resp:
+            body = "".join(resp.iter_text())
+        assert "event: citations" not in body
+
+
+def test_chat_with_rag_without_storage_streams_normally() -> None:
+    # use_rag requested but no DB -> retrieval is skipped (no citations), chat still works.
+    config = CoreConfig(
+        auth_token=TOKEN,
+        model_provider="fakeembed",
+        database_url="postgresql://personalai@127.0.0.1:59999/x",
+    )
+    boot = bootstrap(config=config)
+    boot.registries.model_providers.register("fakeembed", _Embed1024(name="fakeembed"))
+    with TestClient(create_app(boot)) as client:
+        with client.stream(
+            "POST",
+            "/api/chat",
+            headers=AUTH,
+            json={"messages": [{"role": "user", "content": "hi"}], "use_rag": True},
+        ) as resp:
+            body = "".join(resp.iter_text())
+        assert "event: citations" not in body

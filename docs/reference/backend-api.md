@@ -24,7 +24,10 @@ OpenAPI docs are served at `/docs`.
 | GET | `/api/status` | bearer token | `StructuredResult` | Example protected route returning a validated structured-output envelope. |
 | GET | `/api/providers` | bearer token | `StructuredResult` | Lists registered providers + the default (M2-2). |
 | GET | `/api/models` | bearer token | `StructuredResult` | Lists a provider's models + capabilities; `?provider=` to choose (M1-4/M2-2). |
-| POST | `/api/chat` | bearer token | `text/event-stream` (SSE) | Streaming chat; optional `"provider"` in the body selects local vs remote (M1-3/M2-2). |
+| POST | `/api/chat` | bearer token | `text/event-stream` (SSE) | Streaming chat; `"provider"` selects local/remote; `"use_rag": true` grounds the answer in ingested documents and emits a `citations` event (M1-3/M2-2/M3-3). |
+| POST | `/api/files` | bearer token | `StructuredResult` | Upload a file (txt/md/pdf/docx) -> parse/chunk/embed/store (M3-2). |
+| GET | `/api/files` | bearer token | `StructuredResult` | List ingested documents (M3-2). |
+| DELETE | `/api/files/{id}` | bearer token | `StructuredResult` | Delete a document and its vectors (M3-2). |
 
 ```bash
 curl http://127.0.0.1:8765/health
