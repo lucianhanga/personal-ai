@@ -40,6 +40,12 @@ export interface Citation {
   name: string | null;
 }
 
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  updated_at: string;
+}
+
 function authHeaders(token: string): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -120,6 +126,53 @@ export async function deleteFile(token: string, id: string): Promise<void> {
   if (!res.ok) throw new Error(`delete failed: ${res.status}`);
 }
 
+/** Create a new conversation. */
+export async function createConversation(
+  token: string,
+  title?: string,
+): Promise<ConversationSummary> {
+  const res = await fetch(`${API_BASE}/api/conversations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ title }),
+  });
+  if (!res.ok) throw new Error(`create conversation failed: ${res.status}`);
+  const body = (await res.json()) as { data?: ConversationSummary };
+  if (!body.data) throw new Error("create conversation failed");
+  return body.data;
+}
+
+/** List conversations (most-recent first). */
+export async function fetchConversations(token: string): Promise<ConversationSummary[]> {
+  const res = await fetch(`${API_BASE}/api/conversations`, { headers: authHeaders(token) });
+  if (!res.ok) throw new Error(`conversations request failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { conversations?: ConversationSummary[] } };
+  return body.data?.conversations ?? [];
+}
+
+/** Load a conversation's messages. */
+export async function fetchConversation(
+  token: string,
+  id: string,
+): Promise<{ id: string; title: string; messages: ChatMessage[] }> {
+  const res = await fetch(`${API_BASE}/api/conversations/${id}`, { headers: authHeaders(token) });
+  if (!res.ok) throw new Error(`conversation request failed: ${res.status}`);
+  const body = (await res.json()) as {
+    data?: { id: string; title: string; messages: ChatMessage[] };
+  };
+  if (!body.data) throw new Error("conversation request failed");
+  return body.data;
+}
+
+/** Delete a conversation. */
+export async function deleteConversation(token: string, id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/conversations/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error(`delete conversation failed: ${res.status}`);
+}
+
 /**
  * Stream a chat completion. Calls `onDelta` for each token, `onCitations` for the RAG citations
  * event (if any), and resolves when done. Parses the SSE frames emitted by POST /api/chat.
@@ -130,6 +183,7 @@ export async function streamChat(
     model?: string;
     provider?: string;
     useRag?: boolean;
+    conversationId?: string;
     token: string;
   },
   onDelta: (delta: string) => void,
@@ -143,6 +197,7 @@ export async function streamChat(
       model: params.model,
       provider: params.provider,
       use_rag: params.useRag ?? false,
+      conversation_id: params.conversationId,
     }),
   });
   if (!res.ok || res.body === null) throw new Error(`chat request failed: ${res.status}`);

@@ -28,7 +28,11 @@ const MODELS = {
 function mockProviders(providers: string[] = ["ollama", "openai"], def = "ollama"): void {
   vi.spyOn(api, "fetchProviders").mockResolvedValue({ default: def, providers });
   vi.spyOn(api, "fetchFiles").mockResolvedValue([]);
+  // Persistence off by default (no storage); persistence tests override this.
+  vi.spyOn(api, "fetchConversations").mockRejectedValue(new Error("no storage"));
 }
+
+const CONV = { id: "c1", title: "Old chat", updated_at: "2026-06-07T00:00:00Z" };
 
 const DOC = {
   id: "d1",
@@ -132,4 +136,58 @@ test("renders citations returned with a RAG answer", async () => {
 
   await waitFor(() => expect(screen.getByTestId("citations")).toHaveTextContent("geo.txt"));
   expect(screen.getByTestId("citations")).toHaveTextContent("[1]");
+});
+
+test("shows conversations and lazily creates one on first send", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchConversations").mockResolvedValue([CONV]);
+  const create = vi
+    .spyOn(api, "createConversation")
+    .mockResolvedValue({ id: "c2", title: "hello", updated_at: "now" });
+  const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
+    onDelta("hi");
+  });
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("conversations")).toBeInTheDocument());
+  expect(screen.getByTestId("open-c1")).toHaveTextContent("Old chat");
+
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe(
+      "qwen3.6:35b-a3b",
+    ),
+  );
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "hello" } });
+  fireEvent.click(screen.getByTestId("send"));
+
+  await waitFor(() => expect(create).toHaveBeenCalled());
+  await waitFor(() =>
+    expect(stream).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: "c2" }),
+      expect.any(Function),
+      expect.any(Function),
+    ),
+  );
+});
+
+test("opens a past conversation and loads its messages", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchConversations").mockResolvedValue([CONV]);
+  vi.spyOn(api, "fetchConversation").mockResolvedValue({
+    id: "c1",
+    title: "Old chat",
+    messages: [
+      { role: "user", content: "earlier question" },
+      { role: "assistant", content: "earlier answer" },
+    ],
+  });
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("open-c1")).toBeInTheDocument());
+  fireEvent.click(screen.getByTestId("open-c1"));
+
+  await waitFor(() => expect(screen.getByTestId("msg-user")).toHaveTextContent("earlier question"));
+  expect(screen.getByTestId("msg-assistant")).toHaveTextContent("earlier answer");
 });

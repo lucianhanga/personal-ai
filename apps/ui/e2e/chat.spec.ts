@@ -49,6 +49,19 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   await page.route("**/api/files", (r) =>
     r.fulfill({ status: 200, contentType: "application/json", body: FILES_BODY }),
   );
+  await page.route("**/api/conversations", (r) =>
+    r.request().method() === "POST"
+      ? r.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: '{"ok":true,"data":{"id":"c1","title":"hi there","updated_at":"2026-06-07T00:00:00Z"}}',
+        })
+      : r.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: '{"ok":true,"data":{"conversations":[]}}',
+        }),
+  );
   await page.route("**/api/chat", (r) =>
     r.fulfill({ status: 200, contentType: "text/event-stream", body: CHAT_SSE }),
   );

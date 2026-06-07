@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 
 import {
+  createConversation,
+  deleteConversation,
   deleteFile,
+  fetchConversation,
+  fetchConversations,
   fetchFiles,
   fetchModels,
   fetchProviders,
@@ -9,6 +13,7 @@ import {
   uploadFile,
   type ChatMessage,
   type Citation,
+  type ConversationSummary,
   type DocumentInfo,
   type ModelInfo,
 } from "./api";
@@ -22,6 +27,9 @@ export function Chat({ token }: { token: string }): React.ReactElement {
   const [files, setFiles] = useState<DocumentInfo[]>([]);
   const [useRag, setUseRag] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [persistence, setPersistence] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [citations, setCitations] = useState<Record<number, Citation[]>>({});
   const [input, setInput] = useState("");
@@ -71,8 +79,52 @@ export function Chat({ token }: { token: string }): React.ReactElement {
   }, [token]);
 
   useEffect(() => {
+    let active = true;
+    // Conversation history requires storage; if unavailable, persistence stays off.
+    fetchConversations(token)
+      .then((c) => {
+        if (!active) return;
+        setConversations(c);
+        setPersistence(true);
+      })
+      .catch(() => active && setPersistence(false));
+    return () => {
+      active = false;
+    };
+  }, [token]);
+
+  useEffect(() => {
     listRef.current?.scrollTo(0, listRef.current.scrollHeight);
   }, [messages]);
+
+  function newChat(): void {
+    setConversationId(null);
+    setMessages([]);
+    setCitations({});
+    setError(null);
+  }
+
+  async function openConversation(id: string): Promise<void> {
+    setError(null);
+    try {
+      const conv = await fetchConversation(token, id);
+      setConversationId(conv.id);
+      setMessages(conv.messages);
+      setCitations({});
+    } catch (e: unknown) {
+      setError(String(e));
+    }
+  }
+
+  async function removeConversation(id: string): Promise<void> {
+    try {
+      await deleteConversation(token, id);
+      setConversations(conversations.filter((c) => c.id !== id));
+      if (id === conversationId) newChat();
+    } catch (e: unknown) {
+      setError(String(e));
+    }
+  }
 
   async function onUpload(file: File | undefined): Promise<void> {
     if (!file) return;
@@ -108,15 +160,23 @@ export function Chat({ token }: { token: string }): React.ReactElement {
     setMessages([...history, { role: "assistant", content: "" }]);
     setBusy(true);
     try {
+      // Persist into a conversation (create one lazily on the first message).
+      let convId = conversationId;
+      if (persistence && convId === null) {
+        const conv = await createConversation(token, content.slice(0, 60));
+        convId = conv.id;
+        setConversationId(conv.id);
+      }
       let acc = "";
       await streamChat(
-        { messages: history, model, provider, useRag, token },
+        { messages: history, model, provider, useRag, conversationId: convId ?? undefined, token },
         (delta) => {
           acc += delta;
           setMessages([...history, { role: "assistant", content: acc }]);
         },
         (cites) => setCitations((prev) => ({ ...prev, [assistantIndex]: cites })),
       );
+      if (persistence) setConversations(await fetchConversations(token));
     } catch (e: unknown) {
       setError(String(e));
     } finally {
@@ -128,6 +188,41 @@ export function Chat({ token }: { token: string }): React.ReactElement {
 
   return (
     <section aria-label="chat" style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+      {persistence && (
+        <div
+          data-testid="conversations"
+          style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}
+        >
+          <button data-testid="new-chat" onClick={() => newChat()}>
+            + New chat
+          </button>
+          {conversations.map((c) => (
+            <span key={c.id} style={{ fontSize: "0.8rem" }}>
+              <button
+                data-testid={`open-${c.id}`}
+                onClick={() => void openConversation(c.id)}
+                style={{
+                  fontWeight: c.id === conversationId ? 700 : 400,
+                  maxWidth: 160,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {c.title}
+              </button>
+              <button
+                data-testid={`del-conv-${c.id}`}
+                onClick={() => void removeConversation(c.id)}
+                title="delete conversation"
+                style={{ fontSize: "0.7rem" }}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
         <label htmlFor="provider">Provider:</label>
         <select
