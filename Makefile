@@ -19,7 +19,7 @@ format: ## Ruff format (Python)
 	uv run ruff format .
 
 typecheck: ## mypy type check (Python)
-	uv run mypy contracts core apps/backend providers/ollama providers/openai_compat storage/postgres
+	uv run mypy contracts core apps/backend providers/ollama providers/openai_compat storage/postgres modalities/files
 
 test: ## Run Python tests with coverage
 	uv run pytest

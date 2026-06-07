@@ -11,8 +11,11 @@ dependencies = [
     "personalai-core",
     "personalai-provider-ollama",
     "personalai-provider-openai",
+    "personalai-modality-files",
+    "personalai-storage-postgres",
     "fastapi>=0.111",
     "uvicorn>=0.30",
+    "python-multipart>=0.0.9",
 ]
 
 [build-system]
@@ -27,3 +30,5 @@ personalai-contracts = { workspace = true }
 personalai-core = { workspace = true }
 personalai-provider-ollama = { workspace = true }
 personalai-provider-openai = { workspace = true }
+personalai-modality-files = { workspace = true }
+personalai-storage-postgres = { workspace = true }

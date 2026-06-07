@@ -15,21 +15,43 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
 from personalai_backend import __version__
 from personalai_backend.composition import Bootstrap, bootstrap
+from personalai_backend.ingestion import chunk_ids, ingest_file
 from personalai_contracts.ports import ChatMessage, GenerationRequest, ModelProvider, Role
 from personalai_contracts.schemas import ErrorInfo, StructuredResult
 from personalai_core import CoreConfig, RegistryError
 from personalai_core.registries import Registries
+from personalai_modality_files import UnsupportedFileTypeError
+from personalai_storage_postgres import (
+    PgDocumentStore,
+    PgVectorRepository,
+    apply_migrations,
+    create_pool,
+)
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class Storage:
+    """Live storage handles (set on startup when a database is reachable)."""
+
+    pool: object  # asyncpg.Pool
+    vectors: PgVectorRepository
+    documents: PgDocumentStore
 
 
 class HealthResponse(BaseModel):
@@ -93,18 +115,34 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         )
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        yield
-        # Close any providers that hold network clients (e.g. the Ollama httpx client).
-        for name in boot.registries.model_providers.names():
-            provider = boot.registries.model_providers.get(name)
-            aclose = getattr(provider, "aclose", None)
-            if aclose is not None:
-                await aclose()
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        # Best-effort storage startup: connect to Postgres, migrate, register the vector repo.
+        # If the DB is unreachable, the app still runs (chat works); file/RAG features return 503.
+        try:
+            pool = await create_pool(boot.config.database_url)
+            await apply_migrations(pool)
+            vectors = PgVectorRepository(pool)
+            boot.registries.vector_repositories.register("pgvector", vectors, overwrite=True)
+            app.state.storage = Storage(pool=pool, vectors=vectors, documents=PgDocumentStore(pool))
+        except Exception as exc:  # noqa: BLE001 - storage is optional; degrade gracefully
+            logger.warning("storage unavailable (file/RAG features disabled): %s", exc)
+            app.state.storage = None
+        try:
+            yield
+        finally:
+            storage = app.state.storage
+            if storage is not None:
+                await storage.pool.close()
+            for name in boot.registries.model_providers.names():
+                provider = boot.registries.model_providers.get(name)
+                aclose = getattr(provider, "aclose", None)
+                if aclose is not None:
+                    await aclose()
 
     app = FastAPI(title="PersonalAI Backend", version=__version__, lifespan=lifespan)
     app.state.bootstrap = boot
     app.state.config = boot.config
+    app.state.storage = None  # set on startup if a database is reachable
 
     # CORS restricted to the configured (loopback) origins: enables the browser SPA while still
     # acting as an origin allowlist. The bearer token remains the real auth control; credentials
@@ -216,5 +254,80 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 yield f"event: error\ndata: {error.model_dump_json()}\n\n".encode()
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    def _require_storage() -> Storage:
+        storage: Storage | None = app.state.storage
+        if storage is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="storage unavailable (no database configured/reachable)",
+            )
+        return storage
+
+    @app.post("/api/files", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    async def upload_file(file: UploadFile = File(...)) -> StructuredResult:
+        config: CoreConfig = app.state.config
+        storage = _require_storage()
+        content = await file.read()
+        if len(content) > config.max_upload_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"file exceeds {config.max_upload_bytes} bytes",
+            )
+        provider = _resolve_provider(config.embed_provider)
+        try:
+            result = await ingest_file(
+                content=content,
+                filename=file.filename or "upload",
+                document_id=str(uuid.uuid4()),
+                embed_model=config.embed_model,
+                provider=provider,
+                vectors=storage.vectors,
+            )
+        except UnsupportedFileTypeError as exc:
+            return StructuredResult(
+                ok=False, error=ErrorInfo(code="E_UNSUPPORTED_FILE", message=str(exc))
+            )
+        doc = await storage.documents.add(
+            id=result.document_id,
+            name=result.name,
+            mime=result.mime,
+            size_bytes=result.size_bytes,
+            chunk_count=result.chunk_count,
+        )
+        return StructuredResult(
+            ok=True,
+            data={"id": doc.id, "name": doc.name, "mime": doc.mime, "chunk_count": doc.chunk_count},
+        )
+
+    @app.get("/api/files", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    async def list_files() -> StructuredResult:
+        storage = _require_storage()
+        docs = [
+            {
+                "id": d.id,
+                "name": d.name,
+                "mime": d.mime,
+                "size_bytes": d.size_bytes,
+                "chunk_count": d.chunk_count,
+                "created_at": d.created_at.isoformat(),
+            }
+            for d in await storage.documents.list()
+        ]
+        return StructuredResult(ok=True, data={"files": docs})
+
+    @app.delete(
+        "/api/files/{document_id}",
+        response_model=StructuredResult,
+        dependencies=[Depends(_require_token)],
+    )
+    async def delete_file(document_id: str) -> StructuredResult:
+        storage = _require_storage()
+        doc = await storage.documents.get(document_id)
+        if doc is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document not found")
+        await storage.vectors.delete(chunk_ids(doc.id, doc.chunk_count))
+        await storage.documents.delete(doc.id)
+        return StructuredResult(ok=True, data={"id": doc.id})
 
     return app
