@@ -42,6 +42,7 @@ from personalai_core import CoreConfig, RegistryError, VectorRetriever
 from personalai_core.registries import Registries
 from personalai_modality_files import UnsupportedFileTypeError
 from personalai_storage_postgres import (
+    PgConversationStore,
     PgDocumentStore,
     PgVectorRepository,
     apply_migrations,
@@ -58,6 +59,7 @@ class Storage:
     pool: object  # asyncpg.Pool
     vectors: PgVectorRepository
     documents: PgDocumentStore
+    conversations: PgConversationStore
 
 
 class HealthResponse(BaseModel):
@@ -91,6 +93,14 @@ class ChatRequest(BaseModel):
     # Retrieval-augmented generation over ingested documents (M3-3).
     use_rag: bool = False
     rag_top_k: int = 4
+    # When set (and storage is available), the turn is persisted to this conversation (M3-4).
+    conversation_id: str | None = None
+
+
+class ConversationCreate(BaseModel):
+    """Request body for creating a conversation."""
+
+    title: str | None = None
 
 
 def _require_token(request: Request, authorization: str | None = Header(default=None)) -> None:
@@ -132,7 +142,12 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             await apply_migrations(pool)
             vectors = PgVectorRepository(pool)
             boot.registries.vector_repositories.register("pgvector", vectors, overwrite=True)
-            app.state.storage = Storage(pool=pool, vectors=vectors, documents=PgDocumentStore(pool))
+            app.state.storage = Storage(
+                pool=pool,
+                vectors=vectors,
+                documents=PgDocumentStore(pool),
+                conversations=PgConversationStore(pool),
+            )
         except Exception as exc:  # noqa: BLE001 - storage is optional; degrade gracefully
             logger.warning("storage unavailable (file/RAG features disabled): %s", exc)
             app.state.storage = None
@@ -287,11 +302,26 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             think=req.think,
         )
 
+        # Persist the user turn now (if a conversation is targeted and storage is available).
+        storage: Storage | None = app.state.storage
+        persist_id: str | None = None
+        last_user = next((m.content for m in reversed(req.messages) if m.role == "user"), None)
+        if req.conversation_id and storage is not None:
+            if await storage.conversations.get(req.conversation_id) is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation")
+            persist_id = req.conversation_id
+            if last_user is not None:
+                await storage.conversations.add_message(
+                    conversation_id=persist_id, role="user", content=last_user
+                )
+
         async def event_stream() -> AsyncIterator[bytes]:
             if citations:
                 yield f"event: citations\ndata: {json.dumps(citations)}\n\n".encode()
+            answer = ""
             try:
                 async for chunk in provider.stream(generation):
+                    answer += chunk.delta
                     payload = {
                         "delta": chunk.delta,
                         "thinking": chunk.thinking,
@@ -304,6 +334,12 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     ok=False, error=ErrorInfo(code="E_GENERATION", message=str(exc))
                 )
                 yield f"event: error\ndata: {error.model_dump_json()}\n\n".encode()
+                return
+            # Persist the assistant turn after a successful stream.
+            if persist_id is not None and storage is not None and answer:
+                await storage.conversations.add_message(
+                    conversation_id=persist_id, role="assistant", content=answer
+                )
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -381,5 +417,61 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         await storage.vectors.delete(chunk_ids(doc.id, doc.chunk_count))
         await storage.documents.delete(doc.id)
         return StructuredResult(ok=True, data={"id": doc.id})
+
+    @app.post(
+        "/api/conversations",
+        response_model=StructuredResult,
+        dependencies=[Depends(_require_token)],
+    )
+    async def create_conversation(body: ConversationCreate) -> StructuredResult:
+        storage = _require_storage()
+        conv = await storage.conversations.create(
+            id=str(uuid.uuid4()), title=body.title or "New chat"
+        )
+        return StructuredResult(
+            ok=True,
+            data={"id": conv.id, "title": conv.title, "updated_at": conv.updated_at.isoformat()},
+        )
+
+    @app.get(
+        "/api/conversations",
+        response_model=StructuredResult,
+        dependencies=[Depends(_require_token)],
+    )
+    async def list_conversations() -> StructuredResult:
+        storage = _require_storage()
+        items = [
+            {"id": c.id, "title": c.title, "updated_at": c.updated_at.isoformat()}
+            for c in await storage.conversations.list()
+        ]
+        return StructuredResult(ok=True, data={"conversations": items})
+
+    @app.get(
+        "/api/conversations/{conversation_id}",
+        response_model=StructuredResult,
+        dependencies=[Depends(_require_token)],
+    )
+    async def get_conversation(conversation_id: str) -> StructuredResult:
+        storage = _require_storage()
+        conv = await storage.conversations.get(conversation_id)
+        if conv is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation")
+        messages = [
+            {"role": m.role, "content": m.content}
+            for m in await storage.conversations.list_messages(conversation_id)
+        ]
+        return StructuredResult(
+            ok=True, data={"id": conv.id, "title": conv.title, "messages": messages}
+        )
+
+    @app.delete(
+        "/api/conversations/{conversation_id}",
+        response_model=StructuredResult,
+        dependencies=[Depends(_require_token)],
+    )
+    async def delete_conversation(conversation_id: str) -> StructuredResult:
+        storage = _require_storage()
+        await storage.conversations.delete(conversation_id)
+        return StructuredResult(ok=True, data={"id": conversation_id})
 
     return app
