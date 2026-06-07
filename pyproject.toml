@@ -3,7 +3,7 @@
 # docs/architecture/PersonalAI-Architecture-Research.md (Section 22).
 
 [tool.uv.workspace]
-members = ["contracts", "core", "apps/backend", "providers/ollama", "providers/openai_compat", "storage/postgres"]
+members = ["contracts", "core", "apps/backend", "providers/ollama", "providers/openai_compat", "storage/postgres", "modalities/files"]
 
 [dependency-groups]
 dev = [
@@ -18,6 +18,7 @@ dev = [
     "detect-secrets>=1.5",
     "pre-commit>=3.7",
     "respx>=0.21",
+    "fpdf2>=2.7",
 ]
 
 # ---------------------------------------------------------------------------
@@ -26,11 +27,15 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["contracts/src", "core/src", "apps/backend/src", "providers/ollama/src", "providers/openai_compat/src", "storage/postgres/src"]
+src = ["contracts/src", "core/src", "apps/backend/src", "providers/ollama/src", "providers/openai_compat/src", "storage/postgres/src", "modalities/files/src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4", "PTH"]
 ignore = []
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency injectables are used as argument defaults by design.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.File", "fastapi.Header", "fastapi.Query"]
 
 [tool.ruff.lint.isort]
 known-first-party = [
@@ -40,6 +45,7 @@ known-first-party = [
     "personalai_provider_ollama",
     "personalai_provider_openai",
     "personalai_storage_postgres",
+    "personalai_modality_files",
 ]
 
 # ---------------------------------------------------------------------------
@@ -52,7 +58,7 @@ warn_unused_configs = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 show_error_codes = true
-mypy_path = ["contracts/src", "core/src", "apps/backend/src", "providers/ollama/src", "providers/openai_compat/src", "storage/postgres/src"]
+mypy_path = ["contracts/src", "core/src", "apps/backend/src", "providers/ollama/src", "providers/openai_compat/src", "storage/postgres/src", "modalities/files/src"]
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
@@ -65,7 +71,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-ra -q --import-mode=importlib --cov --cov-report=term-missing --cov-report=xml"
-testpaths = ["contracts/tests", "core/tests", "apps/backend/tests", "providers/ollama/tests", "providers/openai_compat/tests", "storage/postgres/tests"]
+testpaths = ["contracts/tests", "core/tests", "apps/backend/tests", "providers/ollama/tests", "providers/openai_compat/tests", "storage/postgres/tests", "modalities/files/tests"]
 filterwarnings = [
     # Third-party: starlette's TestClient warns to migrate to httpx2; tracked, not ours.
     "ignore:Using `httpx` with `starlette.testclient`.*",
@@ -80,6 +86,7 @@ source = [
     "personalai_provider_ollama",
     "personalai_provider_openai",
     "personalai_storage_postgres",
+    "personalai_modality_files",
 ]
 
 [tool.coverage.report]

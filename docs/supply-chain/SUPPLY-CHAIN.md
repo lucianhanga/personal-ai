@@ -9,7 +9,7 @@
 > [Dependency Policy](../policies/DEPENDENCY-POLICY.md). A generated SBOM (CycloneDX) is the
 > machine-readable companion to this human-readable register.
 
-- **Last reviewed:** 2026-06-07 (M3-1: PostgreSQL + pgvector + asyncpg storage adapters)
+- **Last reviewed:** 2026-06-07 (M3-2: ingestion deps — pypdf, python-docx, python-multipart; fpdf2 dev)
 - **Status legend:** `planned` (vetted, not yet in code) · `adopted` (in the build) · `evaluating` · `rejected`
 - **Provenance note:** Licenses below are grounded in public sources cited in the architecture
   report. They MUST be re-verified against each project's `LICENSE` file at pin time (Phase 0).
@@ -40,6 +40,7 @@
 | **FastAPI** | Sebastián Ramírez (tiangolo) | MIT | Mature, very active | **adopted** (M0-5) | Loopback API: async, typed, OpenAPI, Pydantic-native | Bind loopback; auth + origin allowlist; validate I/O | Litestar, Flask |
 | **Uvicorn** | Encode | BSD-3-Clause | Mature | **adopted** (M0-5) | ASGI server for the backend | Bind loopback by default | Hypercorn |
 | **Starlette** | Encode | BSD-3-Clause | Mature | **adopted** (M0-5, via FastAPI) | ASGI toolkit underlying FastAPI | — | — |
+| **python-multipart** | Andrew Dunham / Encode | Apache-2.0 | Mature | **adopted** (M3-2) | Multipart file uploads for FastAPI | Size-limited uploads | — |
 | **httpx** | Encode | BSD-3-Clause | Mature | **adopted** (M0-5 test; M1 runtime) | FastAPI TestClient transport; runtime HTTP client for the Ollama provider | — | — |
 
 ## 3. Storage & retrieval
@@ -60,6 +61,8 @@
 |---|---|---|---|---|---|---|---|
 | **Apache Tika** | Apache Software Foundation | Apache-2.0 | Very mature | planned | Broad file-type detection/parsing (~75 parsers) | Parse untrusted files in sandbox | Unstructured |
 | **IBM Docling** | IBM Research (DS4SD) | Open source (verify, MIT-family) | Maturing, active | planned | AI layout + table extraction for complex PDFs | Runs AI models; sandbox; resource limits | Unstructured, Tika |
+| **pypdf** | py-pdf | BSD-3-Clause | Mature | **adopted** (M3-2) | PDF text extraction (lightweight) | Parse untrusted files; text only | Docling, Tika |
+| **python-docx** | python-openxml | MIT | Mature | **adopted** (M3-2) | DOCX text extraction | Text only | Docling, Tika |
 | **faster-whisper** | SYSTRAN | MIT | Mature | planned | STT, ~4x faster than openai/whisper (CTranslate2) | Local; verify model weights | openai/whisper, WhisperLive |
 | **OpenAI Whisper** | OpenAI | MIT | Mature | evaluating | Reference STT model/weights | — | faster-whisper |
 | **Piper** | rhasspy | MIT | Mature | planned | Fast local neural TTS | Local | Coqui-family |
@@ -116,6 +119,7 @@ supply chain (build integrity).
 | **cyclonedx-bom** | CycloneDX (OWASP) | Apache-2.0 | Mature | adopted (M0-8) | Generates the CycloneDX SBOM | — | Syft |
 | **detect-secrets** | Yelp | Apache-2.0 | Mature | adopted (M0-10) | Secret scanning (pre-commit + CI) with a committed baseline | Baseline reviewed on change | gitleaks, trufflehog |
 | **pre-commit** | pre-commit (Anthony Sottile) | MIT | Mature | adopted (M0-10) | Local git hooks (secret scan, ruff) | Hooks call pinned uv tools | — |
+| **fpdf2** | PyFPDF / Lucas Cimon | LGPL-3.0 (lib) | Mature | adopted (M3-2, dev) | Generate sample PDFs in tests | Test-only; not shipped | reportlab |
 | **Playwright** | Microsoft | Apache-2.0 | Mature | adopted (M0-6) | UI e2e (Chromium) | Browsers pinned via lockfile; installed in CI | Cypress |
 | **Testing Library (react, jest-dom)** | Testing Library (Kent C. Dodds et al.) | MIT | Mature | adopted (M0-6) | React component tests | — | — |
 | **jsdom** | jsdom | MIT | Mature | adopted (M0-6) | DOM env for Vitest | — | happy-dom |

@@ -33,7 +33,12 @@ _ENV_FIELDS = {
     "OPENAI_API_KEY": "openai_api_key",  # pragma: allowlist secret  (env var name, not a secret)
     "OPENAI_BASE_URL": "openai_base_url",
     "DATABASE_URL": "database_url",
+    "EMBED_PROVIDER": "embed_provider",
+    "EMBED_MODEL": "embed_model",
+    "MAX_UPLOAD_BYTES": "max_upload_bytes",
 }
+
+_INT_FIELDS = {"bind_port", "max_upload_bytes"}
 
 _CSV_FIELDS = {"allowed_origins", "allowed_egress_hosts"}
 
@@ -60,6 +65,9 @@ class CoreConfig(StrictModel):
     object_store: str = "local"
     # Dev default: local pgvector via docker-compose (trust auth, no password in code).
     database_url: str = "postgresql://personalai@127.0.0.1:5432/personalai"
+    embed_provider: str = "ollama"
+    embed_model: str = "mxbai-embed-large"
+    max_upload_bytes: int = 10_000_000
     bind_host: str = Field(default="127.0.0.1", description="Loopback by default.")
     bind_port: int = Field(default=8765, ge=1, le=65535)
     egress_enabled: bool = Field(default=False, description="Network egress off by default.")
@@ -91,7 +99,7 @@ class CoreConfig(StrictModel):
                 continue
             if field_name == "egress_enabled":
                 values[field_name] = raw.strip().lower() in _TRUTHY
-            elif field_name == "bind_port":
+            elif field_name in _INT_FIELDS:
                 values[field_name] = int(raw)
             elif field_name in _CSV_FIELDS:
                 values[field_name] = tuple(o.strip() for o in raw.split(",") if o.strip())
