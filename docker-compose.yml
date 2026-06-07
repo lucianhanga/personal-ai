@@ -1,0 +1,23 @@
+# Local dev services for PersonalAI. Start with: make db   (stop: make db-down)
+# Dev-only: trust auth so no password lives in code/config. Production uses PERSONALAI_DATABASE_URL
+# with real credentials from secrets.
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: personalai-db
+    environment:
+      POSTGRES_USER: personalai
+      POSTGRES_DB: personalai
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U personalai -d personalai"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:

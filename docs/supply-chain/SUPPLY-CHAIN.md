@@ -9,7 +9,7 @@
 > [Dependency Policy](../policies/DEPENDENCY-POLICY.md). A generated SBOM (CycloneDX) is the
 > machine-readable companion to this human-readable register.
 
-- **Last reviewed:** 2026-06-07 (UX: react-markdown + remark-gfm for Markdown rendering)
+- **Last reviewed:** 2026-06-07 (M3-1: PostgreSQL + pgvector + asyncpg storage adapters)
 - **Status legend:** `planned` (vetted, not yet in code) · `adopted` (in the build) · `evaluating` · `rejected`
 - **Provenance note:** Licenses below are grounded in public sources cited in the architecture
   report. They MUST be re-verified against each project's `LICENSE` file at pin time (Phase 0).
@@ -46,8 +46,9 @@
 
 | Component | Maintainer / Org | License | Maturity | Status | Reason | Security notes | Alternatives |
 |---|---|---|---|---|---|---|---|
-| **PostgreSQL** | PostgreSQL Global Dev Group | PostgreSQL License | Very mature | planned | Relational + metadata + conversation history spine | Standard DB hardening; encryption at rest | SQLite (desktop single-user) |
-| **pgvector** | pgvector (Andrew Kane) | PostgreSQL License | Mature | planned | Vectors in the same store as relational data | — | Qdrant |
+| **PostgreSQL** | PostgreSQL Global Dev Group | PostgreSQL License | Very mature | **adopted** (M3) | Relational + vector spine; `pgvector/pgvector` Docker image for dev/CI | Dev uses trust auth (no creds in code); prod via PERSONALAI_DATABASE_URL secret | SQLite (desktop single-user) |
+| **pgvector** | pgvector (Andrew Kane) | PostgreSQL License | Mature (0.8.x) | **adopted** (M3) | Vectors in the same store (cosine/HNSW) | — | Qdrant |
+| **asyncpg** | MagicStack | Apache-2.0 | Mature | **adopted** (M3) | Async Postgres driver for the storage adapters | Parameterized queries only | psycopg3 |
 | **Qdrant** | Qdrant | Apache-2.0 | Mature | evaluating | Dedicated vector engine at scale (Rust) | Separate service to secure | Weaviate, Milvus, Chroma, LanceDB |
 | **Apache AGE** | Apache Software Foundation | Apache-2.0 | Maturing | evaluating | Optional KAG/graph in Postgres (single-store) | — | Neo4j |
 | **Neo4j** | Neo4j, Inc. | GPLv3 (Community) / commercial | Mature | evaluating | Dedicated graph store if KAG outgrows AGE | License (GPL) implications — review | Apache AGE |
