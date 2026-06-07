@@ -38,7 +38,7 @@ from personalai_contracts.ports import (
     Role,
 )
 from personalai_contracts.schemas import ErrorInfo, StructuredResult
-from personalai_core import CoreConfig, RegistryError, VectorRetriever
+from personalai_core import CoreConfig, RegistryError, VectorRetriever, split_recent, summarize
 from personalai_core.registries import Registries
 from personalai_modality_files import UnsupportedFileTypeError
 from personalai_storage_postgres import (
@@ -288,16 +288,47 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         ]
         return [system], citations
 
+    async def _assemble_stm(req: ChatRequest, provider: ModelProvider) -> list[ChatMessage]:
+        """Short-term memory: keep recent turns + fold older ones into the conversation summary."""
+        config: CoreConfig = app.state.config
+        storage: Storage | None = app.state.storage
+        messages = [ChatMessage(Role(m.role), m.content) for m in req.messages]
+        if (
+            not config.stm_summarize
+            or req.conversation_id is None
+            or storage is None
+            or len(messages) <= config.stm_keep_recent
+        ):
+            return messages
+        conv = await storage.conversations.get(req.conversation_id)
+        if conv is None:
+            return messages
+        older, recent = split_recent(messages, config.stm_keep_recent)
+        summary = conv.summary
+        to_fold = messages[conv.summary_through : len(older)]
+        if to_fold:
+            summary = await summarize(
+                provider, req.model or config.default_model, conv.summary, to_fold
+            )
+            await storage.conversations.update_summary(
+                req.conversation_id, summary=summary, summary_through=len(older)
+            )
+        assembled: list[ChatMessage] = []
+        if summary:
+            assembled.append(
+                ChatMessage(Role.SYSTEM, f"Summary of earlier conversation:\n{summary}")
+            )
+        assembled.extend(recent)
+        return assembled
+
     @app.post("/api/chat", dependencies=[Depends(_require_token)])
     async def chat(req: ChatRequest) -> StreamingResponse:
         config: CoreConfig = app.state.config
         provider = _resolve_provider(req.provider)
         context_messages, citations = await _retrieve_context(req)
+        stm_messages = await _assemble_stm(req, provider)
         generation = GenerationRequest(
-            messages=[
-                *context_messages,
-                *[ChatMessage(Role(m.role), m.content) for m in req.messages],
-            ],
+            messages=[*context_messages, *stm_messages],
             model=req.model or config.default_model,
             think=req.think,
         )
