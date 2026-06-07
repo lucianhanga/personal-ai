@@ -21,6 +21,9 @@ class Conversation:
     title: str
     created_at: datetime
     updated_at: datetime
+    summary: str | None = None
+    summary_through: int = 0
+    incognito: bool = False
 
 
 @dataclass(frozen=True)
@@ -40,28 +43,40 @@ class PgConversationStore:
     def __init__(self, pool: asyncpg.Pool) -> None:
         self._pool = pool
 
-    async def create(self, *, id: str, title: str) -> Conversation:
+    _COLS = "id, title, created_at, updated_at, summary, summary_through, incognito"
+
+    async def create(self, *, id: str, title: str, incognito: bool = False) -> Conversation:
         row = await self._pool.fetchrow(
-            "INSERT INTO conversations (id, title) VALUES ($1, $2) "
-            "RETURNING id, title, created_at, updated_at",
+            f"INSERT INTO conversations (id, title, incognito) VALUES ($1, $2, $3) "
+            f"RETURNING {self._COLS}",
             id,
             title,
+            incognito,
         )
         assert row is not None
         return _to_conversation(row)
 
     async def list(self) -> Sequence[Conversation]:
         rows = await self._pool.fetch(
-            "SELECT id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC"
+            f"SELECT {self._COLS} FROM conversations ORDER BY updated_at DESC"
         )
         return [_to_conversation(r) for r in rows]
 
     async def get(self, conversation_id: str) -> Conversation | None:
         row = await self._pool.fetchrow(
-            "SELECT id, title, created_at, updated_at FROM conversations WHERE id = $1",
-            conversation_id,
+            f"SELECT {self._COLS} FROM conversations WHERE id = $1", conversation_id
         )
         return _to_conversation(row) if row is not None else None
+
+    async def update_summary(
+        self, conversation_id: str, *, summary: str, summary_through: int
+    ) -> None:
+        await self._pool.execute(
+            "UPDATE conversations SET summary = $2, summary_through = $3 WHERE id = $1",
+            conversation_id,
+            summary,
+            summary_through,
+        )
 
     async def delete(self, conversation_id: str) -> None:
         await self._pool.execute("DELETE FROM conversations WHERE id = $1", conversation_id)
@@ -95,6 +110,9 @@ def _to_conversation(row: asyncpg.Record) -> Conversation:
         title=row["title"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        summary=row["summary"],
+        summary_through=row["summary_through"],
+        incognito=row["incognito"],
     )
 
 

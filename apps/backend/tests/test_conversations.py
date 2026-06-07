@@ -5,15 +5,25 @@ from __future__ import annotations
 
 import asyncio
 import os
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 from personalai_backend import create_app
 from personalai_backend.composition import bootstrap
+from personalai_contracts.ports import GenerationRequest, GenerationResult
 from personalai_contracts.testing import FakeModelProvider
 from personalai_core import CoreConfig
 from personalai_storage_postgres import create_pool
+
+
+class _EmptyGen(FakeModelProvider):
+    """Summarizer that returns an empty string (no system-summary message should be added)."""
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        return GenerationResult(text="", model=request.model)
+
 
 TOKEN = "test-secret-token"
 DB_URL = os.environ.get(
@@ -34,8 +44,8 @@ def _db_available() -> bool:
     return asyncio.run(_check())
 
 
-def _client(database_url: str = DB_URL) -> TestClient:
-    config = CoreConfig(auth_token=TOKEN, model_provider="fake", database_url=database_url)
+def _client(database_url: str = DB_URL, **cfg: Any) -> TestClient:
+    config = CoreConfig(auth_token=TOKEN, model_provider="fake", database_url=database_url, **cfg)
     boot = bootstrap(config=config)
     boot.registries.model_providers.register("fake", FakeModelProvider(name="fake"))
     return TestClient(create_app(boot))
@@ -118,6 +128,38 @@ def test_chat_without_user_message_persists_only_assistant() -> None:
 
 
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_stm_folds_old_turns_into_summary() -> None:
+    with _client(stm_keep_recent=2) as client:
+        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        msgs = [
+            {"role": "user" if i % 2 == 0 else "assistant", "content": f"m{i}"} for i in range(5)
+        ]
+        with client.stream(
+            "POST", "/api/chat", headers=AUTH, json={"messages": msgs, "conversation_id": cid}
+        ) as resp:
+            "".join(resp.iter_text())
+        # Re-send the same history: nothing new aged out, so no re-summarization happens.
+        with client.stream(
+            "POST", "/api/chat", headers=AUTH, json={"messages": msgs, "conversation_id": cid}
+        ) as resp:
+            "".join(resp.iter_text())
+
+    async def _summary() -> tuple[str | None, int]:
+        pool = await create_pool(DB_URL)
+        try:
+            row = await pool.fetchrow(
+                "SELECT summary, summary_through FROM conversations WHERE id = $1", cid
+            )
+            return (row["summary"], row["summary_through"])
+        finally:
+            await pool.close()
+
+    summary, through = asyncio.run(_summary())
+    assert through == 3  # 5 messages, keep_recent=2 -> 3 older folded
+    assert summary is not None
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_chat_unknown_conversation_404() -> None:
     with _client() as client:
         resp = client.post(
@@ -126,3 +168,31 @@ def test_chat_unknown_conversation_404() -> None:
             json={"messages": [{"role": "user", "content": "hi"}], "conversation_id": "nope"},
         )
         assert resp.status_code == 404
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_stm_unknown_conversation_with_long_history_404() -> None:
+    # STM runs before persistence; an unknown conversation with a long history still 404s.
+    with _client(stm_keep_recent=2) as client:
+        msgs = [{"role": "user", "content": f"m{i}"} for i in range(5)]
+        resp = client.post(
+            "/api/chat", headers=AUTH, json={"messages": msgs, "conversation_id": "nope"}
+        )
+        assert resp.status_code == 404
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_stm_empty_summary_adds_no_system_message() -> None:
+    config = CoreConfig(
+        auth_token=TOKEN, model_provider="fake", database_url=DB_URL, stm_keep_recent=2
+    )
+    boot = bootstrap(config=config)
+    boot.registries.model_providers.register("fake", _EmptyGen(name="fake"))
+    with TestClient(create_app(boot)) as client:
+        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        msgs = [{"role": "user", "content": f"m{i}"} for i in range(5)]
+        with client.stream(
+            "POST", "/api/chat", headers=AUTH, json={"messages": msgs, "conversation_id": cid}
+        ) as resp:
+            assert resp.status_code == 200
+            "".join(resp.iter_text())

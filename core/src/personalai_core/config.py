@@ -36,9 +36,12 @@ _ENV_FIELDS = {
     "EMBED_PROVIDER": "embed_provider",
     "EMBED_MODEL": "embed_model",
     "MAX_UPLOAD_BYTES": "max_upload_bytes",
+    "STM_KEEP_RECENT": "stm_keep_recent",
+    "STM_SUMMARIZE": "stm_summarize",
 }
 
-_INT_FIELDS = {"bind_port", "max_upload_bytes"}
+_INT_FIELDS = {"bind_port", "max_upload_bytes", "stm_keep_recent"}
+_BOOL_FIELDS = {"egress_enabled", "stm_summarize"}
 
 _CSV_FIELDS = {"allowed_origins", "allowed_egress_hosts"}
 
@@ -68,6 +71,9 @@ class CoreConfig(StrictModel):
     embed_provider: str = "ollama"
     embed_model: str = "mxbai-embed-large"
     max_upload_bytes: int = 10_000_000
+    # Short-term memory: keep the last N messages verbatim; fold older turns into a rolling summary.
+    stm_keep_recent: int = 10
+    stm_summarize: bool = True
     bind_host: str = Field(default="127.0.0.1", description="Loopback by default.")
     bind_port: int = Field(default=8765, ge=1, le=65535)
     egress_enabled: bool = Field(default=False, description="Network egress off by default.")
@@ -97,7 +103,7 @@ class CoreConfig(StrictModel):
             raw = environ.get(_ENV_PREFIX + env_key)
             if raw is None:
                 continue
-            if field_name == "egress_enabled":
+            if field_name in _BOOL_FIELDS:
                 values[field_name] = raw.strip().lower() in _TRUTHY
             elif field_name in _INT_FIELDS:
                 values[field_name] = int(raw)
