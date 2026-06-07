@@ -9,7 +9,7 @@
 > [Dependency Policy](../policies/DEPENDENCY-POLICY.md). A generated SBOM (CycloneDX) is the
 > machine-readable companion to this human-readable register.
 
-- **Last reviewed:** 2026-06-06 (M2-2: backend wires the OpenAI provider via config/egress; no new third-party deps)
+- **Last reviewed:** 2026-06-07 (UX: react-markdown + remark-gfm for Markdown rendering)
 - **Status legend:** `planned` (vetted, not yet in code) · `adopted` (in the build) · `evaluating` · `rejected`
 - **Provenance note:** Licenses below are grounded in public sources cited in the architecture
   report. They MUST be re-verified against each project's `LICENSE` file at pin time (Phase 0).
@@ -72,6 +72,8 @@
 | **Electron** | OpenJS Foundation | MIT | Very mature | evaluating | Fallback if WebView issues block delivery | Larger attack surface (Node in renderer) | Tauri |
 | **React** | Meta | MIT | Very mature | **adopted** (M0-6) | SPA framework (ADR-0006) | Sanitize untrusted render; strict CSP | Svelte |
 | **react-dom** | Meta | MIT | Very mature | adopted (M0-6) | React DOM renderer | — | — |
+| **react-markdown** | unified / remark collective (Titus Wormer) | MIT | Mature | adopted (UX) | Render assistant replies as Markdown | No raw HTML (no rehype-raw); default urlTransform strips `javascript:` | markdown-it + sanitizer |
+| **remark-gfm** | unified / remark collective | MIT | Mature | adopted (UX) | GFM (tables, task lists, strikethrough) for react-markdown | — | — |
 | **Svelte** | Svelte (Rich Harris et al.) | MIT | Mature | rejected | Considered for the SPA; React chosen (ADR-0006) | — | React |
 | **@vitejs/plugin-react** | Vite team (VoidZero) | MIT | Mature | adopted (M0-6) | React support for Vite | — | — |
 
