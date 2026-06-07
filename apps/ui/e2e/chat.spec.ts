@@ -23,9 +23,12 @@ const MODELS_BODY = JSON.stringify({
 });
 
 const CHAT_SSE =
+  'event: citations\ndata: [{"n":1,"source_id":"d1","locator":"chunk 0","score":0.9,"name":"geo.txt"}]\n\n' +
   'data: {"delta":"Hello","done":false}\n\n' +
   'data: {"delta":" world","done":false}\n\n' +
   'data: {"delta":"","done":true,"finish_reason":"stop"}\n\n';
+
+const FILES_BODY = JSON.stringify({ ok: true, data: { files: [] } });
 
 test("user can pick a model and stream a chat reply", async ({ page }) => {
   // Pre-set the API token so the Chat view renders without manual entry.
@@ -43,6 +46,9 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   await page.route("**/api/models**", (r) =>
     r.fulfill({ status: 200, contentType: "application/json", body: MODELS_BODY }),
   );
+  await page.route("**/api/files", (r) =>
+    r.fulfill({ status: 200, contentType: "application/json", body: FILES_BODY }),
+  );
   await page.route("**/api/chat", (r) =>
     r.fulfill({ status: 200, contentType: "text/event-stream", body: CHAT_SSE }),
   );
@@ -57,4 +63,5 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
 
   await expect(page.getByTestId("msg-user")).toContainText("hi there");
   await expect(page.getByTestId("msg-assistant")).toContainText("Hello world");
+  await expect(page.getByTestId("citations")).toContainText("geo.txt");
 });

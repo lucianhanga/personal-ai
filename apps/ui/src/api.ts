@@ -23,6 +23,23 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface DocumentInfo {
+  id: string;
+  name: string;
+  mime: string;
+  size_bytes: number;
+  chunk_count: number;
+  created_at: string;
+}
+
+export interface Citation {
+  n: number;
+  source_id: string;
+  locator: string | null;
+  score: number;
+  name: string | null;
+}
+
 function authHeaders(token: string): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -67,13 +84,56 @@ export async function fetchModels(
   return { defaultModel: body.data?.default_model ?? "", models: body.data?.models ?? [] };
 }
 
+/** Upload a file for ingestion. Returns the created document (or throws on a structured error). */
+export async function uploadFile(token: string, file: File): Promise<DocumentInfo> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_BASE}/api/files`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: form,
+  });
+  if (!res.ok) throw new Error(`upload failed: ${res.status}`);
+  const body = (await res.json()) as {
+    ok?: boolean;
+    error?: { message?: string };
+    data?: DocumentInfo;
+  };
+  if (body.ok === false || !body.data) throw new Error(body.error?.message ?? "upload failed");
+  return body.data;
+}
+
+/** List ingested documents. */
+export async function fetchFiles(token: string): Promise<DocumentInfo[]> {
+  const res = await fetch(`${API_BASE}/api/files`, { headers: authHeaders(token) });
+  if (!res.ok) throw new Error(`files request failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { files?: DocumentInfo[] } };
+  return body.data?.files ?? [];
+}
+
+/** Delete an ingested document. */
+export async function deleteFile(token: string, id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/files/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error(`delete failed: ${res.status}`);
+}
+
 /**
- * Stream a chat completion. Calls `onDelta` for each token and resolves when done.
- * Parses the SSE frames emitted by POST /api/chat.
+ * Stream a chat completion. Calls `onDelta` for each token, `onCitations` for the RAG citations
+ * event (if any), and resolves when done. Parses the SSE frames emitted by POST /api/chat.
  */
 export async function streamChat(
-  params: { messages: ChatMessage[]; model?: string; provider?: string; token: string },
+  params: {
+    messages: ChatMessage[];
+    model?: string;
+    provider?: string;
+    useRag?: boolean;
+    token: string;
+  },
   onDelta: (delta: string) => void,
+  onCitations?: (citations: Citation[]) => void,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
@@ -82,6 +142,7 @@ export async function streamChat(
       messages: params.messages,
       model: params.model,
       provider: params.provider,
+      use_rag: params.useRag ?? false,
     }),
   });
   if (!res.ok || res.body === null) throw new Error(`chat request failed: ${res.status}`);
@@ -96,9 +157,16 @@ export async function streamChat(
     const frames = buffer.split("\n\n");
     buffer = frames.pop() ?? "";
     for (const frame of frames) {
-      const line = frame.split("\n").find((l) => l.startsWith("data: "));
-      if (line === undefined) continue;
-      const payload = JSON.parse(line.slice("data: ".length)) as { delta?: string };
+      const lines = frame.split("\n");
+      const event = lines.find((l) => l.startsWith("event: "))?.slice("event: ".length);
+      const dataLine = lines.find((l) => l.startsWith("data: "));
+      if (dataLine === undefined) continue;
+      const data = dataLine.slice("data: ".length);
+      if (event === "citations") {
+        onCitations?.(JSON.parse(data) as Citation[]);
+        continue;
+      }
+      const payload = JSON.parse(data) as { delta?: string };
       if (payload.delta) onDelta(payload.delta);
     }
   }
