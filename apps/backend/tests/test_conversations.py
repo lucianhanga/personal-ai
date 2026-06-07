@@ -16,7 +16,7 @@ from personalai_backend.composition import bootstrap
 from personalai_contracts.ports import EmbeddingResult, GenerationRequest, GenerationResult
 from personalai_contracts.testing import FakeModelProvider
 from personalai_core import CoreConfig
-from personalai_storage_postgres import VECTOR_DIM, create_pool
+from personalai_storage_postgres import VECTOR_DIM, apply_migrations, create_pool
 
 _FACT = "Lucian works at Hyperneers GmbH"
 
@@ -178,6 +178,16 @@ def test_stm_folds_old_turns_into_summary() -> None:
 
 
 def _mem_client(**cfg: Any) -> TestClient:
+    # Start each memory test from an empty store (dedup is global; the fake emits one fixed fact).
+    async def _reset() -> None:
+        pool = await create_pool(DB_URL)
+        try:
+            await apply_migrations(pool)
+            await pool.execute("TRUNCATE memories")
+        finally:
+            await pool.close()
+
+    asyncio.run(_reset())
     config = CoreConfig(
         auth_token=TOKEN,
         model_provider="memfake",
@@ -199,6 +209,90 @@ async def _memories_for(cid: str) -> list[str]:
         return [r["text"] for r in rows]
     finally:
         await pool.close()
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_memory_api_list_update_delete_clear() -> None:
+    with _mem_client() as client:
+        # seed a memory by chatting
+        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/chat",
+            headers=AUTH,
+            json={
+                "messages": [{"role": "user", "content": "where do I work?"}],
+                "conversation_id": cid,
+            },
+        ) as resp:
+            "".join(resp.iter_text())
+
+        memories = client.get("/api/memory", headers=AUTH).json()["data"]["memories"]
+        assert any(_FACT in m["text"] for m in memories)
+        mid = memories[0]["id"]
+
+        patched = client.patch(f"/api/memory/{mid}", headers=AUTH, json={"text": "edited fact"})
+        assert patched.json()["data"]["text"] == "edited fact"
+        assert (
+            client.patch("/api/memory/missing", headers=AUTH, json={"text": "x"}).status_code == 404
+        )
+
+        assert client.delete(f"/api/memory/{mid}", headers=AUTH).status_code == 200
+        assert client.delete("/api/memory", headers=AUTH).json()["data"]["cleared"] is True
+        assert client.get("/api/memory", headers=AUTH).json()["data"]["memories"] == []
+
+
+def test_memory_api_unavailable_without_storage_503() -> None:
+    with _client("postgresql://personalai@127.0.0.1:59999/x") as client:
+        assert client.get("/api/memory", headers=AUTH).status_code == 503
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_chat_use_memory_with_no_memories_streams() -> None:
+    with _mem_client() as client:  # memories truncated -> recall returns nothing
+        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/chat",
+            headers=AUTH,
+            json={
+                "messages": [{"role": "user", "content": "anything?"}],
+                "conversation_id": cid,
+                "use_memory": True,
+            },
+        ) as resp:
+            assert resp.status_code == 200
+            "".join(resp.iter_text())
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_chat_use_memory_injects_recall() -> None:
+    with _mem_client() as client:
+        # seed a memory, then ask with use_memory in a fresh conversation
+        c1 = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/chat",
+            headers=AUTH,
+            json={
+                "messages": [{"role": "user", "content": "where do I work?"}],
+                "conversation_id": c1,
+            },
+        ) as resp:
+            "".join(resp.iter_text())
+        c2 = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/chat",
+            headers=AUTH,
+            json={
+                "messages": [{"role": "user", "content": "remind me?"}],
+                "conversation_id": c2,
+                "use_memory": True,
+            },
+        ) as resp:
+            assert resp.status_code == 200
+            "".join(resp.iter_text())  # recall ran without error (injection is internal)
 
 
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")

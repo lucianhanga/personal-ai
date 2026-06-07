@@ -24,7 +24,7 @@ OpenAPI docs are served at `/docs`.
 | GET | `/api/status` | bearer token | `StructuredResult` | Example protected route returning a validated structured-output envelope. |
 | GET | `/api/providers` | bearer token | `StructuredResult` | Lists registered providers + the default (M2-2). |
 | GET | `/api/models` | bearer token | `StructuredResult` | Lists a provider's models + capabilities; `?provider=` to choose (M1-4/M2-2). |
-| POST | `/api/chat` | bearer token | `text/event-stream` (SSE) | Streaming chat; `"provider"` selects local/remote; `"use_rag": true` grounds the answer + emits a `citations` event; `"conversation_id"` persists the turn (M1-3/M2-2/M3-3/M3-4). |
+| POST | `/api/chat` | bearer token | `text/event-stream` (SSE) | Streaming chat; `"provider"` local/remote; `"use_rag"` grounds + emits `citations`; `"conversation_id"` persists; `"use_memory"` injects long-term memory (M1-3/M2-2/M3-3/M3-4/M4). |
 | POST | `/api/files` | bearer token | `StructuredResult` | Upload a file (txt/md/pdf/docx) -> parse/chunk/embed/store (M3-2). |
 | GET | `/api/files` | bearer token | `StructuredResult` | List ingested documents (M3-2). |
 | DELETE | `/api/files/{id}` | bearer token | `StructuredResult` | Delete a document and its vectors (M3-2). |
@@ -32,6 +32,10 @@ OpenAPI docs are served at `/docs`.
 | GET | `/api/conversations` | bearer token | `StructuredResult` | List conversations (most-recent first) (M3-4). |
 | GET | `/api/conversations/{id}` | bearer token | `StructuredResult` | Get a conversation + its messages (M3-4). |
 | DELETE | `/api/conversations/{id}` | bearer token | `StructuredResult` | Delete a conversation (cascades messages) (M3-4). |
+| GET | `/api/memory` | bearer token | `StructuredResult` | List long-term memories (M4-3). |
+| PATCH | `/api/memory/{id}` | bearer token | `StructuredResult` | Edit a memory's text (M4-3). |
+| DELETE | `/api/memory/{id}` | bearer token | `StructuredResult` | Delete a memory (M4-3). |
+| DELETE | `/api/memory` | bearer token | `StructuredResult` | Forget everything (M4-3). |
 
 ```bash
 curl http://127.0.0.1:8765/health

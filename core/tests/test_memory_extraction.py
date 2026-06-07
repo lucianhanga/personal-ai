@@ -14,7 +14,7 @@ from personalai_contracts.ports import (
     Role,
 )
 from personalai_contracts.testing import FakeModelProvider, InMemoryMemoryStore
-from personalai_core import extract_facts, remember
+from personalai_core import extract_facts, recall, remember
 
 TWO_FACTS = (
     '{"facts":['
@@ -92,6 +92,49 @@ def test_remember_stores_then_dedups() -> None:
         )
         assert again == []
         assert len(await store.list()) == 2
+
+    asyncio.run(_run())
+
+
+def test_recall_returns_relevant_memories() -> None:
+    async def _run() -> None:
+        store = InMemoryMemoryStore()
+        provider = _FactProvider(TWO_FACTS)
+        await remember(
+            messages=_msgs(),
+            gen_provider=provider,
+            gen_model="m",
+            embed_provider=provider,
+            embed_model="m",
+            store=store,
+            source={},
+        )
+        hits = await recall(
+            query="Lucian works at Hyperneers GmbH",  # same text -> same one-hot -> top hit
+            embed_provider=provider,
+            embed_model="m",
+            store=store,
+            top_k=2,
+        )
+        assert hits[0].text == "Lucian works at Hyperneers GmbH"
+
+    asyncio.run(_run())
+
+
+def test_recall_empty_without_embedding() -> None:
+    class _NoEmbed(_FactProvider):
+        async def embed(self, texts: Sequence[str], model: str) -> EmbeddingResult:
+            return EmbeddingResult(vectors=[], model=model, dimensions=0)
+
+    async def _run() -> None:
+        hits = await recall(
+            query="q",
+            embed_provider=_NoEmbed(TWO_FACTS),
+            embed_model="m",
+            store=InMemoryMemoryStore(),
+            top_k=3,
+        )
+        assert hits == []
 
     asyncio.run(_run())
 
