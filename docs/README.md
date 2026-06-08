@@ -16,6 +16,8 @@ Start here:
   persistent conversation history (PostgreSQL + pgvector).
 - **[Memory (M4)](./guides/memory.md)** — short-term per-chat summary + cross-chat long-term memory
   you can visualize, edit, and erase; incognito chats.
+- **[Tools (M5)](./guides/tools.md)** — the Tool/MCP gateway: permissions, egress allowlist,
+  schema-validated I/O, risk approval, audit; built-in calculator + http_fetch.
 
 Reference & development:
 
