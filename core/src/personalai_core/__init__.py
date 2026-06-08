@@ -6,6 +6,7 @@ and resolve the configured singletons via :func:`build_services`.
 """
 
 from personalai_core.config import CoreConfig
+from personalai_core.gateway import InProcessExecutor, RegisteredTool, ToolGateway
 from personalai_core.memory import split_recent, summarize
 from personalai_core.memory_extraction import extract_facts, recall, remember
 from personalai_core.registries import Registries
@@ -17,10 +18,13 @@ __version__ = "0.0.0"
 
 __all__ = [
     "CoreConfig",
+    "InProcessExecutor",
+    "RegisteredTool",
     "Registries",
     "Registry",
     "RegistryError",
     "Services",
+    "ToolGateway",
     "VectorRetriever",
     "__version__",
     "build_services",
