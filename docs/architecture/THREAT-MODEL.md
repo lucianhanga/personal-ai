@@ -71,3 +71,27 @@ The M0-10 primitives are a foundation; these gaps are deliberate and tracked:
   unnecessary while loopback-only.
 - **Release signature verification** uses a repo-scoped identity regexp; tightening to the exact
   release workflow/tag is deferred to the hardening milestone (M11).
+
+## Tool/MCP gateway (M5)
+
+All side effects route through one **Tool gateway** (ADR-0004, ADR-0007). Enforced, fail-closed
+and in order: version pinning, **risk approval** (HIGH/CRITICAL need explicit approval),
+**least-privilege permissions** (deny-by-default), **JSON-Schema validation of both inputs and
+outputs**, the **network egress allowlist** for declared hosts, an execution **timeout**, and an
+**append-only audit** of every allowed/denied call (redacted). Tool output is **untrusted data**:
+agents must treat it as data, not instructions (same guardrail as RAG/memory context).
+
+Realized this milestone:
+
+- **Egress for tools is enforced at the gateway and per-tool.** `http_fetch` checks the target host
+  against the allowlist on every call and **disables redirects** (so a response cannot bounce to a
+  disallowed host). The string/host limitations noted above (IP-literals, SSRF, DNS rebinding) still
+  apply and are tightened with the subprocess/container tiers in M6.
+
+Deliberate gaps (tracked):
+
+- **Tier-0 execution is in-process (no OS isolation)**, so only *trusted first-party* tools run
+  there. Untrusted/third-party **MCP servers** must run under tier-1 (subprocess) / tier-2
+  (container) isolation, which lands with MCP in **M6** (ADR-0007); the executor seam is in place.
+- **Permission grants are per-request.** Remembered per-scope grants and a human-approval UI flow
+  for high-risk actions are a follow-up.
