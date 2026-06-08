@@ -49,6 +49,13 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   await page.route("**/api/files", (r) =>
     r.fulfill({ status: 200, contentType: "application/json", body: FILES_BODY }),
   );
+  await page.route("**/api/tools", (r) =>
+    r.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: '{"ok":true,"data":{"tools":[{"name":"calculator","version":"1.0.0","risk":"low","capabilities":[],"permissions":[],"inputs":{},"outputs":{}}]}}',
+    }),
+  );
   await page.route("**/api/memory", (r) =>
     r.fulfill({
       status: 200,
@@ -88,4 +95,8 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   // Memory panel opens and shows the empty state.
   await page.getByTestId("memory-show").click();
   await expect(page.getByTestId("memory-empty")).toBeVisible();
+
+  // Tools panel opens and lists the calculator.
+  await page.getByTestId("tools-show").click();
+  await expect(page.getByTestId("tool-list")).toContainText("calculator");
 });

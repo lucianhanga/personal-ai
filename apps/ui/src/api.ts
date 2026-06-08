@@ -56,6 +56,27 @@ export interface MemoryItem {
   updated_at: string;
 }
 
+export interface ToolPermission {
+  type: string;
+  scope: string;
+}
+
+export interface ToolInfo {
+  name: string;
+  version: string;
+  risk: string;
+  capabilities: string[];
+  permissions: ToolPermission[];
+  inputs: Record<string, unknown>;
+  outputs: Record<string, unknown>;
+}
+
+export interface ToolInvokeResult {
+  ok: boolean;
+  data?: Record<string, unknown>;
+  error?: string;
+}
+
 function authHeaders(token: string): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -187,6 +208,45 @@ export async function forgetAllMemory(token: string): Promise<void> {
     headers: authHeaders(token),
   });
   if (!res.ok) throw new Error(`forget all failed: ${res.status}`);
+}
+
+/** List the tools registered behind the gateway. */
+export async function fetchTools(token: string): Promise<ToolInfo[]> {
+  const res = await fetch(`${API_BASE}/api/tools`, { headers: authHeaders(token) });
+  if (!res.ok) throw new Error(`tools request failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { tools?: ToolInfo[] } };
+  return body.data?.tools ?? [];
+}
+
+/** Invoke a tool through the gateway. */
+export async function invokeTool(
+  token: string,
+  req: {
+    tool: string;
+    version: string;
+    args: Record<string, unknown>;
+    grants?: ToolPermission[];
+    approved?: boolean;
+  },
+): Promise<ToolInvokeResult> {
+  const res = await fetch(`${API_BASE}/api/tools/invoke`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({
+      tool: req.tool,
+      version: req.version,
+      args: req.args,
+      grants: req.grants ?? [],
+      approved: req.approved ?? false,
+    }),
+  });
+  if (res.status === 400) throw new Error("invalid request");
+  const body = (await res.json()) as {
+    ok?: boolean;
+    data?: Record<string, unknown>;
+    error?: { message?: string };
+  };
+  return { ok: body.ok ?? false, data: body.data, error: body.error?.message };
 }
 
 /** List conversations (most-recent first). */
