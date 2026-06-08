@@ -10,7 +10,13 @@ import httpx
 import pytest
 import respx
 
-from personalai_contracts.ports import ChatMessage, GenerationRequest, ModelProvider, Role
+from personalai_contracts.ports import (
+    ChatMessage,
+    GenerationRequest,
+    ModelProvider,
+    Role,
+    ToolSpec,
+)
 from personalai_provider_openai import OpenAICompatProvider
 
 BASE = "https://api.example.test/v1"
@@ -29,6 +35,51 @@ def run[R](call: Callable[[OpenAICompatProvider], Awaitable[R]]) -> R:
 
 def test_is_a_model_provider() -> None:
     assert isinstance(OpenAICompatProvider(api_key="k", base_url=BASE), ModelProvider)
+
+
+@respx.mock
+def test_generate_passes_tools_and_parses_tool_calls() -> None:
+    route = respx.post(f"{BASE}/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "model": "gpt-4o-mini",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "calculator",
+                                        "arguments": '{"expression": "2+2"}',
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+            },
+        )
+    )
+    tools = [ToolSpec(name="calculator", description="math", parameters={"type": "object"})]
+    req = GenerationRequest(
+        messages=[ChatMessage(Role.USER, "2+2?")], model="gpt-4o-mini", tools=tools
+    )
+    result = run(lambda p: p.generate(req))
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].name == "calculator"
+    assert result.tool_calls[0].arguments == {"expression": "2+2"}  # JSON string parsed
+    assert result.tool_calls[0].id == "call_1"
+
+    import json as _json
+
+    sent = _json.loads(route.calls.last.request.content)
+    assert sent["tools"][0]["function"]["name"] == "calculator"
 
 
 @respx.mock

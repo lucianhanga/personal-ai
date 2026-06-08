@@ -11,7 +11,7 @@ key is injected, never hard-coded, and never logged.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from types import TracebackType
 from typing import Any
 from urllib.parse import urlparse
@@ -25,6 +25,7 @@ from personalai_contracts.ports.model_provider import (
     GenerationResult,
     ModelCapabilities,
     ModelDescriptor,
+    ToolCallRequest,
 )
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
@@ -52,7 +53,39 @@ def _chat_payload(request: GenerationRequest, *, stream: bool) -> dict[str, Any]
             "type": "json_schema",
             "json_schema": {"name": "output", "schema": dict(request.json_schema), "strict": True},
         }
+    if request.tools:
+        payload["tools"] = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": dict(t.parameters),
+                },
+            }
+            for t in request.tools
+        ]
     return payload
+
+
+def _tool_calls(message: Mapping[str, Any]) -> tuple[ToolCallRequest, ...]:
+    """Parse OpenAI ``message.tool_calls`` (arguments is a JSON string)."""
+    calls = []
+    for call in message.get("tool_calls") or []:
+        fn = call.get("function") or {}
+        name = fn.get("name")
+        if not name:
+            continue
+        try:
+            args = json.loads(fn.get("arguments") or "{}")
+        except (ValueError, TypeError):
+            args = {}
+        calls.append(
+            ToolCallRequest(
+                name=name, arguments=args if isinstance(args, dict) else {}, id=call.get("id")
+            )
+        )
+    return tuple(calls)
 
 
 def _remote_capabilities() -> ModelCapabilities:
@@ -129,6 +162,7 @@ class OpenAICompatProvider:
             model=data.get("model", request.model),
             finish_reason=choice.get("finish_reason"),
             usage=usage,
+            tool_calls=_tool_calls(message),
         )
 
     async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:

@@ -46,11 +46,30 @@ class ModelCapabilities:
 
 
 @dataclass(frozen=True)
+class ToolSpec:
+    """A tool offered to the model for function-calling (name + JSON-Schema parameters)."""
+
+    name: str
+    description: str
+    parameters: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ToolCallRequest:
+    """A tool call the model decided to make (returned by the provider, run via the gateway)."""
+
+    name: str
+    arguments: Mapping[str, Any] = field(default_factory=dict)
+    id: str | None = None
+
+
+@dataclass(frozen=True)
 class GenerationRequest:
     """A request to generate a completion.
 
     ``json_schema`` requests structured output constrained to that JSON Schema
-    (validated by the structured-output layer, M0-3).
+    (validated by the structured-output layer, M0-3). ``tools`` offers function-calling tools;
+    the model may respond with ``tool_calls`` instead of (or before) final text.
     """
 
     messages: Sequence[ChatMessage]
@@ -60,6 +79,7 @@ class GenerationRequest:
     json_schema: Mapping[str, Any] | None = None
     think: bool | None = None
     """Control a thinking/reasoning model's reasoning trace (None = the model's default)."""
+    tools: Sequence[ToolSpec] | None = None
 
 
 @dataclass(frozen=True)
@@ -71,6 +91,7 @@ class GenerationResult:
     finish_reason: str | None = None
     thinking: str | None = None
     usage: Mapping[str, int] = field(default_factory=dict)
+    tool_calls: Sequence[ToolCallRequest] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -81,6 +102,7 @@ class GenerationChunk:
     thinking: str | None = None
     done: bool = False
     finish_reason: str | None = None
+    tool_calls: Sequence[ToolCallRequest] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
