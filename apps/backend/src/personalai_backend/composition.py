@@ -13,7 +13,8 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from personalai_core import CoreConfig, Registries
+from personalai_core import CoreConfig, InProcessExecutor, Registries, ToolGateway
+from personalai_core.security import AuditLog, EgressBlockedError, assert_egress_allowed
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,8 @@ class Bootstrap:
 
     registries: Registries
     config: CoreConfig
+    gateway: ToolGateway
+    audit: AuditLog
 
 
 def register_adapters(registries: Registries, config: CoreConfig) -> None:
@@ -37,7 +40,6 @@ def register_adapters(registries: Registries, config: CoreConfig) -> None:
     # Remote OpenAI-compatible provider, only when an API key is configured. Its egress guard is
     # wired to the core egress allowlist (the provider itself cannot import the core).
     if config.openai_api_key:
-        from personalai_core.security import assert_egress_allowed
         from personalai_provider_openai import OpenAICompatProvider
 
         def _openai_egress(host: str) -> None:
@@ -52,6 +54,28 @@ def register_adapters(registries: Registries, config: CoreConfig) -> None:
             ),
         )
 
+    # Built-in tools, behind the gateway (ADR-0004).
+    from personalai_core import RegisteredTool
+    from personalai_tool_builtin import (
+        CALCULATOR_MANIFEST,
+        HTTP_FETCH_MANIFEST,
+        Calculator,
+        HttpFetch,
+    )
+
+    registries.tools.register("calculator", RegisteredTool(CALCULATOR_MANIFEST, Calculator()))
+
+    def _fetch_egress_allowed(host: str) -> bool:
+        try:
+            assert_egress_allowed(config, host)
+        except EgressBlockedError:
+            return False
+        return True
+
+    registries.tools.register(
+        "http_fetch", RegisteredTool(HTTP_FETCH_MANIFEST, HttpFetch(_fetch_egress_allowed))
+    )
+
 
 def bootstrap(
     config: CoreConfig | None = None,
@@ -61,4 +85,13 @@ def bootstrap(
     resolved_config = config or CoreConfig.from_env(environ if environ is not None else os.environ)
     registries = Registries()
     register_adapters(registries, resolved_config)
-    return Bootstrap(registries=registries, config=resolved_config)
+
+    audit = AuditLog()
+
+    def _egress_check(host: str) -> None:
+        assert_egress_allowed(resolved_config, host)
+
+    gateway = ToolGateway(
+        registries.tools, InProcessExecutor(), audit=audit, egress_check=_egress_check
+    )
+    return Bootstrap(registries=registries, config=resolved_config, gateway=gateway, audit=audit)

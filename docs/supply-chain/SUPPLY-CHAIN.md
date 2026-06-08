@@ -9,7 +9,7 @@
 > [Dependency Policy](../policies/DEPENDENCY-POLICY.md). A generated SBOM (CycloneDX) is the
 > machine-readable companion to this human-readable register.
 
-- **Last reviewed:** 2026-06-07 (M3-2: ingestion deps — pypdf, python-docx, python-multipart; fpdf2 dev)
+- **Last reviewed:** 2026-06-08 (M5: jsonschema for the tool gateway; built-in tools reuse httpx — no new third-party deps)
 - **Status legend:** `planned` (vetted, not yet in code) · `adopted` (in the build) · `evaluating` · `rejected`
 - **Provenance note:** Licenses below are grounded in public sources cited in the architecture
   report. They MUST be re-verified against each project's `LICENSE` file at pin time (Phase 0).
