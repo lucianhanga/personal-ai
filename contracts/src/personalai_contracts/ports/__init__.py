@@ -26,6 +26,8 @@ from personalai_contracts.ports.model_provider import (
     ModelDescriptor,
     ModelProvider,
     Role,
+    ToolCallRequest,
+    ToolSpec,
 )
 from personalai_contracts.ports.retriever import (
     Citation,
@@ -72,6 +74,8 @@ __all__ = [
     "ModelDescriptor",
     "ModelProvider",
     "Role",
+    "ToolCallRequest",
+    "ToolSpec",
     # retriever
     "Citation",
     "RetrievalQuery",

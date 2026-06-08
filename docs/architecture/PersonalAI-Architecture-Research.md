@@ -562,6 +562,11 @@ Each milestone is shippable, builds on the previous, and **exercises a seam** so
 > later agents, M7–M8, a memory to use). **KAG** is reframed as **M11**, the graph upgrade of M4's
 > long-term memory (start semantic-first; add the graph only when multi-hop demands it). Everything
 > M5+ shifted down by one.
+>
+> **Roadmap note (2026-06-08):** **M6 and M7 swapped** — the **single-agent loop + tools (incl. web
+> search)** is now **M6**, and **MCP plug-in/out** is **M7**. Rationale: the agent loop is what lets
+> the user simply *ask the model to search/act*, it only needs the M5 gateway (already shipped), and
+> MCP then plugs published tools into that same loop. Both still run every call through the gateway.
 
 ### 22.5 High-horizon view
 

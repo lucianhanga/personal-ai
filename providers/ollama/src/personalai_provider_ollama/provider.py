@@ -22,6 +22,7 @@ from personalai_contracts.ports.model_provider import (
     GenerationResult,
     ModelCapabilities,
     ModelDescriptor,
+    ToolCallRequest,
 )
 
 DEFAULT_HOST = "http://127.0.0.1:11434"
@@ -72,7 +73,32 @@ def _chat_payload(request: GenerationRequest, *, stream: bool) -> dict[str, Any]
         payload["format"] = dict(request.json_schema)
     if request.think is not None:
         payload["think"] = request.think
+    if request.tools:
+        payload["tools"] = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": dict(t.parameters),
+                },
+            }
+            for t in request.tools
+        ]
     return payload
+
+
+def _tool_calls(message: Mapping[str, Any]) -> tuple[ToolCallRequest, ...]:
+    """Parse Ollama ``message.tool_calls`` (arguments are already an object)."""
+    calls = []
+    for call in message.get("tool_calls") or []:
+        fn = call.get("function") or {}
+        name = fn.get("name")
+        if not name:
+            continue
+        args = fn.get("arguments")
+        calls.append(ToolCallRequest(name=name, arguments=args if isinstance(args, dict) else {}))
+    return tuple(calls)
 
 
 def _usage(data: Mapping[str, Any]) -> dict[str, int]:
@@ -144,6 +170,7 @@ class OllamaProvider:
             finish_reason=data.get("done_reason"),
             thinking=message.get("thinking"),
             usage=_usage(data),
+            tool_calls=_tool_calls(message),
         )
 
     async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:

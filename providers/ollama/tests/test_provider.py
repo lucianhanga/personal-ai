@@ -11,7 +11,13 @@ import httpx
 import pytest
 import respx
 
-from personalai_contracts.ports import ChatMessage, GenerationRequest, ModelProvider, Role
+from personalai_contracts.ports import (
+    ChatMessage,
+    GenerationRequest,
+    ModelProvider,
+    Role,
+    ToolSpec,
+)
 from personalai_provider_ollama import OllamaProvider
 
 BASE = "http://127.0.0.1:11434"
@@ -93,6 +99,39 @@ def test_generate_maps_response_and_passes_schema() -> None:
     sent = _json.loads(route.calls.last.request.content)
     assert sent["format"] == schema
     assert sent["stream"] is False
+
+
+@respx.mock
+def test_generate_passes_tools_and_parses_tool_calls() -> None:
+    route = respx.post(f"{BASE}/api/chat").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "model": "qwen3:8b",
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"function": {"name": "calculator", "arguments": {"expression": "2+2"}}}
+                    ],
+                },
+                "done_reason": "stop",
+            },
+        )
+    )
+    tools = [ToolSpec(name="calculator", description="math", parameters={"type": "object"})]
+    req = GenerationRequest(
+        messages=[ChatMessage(Role.USER, "2+2?")], model="qwen3:8b", tools=tools
+    )
+    result = run(lambda p: p.generate(req))
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].name == "calculator"
+    assert result.tool_calls[0].arguments == {"expression": "2+2"}
+
+    import json as _json
+
+    sent = _json.loads(route.calls.last.request.content)
+    assert sent["tools"][0]["function"]["name"] == "calculator"
 
 
 @respx.mock
