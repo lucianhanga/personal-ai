@@ -3,7 +3,7 @@
 # docs/architecture/PersonalAI-Architecture-Research.md (Section 22).
 
 [tool.uv.workspace]
-members = ["contracts", "core", "apps/backend", "providers/ollama", "providers/openai_compat", "storage/postgres", "modalities/files"]
+members = ["contracts", "core", "apps/backend", "providers/ollama", "providers/openai_compat", "storage/postgres", "modalities/files", "tools/builtin"]
 
 [dependency-groups]
 dev = [
@@ -28,7 +28,7 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["contracts/src", "core/src", "apps/backend/src", "providers/ollama/src", "providers/openai_compat/src", "storage/postgres/src", "modalities/files/src"]
+src = ["contracts/src", "core/src", "apps/backend/src", "providers/ollama/src", "providers/openai_compat/src", "storage/postgres/src", "modalities/files/src", "tools/builtin/src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4", "PTH"]
@@ -47,6 +47,7 @@ known-first-party = [
     "personalai_provider_openai",
     "personalai_storage_postgres",
     "personalai_modality_files",
+    "personalai_tool_builtin",
 ]
 
 # ---------------------------------------------------------------------------
@@ -59,7 +60,7 @@ warn_unused_configs = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 show_error_codes = true
-mypy_path = ["contracts/src", "core/src", "apps/backend/src", "providers/ollama/src", "providers/openai_compat/src", "storage/postgres/src", "modalities/files/src"]
+mypy_path = ["contracts/src", "core/src", "apps/backend/src", "providers/ollama/src", "providers/openai_compat/src", "storage/postgres/src", "modalities/files/src", "tools/builtin/src"]
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
@@ -72,7 +73,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-ra -q --import-mode=importlib --cov --cov-report=term-missing --cov-report=xml"
-testpaths = ["contracts/tests", "core/tests", "apps/backend/tests", "providers/ollama/tests", "providers/openai_compat/tests", "storage/postgres/tests", "modalities/files/tests"]
+testpaths = ["contracts/tests", "core/tests", "apps/backend/tests", "providers/ollama/tests", "providers/openai_compat/tests", "storage/postgres/tests", "modalities/files/tests", "tools/builtin/tests"]
 filterwarnings = [
     # Third-party: starlette's TestClient warns to migrate to httpx2; tracked, not ours.
     "ignore:Using `httpx` with `starlette.testclient`.*",
@@ -88,6 +89,7 @@ source = [
     "personalai_provider_openai",
     "personalai_storage_postgres",
     "personalai_modality_files",
+    "personalai_tool_builtin",
 ]
 
 [tool.coverage.report]
