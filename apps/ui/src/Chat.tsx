@@ -20,6 +20,7 @@ import {
 } from "./api";
 import { Markdown } from "./Markdown";
 import { Memory } from "./Memory";
+import { Tools } from "./Tools";
 
 export function Chat({ token }: { token: string }): React.ReactElement {
   const [providers, setProviders] = useState<string[]>([]);
@@ -32,6 +33,7 @@ export function Chat({ token }: { token: string }): React.ReactElement {
   const [useMemory, setUseMemory] = useState(false);
   const [incognito, setIncognito] = useState(false);
   const [showMemory, setShowMemory] = useState(false);
+  const [showTools, setShowTools] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [persistence, setPersistence] = useState(false);
@@ -350,9 +352,13 @@ export function Chat({ token }: { token: string }): React.ReactElement {
         <button data-testid="memory-show" onClick={() => setShowMemory((v) => !v)}>
           {showMemory ? "Hide memory" : "Memory"}
         </button>
+        <button data-testid="tools-show" onClick={() => setShowTools((v) => !v)}>
+          {showTools ? "Hide tools" : "Tools"}
+        </button>
       </div>
 
       {showMemory && <Memory token={token} />}
+      {showTools && <Tools token={token} />}
 
       {files.length > 0 && (
         <ul data-testid="file-list" style={{ margin: 0, paddingLeft: "1rem", fontSize: "0.8rem" }}>

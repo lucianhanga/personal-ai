@@ -36,8 +36,10 @@ from personalai_contracts.ports import (
     ModelProvider,
     RetrievalQuery,
     Role,
+    ToolCall,
 )
 from personalai_contracts.schemas import ErrorInfo, StructuredResult
+from personalai_contracts.schemas.tools import Permission, PermissionType
 from personalai_core import (
     CoreConfig,
     RegistryError,
@@ -121,6 +123,23 @@ class MemoryUpdate(BaseModel):
     """Request body for editing a memory."""
 
     text: str
+
+
+class GrantIn(BaseModel):
+    """A permission grant supplied with a tool invocation."""
+
+    type: str
+    scope: str
+
+
+class ToolInvokeRequest(BaseModel):
+    """Request body for invoking a tool through the gateway."""
+
+    tool: str
+    version: str
+    args: dict[str, object] = {}
+    grants: list[GrantIn] = []
+    approved: bool = False
 
 
 def _require_token(request: Request, authorization: str | None = Header(default=None)) -> None:
@@ -625,5 +644,46 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         storage = _require_storage()
         await storage.memories.clear()
         return StructuredResult(ok=True, data={"cleared": True})
+
+    @app.get("/api/tools", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    def list_tools() -> StructuredResult:
+        registries: Registries = app.state.bootstrap.registries
+        tools = []
+        for name in registries.tools.names():
+            m = registries.tools.get(name).manifest
+            tools.append(
+                {
+                    "name": m.name,
+                    "version": m.version,
+                    "risk": m.risk.value,
+                    "capabilities": list(m.capabilities),
+                    "permissions": [
+                        {"type": p.type.value, "scope": p.scope} for p in m.permissions
+                    ],
+                    "inputs": m.inputs,
+                    "outputs": m.outputs,
+                }
+            )
+        return StructuredResult(ok=True, data={"tools": tools})
+
+    @app.post(
+        "/api/tools/invoke", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+    )
+    async def invoke_tool(req: ToolInvokeRequest) -> StructuredResult:
+        gateway = app.state.bootstrap.gateway
+        try:
+            grants = [Permission(type=PermissionType(g.type), scope=g.scope) for g in req.grants]
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=f"invalid grant: {exc}"
+            ) from exc
+        result = await gateway.invoke(
+            ToolCall(req.tool, req.version, req.args), grants=grants, approved=req.approved
+        )
+        if not result.ok:
+            return StructuredResult(
+                ok=False, error=ErrorInfo(code="E_TOOL", message=result.error or "tool failed")
+            )
+        return StructuredResult(ok=True, data=dict(result.output))
 
     return app
