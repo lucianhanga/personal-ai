@@ -41,6 +41,7 @@
 | **Uvicorn** | Encode | BSD-3-Clause | Mature | **adopted** (M0-5) | ASGI server for the backend | Bind loopback by default | Hypercorn |
 | **Starlette** | Encode | BSD-3-Clause | Mature | **adopted** (M0-5, via FastAPI) | ASGI toolkit underlying FastAPI | — | — |
 | **python-multipart** | Andrew Dunham / Encode | Apache-2.0 | Mature | **adopted** (M3-2) | Multipart file uploads for FastAPI | Size-limited uploads | — |
+| **jsonschema** | Julian Berman | MIT | Very mature | **adopted** (M5-1) | Validate tool/MCP I/O against manifest JSON Schemas at the gateway | Core trust boundary for tool args/results | fastjsonschema |
 | **httpx** | Encode | BSD-3-Clause | Mature | **adopted** (M0-5 test; M1 runtime) | FastAPI TestClient transport; runtime HTTP client for the Ollama provider | — | — |
 
 ## 3. Storage & retrieval
@@ -120,6 +121,7 @@ supply chain (build integrity).
 | **detect-secrets** | Yelp | Apache-2.0 | Mature | adopted (M0-10) | Secret scanning (pre-commit + CI) with a committed baseline | Baseline reviewed on change | gitleaks, trufflehog |
 | **pre-commit** | pre-commit (Anthony Sottile) | MIT | Mature | adopted (M0-10) | Local git hooks (secret scan, ruff) | Hooks call pinned uv tools | — |
 | **fpdf2** | PyFPDF / Lucas Cimon | LGPL-3.0 (lib) | Mature | adopted (M3-2, dev) | Generate sample PDFs in tests | Test-only; not shipped | reportlab |
+| **types-jsonschema** | python/typeshed | Apache-2.0 | Mature | adopted (M5-1, dev) | Type stubs for jsonschema | Test/type-only | — |
 | **Playwright** | Microsoft | Apache-2.0 | Mature | adopted (M0-6) | UI e2e (Chromium) | Browsers pinned via lockfile; installed in CI | Cypress |
 | **Testing Library (react, jest-dom)** | Testing Library (Kent C. Dodds et al.) | MIT | Mature | adopted (M0-6) | React component tests | — | — |
 | **jsdom** | jsdom | MIT | Mature | adopted (M0-6) | DOM env for Vitest | — | happy-dom |

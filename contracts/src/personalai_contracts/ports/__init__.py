@@ -46,6 +46,7 @@ from personalai_contracts.ports.storage import (
 )
 from personalai_contracts.ports.tool import (
     ToolCall,
+    ToolExecutor,
     ToolHandler,
     ToolResult,
 )
@@ -88,6 +89,7 @@ __all__ = [
     "VectorRepository",
     # tool
     "ToolCall",
+    "ToolExecutor",
     "ToolHandler",
     "ToolResult",
 ]

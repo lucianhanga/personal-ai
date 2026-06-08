@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [{ name = "Lucian Hanga" }]
-dependencies = ["personalai-contracts"]
+dependencies = ["personalai-contracts", "jsonschema>=4.21"]
 
 [build-system]
 requires = ["hatchling"]

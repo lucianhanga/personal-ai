@@ -40,3 +40,14 @@ class ToolHandler(Protocol):
     async def invoke(self, call: ToolCall) -> ToolResult:
         """Execute ``call`` and return a normalized result."""
         ...
+
+
+@runtime_checkable
+class ToolExecutor(Protocol):
+    """Runs a handler with a time bound. The seam that scales tool isolation: the in-process
+    executor today; subprocess / container / remote-MCP executors later (M6+). Implementations
+    must be fail-closed (return ``ToolResult(ok=False, ...)`` on timeout/error, never raise)."""
+
+    async def execute(self, handler: ToolHandler, call: ToolCall, *, timeout: float) -> ToolResult:
+        """Execute ``call`` via ``handler`` within ``timeout`` seconds."""
+        ...

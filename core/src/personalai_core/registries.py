@@ -18,9 +18,9 @@ from personalai_contracts.ports import (
     ModelProvider,
     ObjectStore,
     Retriever,
-    ToolHandler,
     VectorRepository,
 )
+from personalai_core.gateway import RegisteredTool
 from personalai_core.registry import Registry
 
 
@@ -41,4 +41,4 @@ class Registries:
         default_factory=lambda: Registry("modality handler")
     )
     agent_roles: Registry[AgentRole] = field(default_factory=lambda: Registry("agent role"))
-    tools: Registry[ToolHandler] = field(default_factory=lambda: Registry("tool"))
+    tools: Registry[RegisteredTool] = field(default_factory=lambda: Registry("tool"))
