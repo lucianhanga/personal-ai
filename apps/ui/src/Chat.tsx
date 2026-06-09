@@ -27,7 +27,17 @@ import { Memory } from "./Memory";
 import { ToolLog } from "./ToolLog";
 import { Tools } from "./Tools";
 
-export function Chat({ token }: { token: string }): React.ReactElement {
+export function Chat({
+  token,
+  status = "connected",
+  statusLabel = "",
+  onToken,
+}: {
+  token: string;
+  status?: string;
+  statusLabel?: string;
+  onToken?: (value: string) => void;
+}): React.ReactElement {
   const [providers, setProviders] = useState<string[]>([]);
   const [provider, setProvider] = useState<string>("");
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -45,6 +55,7 @@ export function Chat({ token }: { token: string }): React.ReactElement {
   const [showLog, setShowLog] = useState(false);
   const [showAppLogs, setShowAppLogs] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [chatsCollapsed, setChatsCollapsed] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [persistence, setPersistence] = useState(false);
@@ -240,57 +251,43 @@ export function Chat({ token }: { token: string }): React.ReactElement {
   const selected = models.find((m) => m.name === model);
 
   return (
-    <div style={{ display: "flex", gap: "1rem", alignItems: "flex-start", width: "100%" }}>
-      <section
-        aria-label="chat"
-        style={{ flex: 2, minWidth: 0, display: "flex", flexDirection: "column", gap: "0.75rem" }}
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", height: "100%" }}>
+      {/* Row 1: top bar (non-collapsable) — identity, status, token, provider/model. */}
+      <header
+        data-testid="top-bar"
+        style={{
+          display: "flex",
+          gap: "0.75rem",
+          alignItems: "center",
+          flexWrap: "wrap",
+          borderBottom: "1px solid #ddd",
+          paddingBottom: "0.5rem",
+        }}
       >
-      {persistence && (
-        <div
-          data-testid="conversations"
-          style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}
+        <h1 style={{ margin: 0, fontSize: "1.3rem" }}>Personal AI</h1>
+        <span
+          data-testid="backend-status"
+          data-status={status}
+          style={{ fontSize: "0.85rem", color: "#555" }}
         >
-          <button data-testid="new-chat" onClick={() => newChat()}>
-            + New chat
-          </button>
-          <label style={{ fontSize: "0.8rem" }} title="Incognito chats are not remembered">
-            <input
-              data-testid="incognito-toggle"
-              type="checkbox"
-              checked={incognito}
-              onChange={(e) => setIncognito(e.target.checked)}
-            />{" "}
-            incognito
-          </label>
-          {conversations.map((c) => (
-            <span key={c.id} style={{ fontSize: "0.8rem" }}>
-              <button
-                data-testid={`open-${c.id}`}
-                onClick={() => void openConversation(c.id)}
-                style={{
-                  fontWeight: c.id === conversationId ? 700 : 400,
-                  maxWidth: 160,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {c.title}
-              </button>
-              <button
-                data-testid={`del-conv-${c.id}`}
-                onClick={() => void removeConversation(c.id)}
-                title="delete conversation"
-                style={{ fontSize: "0.7rem" }}
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
-        <label htmlFor="provider">Provider:</label>
+          {statusLabel}
+        </span>
+        <span data-testid="provider-badge" style={{ fontSize: "0.85rem", color: "#555" }}>
+          Local
+        </span>
+        <label style={{ fontSize: "0.85rem" }}>
+          Token:{" "}
+          <input
+            data-testid="token-input"
+            type="password"
+            value={token}
+            placeholder="PERSONALAI_AUTH_TOKEN"
+            onChange={(e) => onToken?.(e.target.value)}
+          />
+        </label>
+        <label htmlFor="provider" style={{ marginLeft: "auto" }}>
+          Provider:
+        </label>
         <select
           id="provider"
           data-testid="provider-select"
@@ -328,18 +325,9 @@ export function Chat({ token }: { token: string }): React.ReactElement {
               .join(" · ")}
           </span>
         )}
-        {sidebarCollapsed && (
-          <button
-            data-testid="side-toggle"
-            onClick={() => setSidebarCollapsed(false)}
-            title="Show panels"
-            style={{ marginLeft: "auto" }}
-          >
-            Panels ‹
-          </button>
-        )}
-      </div>
+      </header>
 
+      {/* Row 2: global settings (collapsible accordion). */}
       <div
         data-testid="settings-accordion"
         style={{ border: "1px solid #ddd", borderRadius: 8, fontSize: "0.85rem" }}
@@ -454,140 +442,253 @@ export function Chat({ token }: { token: string }): React.ReactElement {
         )}
       </div>
 
-      {files.length > 0 && (
-        <ul data-testid="file-list" style={{ margin: 0, paddingLeft: "1rem", fontSize: "0.8rem" }}>
-          {files.map((f) => (
-            <li key={f.id} data-testid="file-item">
-              {f.name} <span style={{ color: "#888" }}>({f.chunk_count} chunks)</span>{" "}
-              <button
-                data-testid={`delete-${f.id}`}
-                onClick={() => void onDelete(f.id)}
-                style={{ fontSize: "0.75rem" }}
-              >
-                remove
+      {/* Row 3: workspace — chats (1/6) | chat (3/6) | logs (2/6). */}
+      {token ? (
+        <div
+          data-testid="workspace"
+          style={{
+            display: "flex",
+            gap: "1rem",
+            alignItems: "stretch",
+            width: "100%",
+            flex: 1,
+            minHeight: 0,
+          }}
+        >
+          {/* Column 1: chats (collapsible) */}
+          {!chatsCollapsed ? (
+            <aside
+              data-testid="chats-panel"
+              style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "0.4rem" }}
+            >
+              <div style={{ display: "flex", alignItems: "center" }}>
+                <strong style={{ flex: 1 }}>Chats</strong>
+                <button
+                  data-testid="chats-toggle"
+                  onClick={() => setChatsCollapsed(true)}
+                  title="Collapse chats"
+                >
+                  ‹
+                </button>
+              </div>
+              <button data-testid="new-chat" onClick={() => newChat()}>
+                + New chat
               </button>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <div
-        ref={listRef}
-        data-testid="messages"
-        style={{
-          border: "1px solid #ddd",
-          borderRadius: 8,
-          padding: "0.75rem",
-          height: 320,
-          overflowY: "auto",
-        }}
-      >
-        {messages.length === 0 && <p style={{ color: "#888" }}>Ask your local model anything.</p>}
-        {messages.map((m, i) =>
-          m.role === "assistant" ? (
-            // Assistant replies render as Markdown (block elements, so not inside a <p>).
-            <div key={i} data-testid="msg-assistant" style={{ margin: "0.4rem 0" }}>
-              <strong>AI:</strong>
-              {toolSteps[i]?.length ? (
-                <div data-testid="tool-steps" style={{ fontSize: "0.75rem", color: "#555" }}>
-                  {toolSteps[i].map((s, k) =>
-                    s.phase === "call" ? (
-                      <div key={k}>🔧 {s.tool}({JSON.stringify(s.args ?? {})})</div>
-                    ) : (
-                      <div key={k} style={{ color: s.ok ? "#2a7" : "#b00" }}>
-                        ↳ {s.tool}: {s.ok ? "ok" : `error: ${s.error}`}
-                      </div>
-                    ),
-                  )}
-                </div>
-              ) : null}
-              <Markdown content={m.content} />
-              {citations[i]?.length ? (
-                <div data-testid="citations" style={{ fontSize: "0.75rem", color: "#555" }}>
-                  Sources:{" "}
-                  {citations[i]
-                    .map(
-                      (c) =>
-                        `[${c.n}] ${c.name ?? c.source_id.slice(0, 8)}` +
-                        (c.locator ? ` (${c.locator})` : ""),
-                    )
-                    .join("   ")}
-                </div>
-              ) : null}
-            </div>
+              <label style={{ fontSize: "0.8rem" }} title="Incognito chats are not remembered">
+                <input
+                  data-testid="incognito-toggle"
+                  type="checkbox"
+                  checked={incognito}
+                  onChange={(e) => setIncognito(e.target.checked)}
+                />{" "}
+                incognito
+              </label>
+              <div
+                data-testid="conversations"
+                style={{ display: "flex", flexDirection: "column", gap: "0.2rem", overflowY: "auto" }}
+              >
+                {conversations.map((c) => (
+                  <span
+                    key={c.id}
+                    style={{ display: "flex", alignItems: "center", gap: "0.25rem", fontSize: "0.8rem" }}
+                  >
+                    <button
+                      data-testid={`open-${c.id}`}
+                      onClick={() => void openConversation(c.id)}
+                      style={{
+                        flex: 1,
+                        textAlign: "left",
+                        fontWeight: c.id === conversationId ? 700 : 400,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {c.title}
+                    </button>
+                    <button
+                      data-testid={`del-conv-${c.id}`}
+                      onClick={() => void removeConversation(c.id)}
+                      title="delete conversation"
+                      style={{ fontSize: "0.7rem" }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </aside>
           ) : (
-            // User input stays literal text.
-            <p key={i} data-testid="msg-user" style={{ margin: "0.4rem 0" }}>
-              <strong>You:</strong> {m.content}
-            </p>
-          ),
-        )}
-      </div>
+            <button
+              data-testid="chats-toggle"
+              onClick={() => setChatsCollapsed(false)}
+              title="Show chats"
+              style={{ flex: "0 0 auto", alignSelf: "flex-start" }}
+            >
+              Chats ›
+            </button>
+          )}
 
-      {error && (
-        <p data-testid="chat-error" style={{ color: "#b00" }}>
-          {error}
+          {/* Column 2: chat output + composer */}
+          <section
+            aria-label="chat"
+            data-testid="chat-col"
+            style={{ flex: 3, minWidth: 0, display: "flex", flexDirection: "column", gap: "0.5rem" }}
+          >
+            {files.length > 0 && (
+              <ul
+                data-testid="file-list"
+                style={{ margin: 0, paddingLeft: "1rem", fontSize: "0.8rem" }}
+              >
+                {files.map((f) => (
+                  <li key={f.id} data-testid="file-item">
+                    {f.name} <span style={{ color: "#888" }}>({f.chunk_count} chunks)</span>{" "}
+                    <button
+                      data-testid={`delete-${f.id}`}
+                      onClick={() => void onDelete(f.id)}
+                      style={{ fontSize: "0.75rem" }}
+                    >
+                      remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div
+              ref={listRef}
+              data-testid="messages"
+              style={{
+                border: "1px solid #ddd",
+                borderRadius: 8,
+                padding: "0.75rem",
+                flex: 1,
+                minHeight: 200,
+                overflowY: "auto",
+              }}
+            >
+              {messages.length === 0 && (
+                <p style={{ color: "#888" }}>Ask your local model anything.</p>
+              )}
+              {messages.map((m, i) =>
+                m.role === "assistant" ? (
+                  <div key={i} data-testid="msg-assistant" style={{ margin: "0.4rem 0" }}>
+                    <strong>AI:</strong>
+                    {toolSteps[i]?.length ? (
+                      <div data-testid="tool-steps" style={{ fontSize: "0.75rem", color: "#555" }}>
+                        {toolSteps[i].map((s, k) =>
+                          s.phase === "call" ? (
+                            <div key={k}>
+                              🔧 {s.tool}({JSON.stringify(s.args ?? {})})
+                            </div>
+                          ) : (
+                            <div key={k} style={{ color: s.ok ? "#2a7" : "#b00" }}>
+                              ↳ {s.tool}: {s.ok ? "ok" : `error: ${s.error}`}
+                            </div>
+                          ),
+                        )}
+                      </div>
+                    ) : null}
+                    <Markdown content={m.content} />
+                    {citations[i]?.length ? (
+                      <div data-testid="citations" style={{ fontSize: "0.75rem", color: "#555" }}>
+                        Sources:{" "}
+                        {citations[i]
+                          .map(
+                            (c) =>
+                              `[${c.n}] ${c.name ?? c.source_id.slice(0, 8)}` +
+                              (c.locator ? ` (${c.locator})` : ""),
+                          )
+                          .join("   ")}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p key={i} data-testid="msg-user" style={{ margin: "0.4rem 0" }}>
+                    <strong>You:</strong> {m.content}
+                  </p>
+                ),
+              )}
+            </div>
+
+            {error && (
+              <p data-testid="chat-error" style={{ color: "#b00" }}>
+                {error}
+              </p>
+            )}
+
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <input
+                data-testid="composer"
+                style={{ flex: 1 }}
+                value={input}
+                placeholder="Type a message..."
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void send();
+                }}
+              />
+              <button data-testid="send" onClick={() => void send()} disabled={busy || !model}>
+                {busy ? "..." : "Send"}
+              </button>
+            </div>
+          </section>
+
+          {/* Column 3: logs (collapsible) */}
+          {!sidebarCollapsed ? (
+            <aside
+              data-testid="side-panel"
+              aria-label="panels"
+              style={{ flex: 2, minWidth: 0, display: "flex", flexDirection: "column", gap: "0.5rem" }}
+            >
+              <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", flexWrap: "wrap" }}>
+                <button data-testid="toollog-show" onClick={() => setShowLog((v) => !v)}>
+                  {showLog ? "Hide log" : "Log"}
+                </button>
+                <button data-testid="applogs-show" onClick={() => setShowAppLogs((v) => !v)}>
+                  {showAppLogs ? "Hide app logs" : "App logs"}
+                </button>
+                <button
+                  data-testid="side-toggle"
+                  onClick={() => setSidebarCollapsed(true)}
+                  title="Collapse panel"
+                  style={{ marginLeft: "auto" }}
+                >
+                  Collapse ›
+                </button>
+              </div>
+
+              {usage && <ContextMeter usage={usage} />}
+
+              {showLog && <ToolLog token={token} conversationId={conversationId} />}
+              {showAppLogs && <AppLogs token={token} conversationId={conversationId} />}
+
+              {!showLog && !showAppLogs && !usage && (
+                <p data-testid="side-hint" style={{ color: "#888", fontSize: "0.8rem" }}>
+                  Open a panel above to view logs or context usage.
+                </p>
+              )}
+            </aside>
+          ) : (
+            <button
+              data-testid="side-toggle"
+              onClick={() => setSidebarCollapsed(false)}
+              title="Show panels"
+              style={{ flex: "0 0 auto", alignSelf: "flex-start" }}
+            >
+              ‹ Panels
+            </button>
+          )}
+        </div>
+      ) : (
+        <p data-testid="need-token" style={{ color: "#888" }}>
+          Enter your backend API token to start chatting.
         </p>
       )}
 
-      <div style={{ display: "flex", gap: "0.5rem" }}>
-        <input
-          data-testid="composer"
-          style={{ flex: 1 }}
-          value={input}
-          placeholder="Type a message..."
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") void send();
-          }}
-        />
-        <button data-testid="send" onClick={() => void send()} disabled={busy || !model}>
-          {busy ? "..." : "Send"}
-        </button>
-      </div>
-      </section>
-
-      {!sidebarCollapsed && (
-        <aside
-          data-testid="side-panel"
-          aria-label="panels"
-          style={{
-            flex: 1,
-            minWidth: 0,
-            display: "flex",
-            flexDirection: "column",
-            gap: "0.5rem",
-          }}
-        >
-          <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", flexWrap: "wrap" }}>
-            <button data-testid="toollog-show" onClick={() => setShowLog((v) => !v)}>
-              {showLog ? "Hide log" : "Log"}
-            </button>
-            <button data-testid="applogs-show" onClick={() => setShowAppLogs((v) => !v)}>
-              {showAppLogs ? "Hide app logs" : "App logs"}
-            </button>
-            <button
-              data-testid="side-toggle"
-              onClick={() => setSidebarCollapsed(true)}
-              title="Collapse panel"
-              style={{ marginLeft: "auto" }}
-            >
-              Collapse ›
-            </button>
-          </div>
-
-          {usage && <ContextMeter usage={usage} />}
-
-          {showLog && <ToolLog token={token} conversationId={conversationId} />}
-          {showAppLogs && <AppLogs token={token} conversationId={conversationId} />}
-
-          {!showLog && !showAppLogs && !usage && (
-            <p data-testid="side-hint" style={{ color: "#888", fontSize: "0.8rem" }}>
-              Open a panel above to view logs or context usage.
-            </p>
-          )}
-        </aside>
-      )}
+      <p data-testid="security-note" style={{ color: "#555", fontSize: "0.8rem" }}>
+        Local-first: network egress is disabled by default; remote providers are opt-in.
+      </p>
     </div>
   );
 }

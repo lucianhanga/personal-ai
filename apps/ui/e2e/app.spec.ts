@@ -8,7 +8,7 @@ test("renders connected when the backend is healthy", async ({ page }) => {
     route.fulfill({ status: 200, contentType: "application/json", body: '{"status":"ok"}' }),
   );
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "PersonalAI" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Personal AI" })).toBeVisible();
   await expect(page.getByTestId("backend-status")).toHaveText(/connected/i);
   await expect(page.getByTestId("provider-badge")).toHaveText("Local");
 });
