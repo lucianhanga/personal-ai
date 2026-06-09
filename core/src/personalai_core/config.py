@@ -23,6 +23,7 @@ _ENV_FIELDS = {
     "OLLAMA_HOST": "ollama_host",
     "OLLAMA_NUM_CTX": "ollama_num_ctx",
     "MCP_CONFIG": "mcp_config_path",
+    "AGENT_MAX_ITERATIONS": "agent_max_iterations",
     "RETRIEVER": "retriever",
     "VECTOR_REPOSITORY": "vector_repository",
     "OBJECT_STORE": "object_store",
@@ -45,7 +46,14 @@ _ENV_FIELDS = {
     "MEMORY_TOP_K": "memory_top_k",
 }
 
-_INT_FIELDS = {"bind_port", "max_upload_bytes", "stm_keep_recent", "memory_top_k", "ollama_num_ctx"}
+_INT_FIELDS = {
+    "bind_port",
+    "max_upload_bytes",
+    "stm_keep_recent",
+    "memory_top_k",
+    "ollama_num_ctx",
+    "agent_max_iterations",
+}
 _BOOL_FIELDS = {"egress_enabled", "stm_summarize", "memory_enabled", "egress_allow_any"}
 
 _CSV_FIELDS = {"allowed_origins", "allowed_egress_hosts"}
@@ -72,6 +80,8 @@ class CoreConfig(StrictModel):
     ollama_num_ctx: int = 32768
     # Path to an mcp.json (mcpServers map) of MCP servers to connect at startup (M7); empty = none.
     mcp_config_path: str = ""
+    # Max model<->tool iterations in the agent loop before it must answer (multi-step tool use).
+    agent_max_iterations: int = 8
     retriever: str = "pgvector"
     vector_repository: str = "pgvector"
     object_store: str = "local"

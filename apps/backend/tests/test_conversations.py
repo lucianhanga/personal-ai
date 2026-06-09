@@ -499,6 +499,64 @@ def test_assistant_message_persists_thinking_meta() -> None:
         )
 
 
+class _BoomProvider(FakeModelProvider):
+    """Streams a reasoning chunk, then raises mid-generation."""
+
+    async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+        yield GenerationChunk(thinking="thinking hard")
+        raise RuntimeError("model exploded")
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_errored_turn_is_persisted_with_trace() -> None:
+    config = CoreConfig(auth_token=TOKEN, model_provider="boom", database_url=DB_URL)
+    boot = bootstrap(config=config)
+    boot.registries.model_providers.register("boom", _BoomProvider(name="boom"))
+    with TestClient(create_app(boot)) as client:
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/v1/chat",
+            headers=AUTH,
+            json={"messages": [{"role": "user", "content": "hi"}], "conversation_id": cid},
+        ) as resp:
+            body = "".join(resp.iter_text())
+        assert "event: error" in body  # error surfaced to the client
+        msgs = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        assistant = next(m for m in msgs if m["role"] == "assistant")
+        # The aborted turn is persisted with its reasoning trace + the error (not lost on reload).
+        assert assistant["meta"]["error"] == "model exploded"
+        assert any(t["kind"] == "reasoning" for t in assistant["meta"]["trace"])
+
+
+class _BoomAfterTextProvider(FakeModelProvider):
+    """Streams some answer text, then raises (partial answer, no trace)."""
+
+    async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+        yield GenerationChunk(delta="partial answer")
+        raise RuntimeError("boom")
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_errored_turn_persists_partial_answer_without_trace() -> None:
+    config = CoreConfig(auth_token=TOKEN, model_provider="boom2", database_url=DB_URL)
+    boot = bootstrap(config=config)
+    boot.registries.model_providers.register("boom2", _BoomAfterTextProvider(name="boom2"))
+    with TestClient(create_app(boot)) as client:
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/v1/chat",
+            headers=AUTH,
+            json={"messages": [{"role": "user", "content": "hi"}], "conversation_id": cid},
+        ) as resp:
+            "".join(resp.iter_text())
+        msgs = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        assistant = next(m for m in msgs if m["role"] == "assistant")
+        assert assistant["content"] == "partial answer"  # partial answer kept
+        assert assistant["meta"]["error"] == "boom" and "trace" not in assistant["meta"]
+
+
 class _ToolThinkFake(FakeModelProvider):
     """Agent path: reasons (thinking) and answers without a tool call."""
 

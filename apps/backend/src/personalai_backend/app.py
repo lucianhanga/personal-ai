@@ -458,6 +458,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             grants=grants,
             approved=req.approve_tools,
             think=generation.think,
+            max_iterations=app.state.config.agent_max_iterations,
         ):
             if ev.type == "reasoning":
                 yield (
@@ -584,6 +585,18 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                             }
                             yield f"data: {json.dumps(payload)}\n\n".encode()
                 except Exception as exc:  # noqa: BLE001 - surface as a structured error event
+                    # Persist what happened (partial answer + reasoning/tool trace) so reopening the
+                    # chat shows it, then surface the error to the UI. Otherwise the turn vanishes.
+                    if persist_id is not None and storage is not None and (answer or trace):
+                        meta_err: dict[str, Any] = {"error": str(exc)}
+                        if trace:
+                            meta_err["trace"] = trace
+                        await storage.conversations.add_message(
+                            conversation_id=persist_id,
+                            role="assistant",
+                            content=answer or f"(stopped: {exc})",
+                            meta=meta_err,
+                        )
                     error = StructuredResult(
                         ok=False, error=ErrorInfo(code="E_GENERATION", message=str(exc))
                     )
@@ -593,8 +606,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 usage_frame = _usage_frame(usage, provider)
                 if usage_frame is not None:
                     yield usage_frame
-                # Persist the assistant turn (with tool/reasoning meta) after a successful stream.
-                if persist_id is not None and storage is not None and answer:
+                # Persist the assistant turn (with tool/reasoning meta). Also persist when the
+                # answer is empty but tools/reasoning happened, so the trace isn't lost on reload.
+                if persist_id is not None and storage is not None and (answer or trace):
                     await storage.conversations.add_message(
                         conversation_id=persist_id,
                         role="assistant",
@@ -602,7 +616,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                         meta={"trace": trace} if trace else None,
                     )
                     # Long-term memory: extract durable facts from this exchange (skip incognito).
-                    if config.memory_enabled and not incognito:
+                    if config.memory_enabled and not incognito and answer:
                         turn = [ChatMessage(Role(m.role), m.content) for m in req.messages]
                         turn.append(ChatMessage(Role.ASSISTANT, answer))
                         try:

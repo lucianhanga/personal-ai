@@ -406,6 +406,7 @@ export async function streamChat(
   onToolStep?: (step: ToolStep) => void,
   onUsage?: (usage: UsageInfo) => void,
   onThinking?: (delta: string) => void,
+  onError?: (message: string) => void,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/chat`, {
     method: "POST",
@@ -449,6 +450,11 @@ export async function streamChat(
       }
       if (event === "usage") {
         onUsage?.(JSON.parse(data) as UsageInfo);
+        continue;
+      }
+      if (event === "error") {
+        const e = JSON.parse(data) as { error?: { message?: string } };
+        onError?.(e.error?.message ?? "generation failed");
         continue;
       }
       const payload = JSON.parse(data) as { delta?: string; thinking?: string | null };
