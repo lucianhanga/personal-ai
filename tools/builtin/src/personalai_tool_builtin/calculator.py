@@ -31,6 +31,7 @@ CALCULATOR_MANIFEST = ToolManifest(
     name="calculator",
     version="1.0.0",
     provenance=Provenance(maintainer="PersonalAI", license="Apache-2.0"),
+    description="Evaluate an arithmetic expression (e.g. '2 + 3 * 4') and return the number.",
     capabilities=["arithmetic"],
     permissions=(),
     inputs={

@@ -28,6 +28,7 @@ HTTP_FETCH_MANIFEST = ToolManifest(
     name="http_fetch",
     version="1.0.0",
     provenance=Provenance(maintainer="PersonalAI", license="Apache-2.0"),
+    description="Fetch the contents of an http(s) URL via GET. Returns status, content_type, body.",
     capabilities=["http.get"],
     permissions=(Permission(type=PermissionType.NETWORK, scope="*"),),
     inputs={

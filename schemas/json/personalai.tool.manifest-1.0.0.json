@@ -114,6 +114,12 @@
       "title": "Capabilities",
       "type": "array"
     },
+    "description": {
+      "default": "",
+      "description": "What the tool does (shown to the model).",
+      "title": "Description",
+      "type": "string"
+    },
     "egress": {
       "description": "Allowed network hosts; empty means no egress (deny).",
       "items": {
