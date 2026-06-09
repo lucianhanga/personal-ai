@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import { fetchToolLog, type ToolLogEntry } from "./api";
 
-/** The tool-call protocol: every gateway call (allowed + denied); click a row for details. */
+/** Activity: the tool calls (allowed + denied) for the current chat; click a row for details. */
 export function ToolLog({
   token,
   conversationId,
@@ -16,6 +16,14 @@ export function ToolLog({
   const [open, setOpen] = useState<number | null>(null);
 
   function reload(): void {
+    // Activity is strictly per-chat: with no conversation selected there is nothing to show
+    // (avoids surfacing other chats' tool calls from the shared in-memory audit log).
+    if (!conversationId) {
+      setEntries([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     fetchToolLog(token, conversationId)
       .then((e) => {
@@ -32,11 +40,11 @@ export function ToolLog({
   return (
     <section
       data-testid="toollog-panel"
-      aria-label="tool log"
+      aria-label="activity"
       style={{ border: "1px solid #ddd", borderRadius: 8, padding: "0.75rem", fontSize: "0.8rem" }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-        <strong style={{ flex: 1 }}>Tool call log</strong>
+        <strong style={{ flex: 1 }}>Activity</strong>
         <button data-testid="toollog-refresh" onClick={reload}>
           Refresh
         </button>
@@ -48,9 +56,14 @@ export function ToolLog({
         </p>
       )}
       {loading && <p style={{ color: "#888" }}>Loading…</p>}
-      {!loading && entries.length === 0 && (
+      {!loading && !conversationId && (
+        <p data-testid="toollog-noconv" style={{ color: "#888" }}>
+          Open or start a chat to see its activity.
+        </p>
+      )}
+      {!loading && conversationId && entries.length === 0 && (
         <p data-testid="toollog-empty" style={{ color: "#888" }}>
-          No tool calls yet. Use a tool (or chat with “Use tools” on) and calls appear here.
+          No tool calls in this chat yet. Ask something with “Use tools” on.
         </p>
       )}
 

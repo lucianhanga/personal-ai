@@ -27,17 +27,18 @@ const ENTRIES = [
   },
 ];
 
-test("lists tool calls", async () => {
+test("lists the current chat's tool calls", async () => {
   vi.spyOn(api, "fetchToolLog").mockResolvedValue(ENTRIES);
-  render(<ToolLog token="demo" />);
+  render(<ToolLog token="demo" conversationId="c1" />);
   await waitFor(() => expect(screen.getAllByTestId("toollog-item")).toHaveLength(2));
+  expect(screen.getByTestId("toollog-panel")).toHaveTextContent("Activity");
   expect(screen.getByTestId("toollog-panel")).toHaveTextContent("calculator");
   expect(screen.getByTestId("toollog-panel")).toHaveTextContent("http_fetch");
 });
 
 test("clicking an entry shows details", async () => {
   vi.spyOn(api, "fetchToolLog").mockResolvedValue(ENTRIES);
-  render(<ToolLog token="demo" />);
+  render(<ToolLog token="demo" conversationId="c1" />);
   await waitFor(() => expect(screen.getByTestId("toollog-row-0")).toBeInTheDocument());
   fireEvent.click(screen.getByTestId("toollog-row-0"));
   await waitFor(() => expect(screen.getByTestId("toollog-detail")).toHaveTextContent("2+2"));
@@ -49,14 +50,21 @@ test("scopes the request to the selected conversation", async () => {
   await waitFor(() => expect(spy).toHaveBeenCalledWith("demo", "conv-123"));
 });
 
-test("shows empty state", async () => {
-  vi.spyOn(api, "fetchToolLog").mockResolvedValue([]);
+test("shows a hint and fetches nothing when no chat is selected", async () => {
+  const spy = vi.spyOn(api, "fetchToolLog").mockResolvedValue(ENTRIES);
   render(<ToolLog token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("toollog-noconv")).toBeInTheDocument());
+  expect(spy).not.toHaveBeenCalled();
+});
+
+test("shows empty state for a chat with no calls", async () => {
+  vi.spyOn(api, "fetchToolLog").mockResolvedValue([]);
+  render(<ToolLog token="demo" conversationId="c1" />);
   await waitFor(() => expect(screen.getByTestId("toollog-empty")).toBeInTheDocument());
 });
 
 test("surfaces a load error", async () => {
   vi.spyOn(api, "fetchToolLog").mockRejectedValue(new Error("tool log request failed: 401"));
-  render(<ToolLog token="demo" />);
+  render(<ToolLog token="demo" conversationId="c1" />);
   await waitFor(() => expect(screen.getByTestId("toollog-error")).toHaveTextContent(/401/));
 });

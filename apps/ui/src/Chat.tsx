@@ -643,7 +643,7 @@ export function Chat({
             >
               <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", flexWrap: "wrap" }}>
                 <button data-testid="toollog-show" onClick={() => setShowLog((v) => !v)}>
-                  {showLog ? "Hide log" : "Log"}
+                  {showLog ? "Hide activity" : "Activity"}
                 </button>
                 <button data-testid="applogs-show" onClick={() => setShowAppLogs((v) => !v)}>
                   {showAppLogs ? "Hide app logs" : "App logs"}
