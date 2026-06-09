@@ -80,12 +80,14 @@ def test_version(client: TestClient) -> None:
 
 
 def test_protected_route_requires_token(client: TestClient) -> None:
-    assert client.get("/api/status").status_code == 401
-    assert client.get("/api/status", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert client.get("/api/v1/status").status_code == 401
+    assert (
+        client.get("/api/v1/status", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    )
 
 
 def test_protected_route_with_valid_token_returns_structured_result(client: TestClient) -> None:
-    resp = client.get("/api/status", headers={"Authorization": f"Bearer {TOKEN}"})
+    resp = client.get("/api/v1/status", headers={"Authorization": f"Bearer {TOKEN}"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["ok"] is True
@@ -108,7 +110,7 @@ def test_disallowed_origin_gets_no_cors_header(client: TestClient) -> None:
 
 def test_cors_preflight_allows_protected_route(client: TestClient) -> None:
     resp = client.options(
-        "/api/models",
+        "/api/v1/models",
         headers={
             "Origin": "http://localhost",
             "Access-Control-Request-Method": "GET",
@@ -122,7 +124,7 @@ def test_cors_preflight_allows_protected_route(client: TestClient) -> None:
 def test_auth_unconfigured_is_fail_closed() -> None:
     # No auth_token configured -> protected routes are unavailable (fail-closed), not open.
     client = TestClient(create_app(bootstrap(config=CoreConfig())))
-    assert client.get("/api/status").status_code == 503
+    assert client.get("/api/v1/status").status_code == 503
 
 
 def test_non_loopback_bind_requires_auth_token() -> None:
@@ -134,7 +136,7 @@ def test_non_loopback_bind_requires_auth_token() -> None:
 
 def test_models_endpoint_lists_capabilities() -> None:
     client = _app_with_provider("fake", FakeModelProvider(name="fake"))
-    resp = client.get("/api/models", headers={"Authorization": f"Bearer {TOKEN}"})
+    resp = client.get("/api/v1/models", headers={"Authorization": f"Bearer {TOKEN}"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["ok"] is True
@@ -145,12 +147,14 @@ def test_models_endpoint_lists_capabilities() -> None:
 
 def test_models_requires_token() -> None:
     client = _app_with_provider("fake", FakeModelProvider(name="fake"))
-    assert client.get("/api/models").status_code == 401
+    assert client.get("/api/v1/models").status_code == 401
 
 
 def test_providers_lists_registered() -> None:
     client = _app_with_provider("fake", FakeModelProvider(name="fake"))
-    data = client.get("/api/providers", headers={"Authorization": f"Bearer {TOKEN}"}).json()["data"]
+    data = client.get("/api/v1/providers", headers={"Authorization": f"Bearer {TOKEN}"}).json()[
+        "data"
+    ]
     assert "ollama" in data["providers"]
     assert "fake" in data["providers"]
     assert data["default"] == "fake"
@@ -159,7 +163,7 @@ def test_providers_lists_registered() -> None:
 def test_models_unknown_provider_is_400() -> None:
     client = _app_with_provider("fake", FakeModelProvider(name="fake"))
     resp = client.get(
-        "/api/models", params={"provider": "ghost"}, headers={"Authorization": f"Bearer {TOKEN}"}
+        "/api/v1/models", params={"provider": "ghost"}, headers={"Authorization": f"Bearer {TOKEN}"}
     )
     assert resp.status_code == 400
 
@@ -167,7 +171,7 @@ def test_models_unknown_provider_is_400() -> None:
 def test_models_error_surfaces_structured_result() -> None:
     client = _app_with_provider("boom", RaisingProvider())
     resp = client.get(
-        "/api/models", params={"provider": "boom"}, headers={"Authorization": f"Bearer {TOKEN}"}
+        "/api/v1/models", params={"provider": "boom"}, headers={"Authorization": f"Bearer {TOKEN}"}
     )
     body = resp.json()
     assert body["ok"] is False
@@ -177,7 +181,7 @@ def test_models_error_surfaces_structured_result() -> None:
 def test_chat_unknown_provider_is_400() -> None:
     client = _app_with_provider("fake", FakeModelProvider(name="fake"))
     resp = client.post(
-        "/api/chat",
+        "/api/v1/chat",
         headers={"Authorization": f"Bearer {TOKEN}"},
         json={"messages": [{"role": "user", "content": "hi"}], "provider": "ghost"},
     )
@@ -188,14 +192,14 @@ def test_openai_registered_and_egress_blocked_by_default() -> None:
     # An API key registers the remote provider; with egress off, using it fails closed.
     config = CoreConfig(auth_token=TOKEN, openai_api_key="sk-test")
     client = TestClient(create_app(bootstrap(config=config)))
-    providers = client.get("/api/providers", headers={"Authorization": f"Bearer {TOKEN}"}).json()[
-        "data"
-    ]["providers"]
+    providers = client.get(
+        "/api/v1/providers", headers={"Authorization": f"Bearer {TOKEN}"}
+    ).json()["data"]["providers"]
     assert "openai" in providers
 
     with client.stream(
         "POST",
-        "/api/chat",
+        "/api/v1/chat",
         headers={"Authorization": f"Bearer {TOKEN}"},
         json={
             "messages": [{"role": "user", "content": "hi"}],
@@ -210,7 +214,7 @@ def test_openai_registered_and_egress_blocked_by_default() -> None:
 
 def test_chat_requires_token() -> None:
     client = _app_with_provider("fake", FakeModelProvider(name="fake"))
-    resp = client.post("/api/chat", json={"messages": [{"role": "user", "content": "hi"}]})
+    resp = client.post("/api/v1/chat", json={"messages": [{"role": "user", "content": "hi"}]})
     assert resp.status_code == 401
 
 
@@ -218,7 +222,7 @@ def test_chat_streams_deltas() -> None:
     client = _app_with_provider("fake", FakeModelProvider(name="fake"))
     with client.stream(
         "POST",
-        "/api/chat",
+        "/api/v1/chat",
         headers={"Authorization": f"Bearer {TOKEN}"},
         json={"messages": [{"role": "user", "content": "hi there"}]},
     ) as resp:
@@ -234,7 +238,7 @@ def test_chat_streams_deltas() -> None:
 def test_chat_invalid_body_is_rejected() -> None:
     client = _app_with_provider("fake", FakeModelProvider(name="fake"))
     resp = client.post(
-        "/api/chat",
+        "/api/v1/chat",
         headers={"Authorization": f"Bearer {TOKEN}"},
         json={"messages": [{"role": "bogus", "content": "hi"}]},
     )
@@ -245,7 +249,7 @@ def test_chat_errors_surface_as_sse_error_event() -> None:
     client = _app_with_provider("boom", RaisingProvider())
     with client.stream(
         "POST",
-        "/api/chat",
+        "/api/v1/chat",
         headers={"Authorization": f"Bearer {TOKEN}"},
         json={"messages": [{"role": "user", "content": "hi"}]},
     ) as resp:

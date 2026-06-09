@@ -28,7 +28,7 @@ def test_agent_calls_calculator_against_real_model() -> None:
         TestClient(create_app(boot)) as client,
         client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={
                 "model": MODEL,

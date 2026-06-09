@@ -9,7 +9,7 @@
 > [Dependency Policy](../policies/DEPENDENCY-POLICY.md). A generated SBOM (CycloneDX) is the
 > machine-readable companion to this human-readable register.
 
-- **Last reviewed:** 2026-06-08 (M5: jsonschema for the tool gateway; built-in tools reuse httpx — no new third-party deps)
+- **Last reviewed:** 2026-06-09 (versioning 0.6.0 + API `/api/v1`: a manifest version bump only — **no new third-party dependencies**; M6 agent loop + web_search reused stdlib + httpx)
 - **Status legend:** `planned` (vetted, not yet in code) · `adopted` (in the build) · `evaluating` · `rejected`
 - **Provenance note:** Licenses below are grounded in public sources cited in the architecture
   report. They MUST be re-verified against each project's `LICENSE` file at pin time (Phase 0).

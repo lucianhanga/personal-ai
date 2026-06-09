@@ -78,7 +78,7 @@ def _client(database_url: str = DB_URL, **cfg: Any) -> TestClient:
 
 def test_conversations_unavailable_without_storage_503() -> None:
     with _client("postgresql://personalai@127.0.0.1:59999/x") as client:
-        assert client.get("/api/conversations", headers=AUTH).status_code == 503
+        assert client.get("/api/v1/conversations", headers=AUTH).status_code == 503
 
 
 def test_chat_with_conversation_id_without_storage_streams() -> None:
@@ -87,7 +87,7 @@ def test_chat_with_conversation_id_without_storage_streams() -> None:
         _client("postgresql://personalai@127.0.0.1:59999/x") as client,
         client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={"messages": [{"role": "user", "content": "hi"}], "conversation_id": "x"},
         ) as resp,
@@ -99,42 +99,44 @@ def test_chat_with_conversation_id_without_storage_streams() -> None:
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_conversation_crud() -> None:
     with _client() as client:
-        created = client.post("/api/conversations", headers=AUTH, json={"title": "T1"}).json()
+        created = client.post("/api/v1/conversations", headers=AUTH, json={"title": "T1"}).json()
         cid = created["data"]["id"]
         assert created["data"]["title"] == "T1"
 
-        listed = client.get("/api/conversations", headers=AUTH).json()["data"]["conversations"]
+        listed = client.get("/api/v1/conversations", headers=AUTH).json()["data"]["conversations"]
         assert any(c["id"] == cid for c in listed)
 
-        got = client.get(f"/api/conversations/{cid}", headers=AUTH).json()["data"]
+        got = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]
         assert got["messages"] == []
 
-        assert client.delete(f"/api/conversations/{cid}", headers=AUTH).status_code == 200
-        assert client.get(f"/api/conversations/{cid}", headers=AUTH).status_code == 404
+        assert client.delete(f"/api/v1/conversations/{cid}", headers=AUTH).status_code == 200
+        assert client.get(f"/api/v1/conversations/{cid}", headers=AUTH).status_code == 404
 
 
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_conversation_rename() -> None:
     with _client() as client:
-        cid = client.post("/api/conversations", headers=AUTH, json={"title": "Old"}).json()["data"][
-            "id"
-        ]
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={"title": "Old"}).json()[
+            "data"
+        ]["id"]
         renamed = client.patch(
-            f"/api/conversations/{cid}", headers=AUTH, json={"title": "New name"}
+            f"/api/v1/conversations/{cid}", headers=AUTH, json={"title": "New name"}
         )
         assert renamed.status_code == 200
         assert renamed.json()["data"]["title"] == "New name"
-        listed = client.get("/api/conversations", headers=AUTH).json()["data"]["conversations"]
+        listed = client.get("/api/v1/conversations", headers=AUTH).json()["data"]["conversations"]
         assert any(c["id"] == cid and c["title"] == "New name" for c in listed)
 
         assert (
             client.patch(
-                f"/api/conversations/{cid}", headers=AUTH, json={"title": "  "}
+                f"/api/v1/conversations/{cid}", headers=AUTH, json={"title": "  "}
             ).status_code
             == 400
         )
         assert (
-            client.patch("/api/conversations/nope", headers=AUTH, json={"title": "x"}).status_code
+            client.patch(
+                "/api/v1/conversations/nope", headers=AUTH, json={"title": "x"}
+            ).status_code
             == 404
         )
 
@@ -142,10 +144,10 @@ def test_conversation_rename() -> None:
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_chat_persists_turns() -> None:
     with _client() as client:
-        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
         with client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={
                 "messages": [{"role": "user", "content": "remember this"}],
@@ -153,7 +155,7 @@ def test_chat_persists_turns() -> None:
             },
         ) as resp:
             "".join(resp.iter_text())
-        msgs = client.get(f"/api/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        msgs = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
         roles = [m["role"] for m in msgs]
         assert "user" in roles and "assistant" in roles
         assert any(m["content"] == "remember this" for m in msgs)
@@ -162,10 +164,10 @@ def test_chat_persists_turns() -> None:
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_chat_without_user_message_persists_only_assistant() -> None:
     with _client() as client:
-        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
         with client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={
                 "messages": [{"role": "system", "content": "be brief"}],
@@ -173,7 +175,7 @@ def test_chat_without_user_message_persists_only_assistant() -> None:
             },
         ) as resp:
             "".join(resp.iter_text())
-        got = client.get(f"/api/conversations/{cid}", headers=AUTH).json()["data"]
+        got = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]
         roles = [m["role"] for m in got["messages"]]
         assert "user" not in roles  # no user turn was present, so none was persisted
 
@@ -181,17 +183,17 @@ def test_chat_without_user_message_persists_only_assistant() -> None:
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_stm_folds_old_turns_into_summary() -> None:
     with _client(stm_keep_recent=2) as client:
-        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
         msgs = [
             {"role": "user" if i % 2 == 0 else "assistant", "content": f"m{i}"} for i in range(5)
         ]
         with client.stream(
-            "POST", "/api/chat", headers=AUTH, json={"messages": msgs, "conversation_id": cid}
+            "POST", "/api/v1/chat", headers=AUTH, json={"messages": msgs, "conversation_id": cid}
         ) as resp:
             "".join(resp.iter_text())
         # Re-send the same history: nothing new aged out, so no re-summarization happens.
         with client.stream(
-            "POST", "/api/chat", headers=AUTH, json={"messages": msgs, "conversation_id": cid}
+            "POST", "/api/v1/chat", headers=AUTH, json={"messages": msgs, "conversation_id": cid}
         ) as resp:
             "".join(resp.iter_text())
 
@@ -248,10 +250,10 @@ async def _memories_for(cid: str) -> list[str]:
 def test_memory_api_list_update_delete_clear() -> None:
     with _mem_client() as client:
         # seed a memory by chatting
-        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
         with client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={
                 "messages": [{"role": "user", "content": "where do I work?"}],
@@ -260,33 +262,34 @@ def test_memory_api_list_update_delete_clear() -> None:
         ) as resp:
             "".join(resp.iter_text())
 
-        memories = client.get("/api/memory", headers=AUTH).json()["data"]["memories"]
+        memories = client.get("/api/v1/memory", headers=AUTH).json()["data"]["memories"]
         assert any(_FACT in m["text"] for m in memories)
         mid = memories[0]["id"]
 
-        patched = client.patch(f"/api/memory/{mid}", headers=AUTH, json={"text": "edited fact"})
+        patched = client.patch(f"/api/v1/memory/{mid}", headers=AUTH, json={"text": "edited fact"})
         assert patched.json()["data"]["text"] == "edited fact"
         assert (
-            client.patch("/api/memory/missing", headers=AUTH, json={"text": "x"}).status_code == 404
+            client.patch("/api/v1/memory/missing", headers=AUTH, json={"text": "x"}).status_code
+            == 404
         )
 
-        assert client.delete(f"/api/memory/{mid}", headers=AUTH).status_code == 200
-        assert client.delete("/api/memory", headers=AUTH).json()["data"]["cleared"] is True
-        assert client.get("/api/memory", headers=AUTH).json()["data"]["memories"] == []
+        assert client.delete(f"/api/v1/memory/{mid}", headers=AUTH).status_code == 200
+        assert client.delete("/api/v1/memory", headers=AUTH).json()["data"]["cleared"] is True
+        assert client.get("/api/v1/memory", headers=AUTH).json()["data"]["memories"] == []
 
 
 def test_memory_api_unavailable_without_storage_503() -> None:
     with _client("postgresql://personalai@127.0.0.1:59999/x") as client:
-        assert client.get("/api/memory", headers=AUTH).status_code == 503
+        assert client.get("/api/v1/memory", headers=AUTH).status_code == 503
 
 
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_chat_use_memory_with_no_memories_streams() -> None:
     with _mem_client() as client:  # memories truncated -> recall returns nothing
-        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
         with client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={
                 "messages": [{"role": "user", "content": "anything?"}],
@@ -302,10 +305,10 @@ def test_chat_use_memory_with_no_memories_streams() -> None:
 def test_chat_use_memory_injects_recall() -> None:
     with _mem_client() as client:
         # seed a memory, then ask with use_memory in a fresh conversation
-        c1 = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        c1 = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
         with client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={
                 "messages": [{"role": "user", "content": "where do I work?"}],
@@ -313,10 +316,10 @@ def test_chat_use_memory_injects_recall() -> None:
             },
         ) as resp:
             "".join(resp.iter_text())
-        c2 = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        c2 = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
         with client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={
                 "messages": [{"role": "user", "content": "remind me?"}],
@@ -331,10 +334,10 @@ def test_chat_use_memory_injects_recall() -> None:
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_memory_extracted_after_chat() -> None:
     with _mem_client() as client:
-        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
         with client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={
                 "messages": [{"role": "user", "content": "where do I work?"}],
@@ -348,14 +351,14 @@ def test_memory_extracted_after_chat() -> None:
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_incognito_conversation_skips_memory() -> None:
     with _mem_client() as client:
-        created = client.post("/api/conversations", headers=AUTH, json={"incognito": True}).json()[
-            "data"
-        ]
+        created = client.post(
+            "/api/v1/conversations", headers=AUTH, json={"incognito": True}
+        ).json()["data"]
         assert created["incognito"] is True
         cid = created["id"]
         with client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={"messages": [{"role": "user", "content": "secret"}], "conversation_id": cid},
         ) as resp:
@@ -375,10 +378,10 @@ def test_memory_extraction_failure_does_not_break_chat() -> None:
     boot = bootstrap(config=config)
     boot.registries.model_providers.register("memfake", _BoomEmbed(name="memfake"))
     with TestClient(create_app(boot)) as client:
-        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
         with client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={"messages": [{"role": "user", "content": "hi"}], "conversation_id": cid},
         ) as resp:
@@ -390,10 +393,10 @@ def test_memory_extraction_failure_does_not_break_chat() -> None:
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_memory_disabled_skips_extraction() -> None:
     with _mem_client(memory_enabled=False) as client:
-        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
         with client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={
                 "messages": [{"role": "user", "content": "where do I work?"}],
@@ -408,7 +411,7 @@ def test_memory_disabled_skips_extraction() -> None:
 def test_chat_unknown_conversation_404() -> None:
     with _client() as client:
         resp = client.post(
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={"messages": [{"role": "user", "content": "hi"}], "conversation_id": "nope"},
         )
@@ -421,7 +424,7 @@ def test_stm_unknown_conversation_with_long_history_404() -> None:
     with _client(stm_keep_recent=2) as client:
         msgs = [{"role": "user", "content": f"m{i}"} for i in range(5)]
         resp = client.post(
-            "/api/chat", headers=AUTH, json={"messages": msgs, "conversation_id": "nope"}
+            "/api/v1/chat", headers=AUTH, json={"messages": msgs, "conversation_id": "nope"}
         )
         assert resp.status_code == 404
 
@@ -434,10 +437,10 @@ def test_stm_empty_summary_adds_no_system_message() -> None:
     boot = bootstrap(config=config)
     boot.registries.model_providers.register("fake", _EmptyGen(name="fake"))
     with TestClient(create_app(boot)) as client:
-        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
         msgs = [{"role": "user", "content": f"m{i}"} for i in range(5)]
         with client.stream(
-            "POST", "/api/chat", headers=AUTH, json={"messages": msgs, "conversation_id": cid}
+            "POST", "/api/v1/chat", headers=AUTH, json={"messages": msgs, "conversation_id": cid}
         ) as resp:
             assert resp.status_code == 200
             "".join(resp.iter_text())
@@ -480,15 +483,15 @@ def _client_with(name: str, provider: FakeModelProvider) -> TestClient:
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_assistant_message_persists_thinking_meta() -> None:
     with _client_with("thinkfake", _ThinkingFake(name="thinkfake")) as client:
-        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
         with client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={"messages": [{"role": "user", "content": "why?"}], "conversation_id": cid},
         ) as resp:
             "".join(resp.iter_text())
-        msgs = client.get(f"/api/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        msgs = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
         assistant = next(m for m in msgs if m["role"] == "assistant")
         trace = assistant["meta"]["trace"]
         assert any(
@@ -506,10 +509,10 @@ class _ToolThinkFake(FakeModelProvider):
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_agent_path_persists_reasoning_meta() -> None:
     with _client_with("toolthink", _ToolThinkFake(name="toolthink")) as client:
-        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
         with client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={
                 "messages": [{"role": "user", "content": "why?"}],
@@ -520,7 +523,7 @@ def test_agent_path_persists_reasoning_meta() -> None:
         ) as resp:
             body = "".join(resp.iter_text())
         assert "reasoning trace" in body  # streamed live too
-        msgs = client.get(f"/api/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        msgs = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
         assistant = next(m for m in msgs if m["role"] == "assistant")
         trace = assistant["meta"]["trace"]
         assert any(t["kind"] == "reasoning" and t["text"] == "reasoning trace" for t in trace)
@@ -529,10 +532,10 @@ def test_agent_path_persists_reasoning_meta() -> None:
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_assistant_message_persists_tool_steps_meta() -> None:
     with _client_with("toolfake", _ToolFake()) as client:
-        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
         with client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={
                 "messages": [{"role": "user", "content": "2+2?"}],
@@ -541,7 +544,7 @@ def test_assistant_message_persists_tool_steps_meta() -> None:
             },
         ) as resp:
             "".join(resp.iter_text())
-        msgs = client.get(f"/api/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        msgs = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
         assistant = next(m for m in msgs if m["role"] == "assistant")
         trace = assistant["meta"]["trace"]
         assert any(t["kind"] == "tool_call" and t["tool"] == "calculator" for t in trace)

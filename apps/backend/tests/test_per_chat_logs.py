@@ -43,7 +43,7 @@ def _client() -> TestClient:
 def _run_tool_chat(client: TestClient, conversation_id: str) -> None:
     with client.stream(
         "POST",
-        "/api/chat",
+        "/api/v1/chat",
         headers=AUTH,
         json={
             "messages": [{"role": "user", "content": "2+2?"}],
@@ -60,16 +60,16 @@ def test_tool_log_is_tagged_and_filtered_by_conversation() -> None:
     _run_tool_chat(client, "conv-A")
     _run_tool_chat(client, "conv-B")
 
-    a = client.get("/api/tools/log", params={"conversation_id": "conv-A"}, headers=AUTH)
+    a = client.get("/api/v1/tools/log", params={"conversation_id": "conv-A"}, headers=AUTH)
     entries = a.json()["data"]["entries"]
     assert entries and all(e["conversation"] == "conv-A" for e in entries)
     assert any(e["tool"] == "calculator" for e in entries)
 
-    none = client.get("/api/tools/log", params={"conversation_id": "zzz"}, headers=AUTH)
+    none = client.get("/api/v1/tools/log", params={"conversation_id": "zzz"}, headers=AUTH)
     assert none.json()["data"]["entries"] == []
 
     # Unfiltered still returns calls from both conversations.
-    everything = client.get("/api/tools/log", headers=AUTH).json()["data"]["entries"]
+    everything = client.get("/api/v1/tools/log", headers=AUTH).json()["data"]["entries"]
     convs = {e["conversation"] for e in everything}
     assert {"conv-A", "conv-B"} <= convs
 
@@ -95,7 +95,7 @@ def test_logs_endpoint_filters_by_conversation() -> None:
         current_conversation.reset(token)
     logging.getLogger("personalai_backend.demo").warning("global-log")
 
-    y = client.get("/api/logs", params={"conversation_id": "conv-Y"}, headers=AUTH)
+    y = client.get("/api/v1/logs", params={"conversation_id": "conv-Y"}, headers=AUTH)
     logs = y.json()["data"]["logs"]
     assert any(r["message"] == "chat-scoped-log" for r in logs)
     assert all(r["conversation"] == "conv-Y" for r in logs)

@@ -52,7 +52,7 @@ def test_files_unavailable_without_storage_returns_503() -> None:
     bad_url = "postgresql://personalai@127.0.0.1:59999/x"
     config = CoreConfig(auth_token=TOKEN, database_url=bad_url)
     with TestClient(create_app(bootstrap(config=config))) as client:
-        assert client.get("/api/files", headers=AUTH).status_code == 503
+        assert client.get("/api/v1/files", headers=AUTH).status_code == 503
 
 
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
@@ -62,7 +62,7 @@ def test_upload_list_delete_roundtrip() -> None:
     boot.registries.model_providers.register("fakeembed", _Embed1024(name="fakeembed"))
     with TestClient(create_app(boot)) as client:
         up = client.post(
-            "/api/files",
+            "/api/v1/files",
             headers=AUTH,
             files={"file": ("notes.txt", b"hello world. " * 50, "text/plain")},
         )
@@ -72,11 +72,11 @@ def test_upload_list_delete_roundtrip() -> None:
         doc_id = body["data"]["id"]
         assert body["data"]["chunk_count"] > 0
 
-        listed = client.get("/api/files", headers=AUTH).json()["data"]["files"]
+        listed = client.get("/api/v1/files", headers=AUTH).json()["data"]["files"]
         assert any(f["id"] == doc_id for f in listed)
 
-        assert client.delete(f"/api/files/{doc_id}", headers=AUTH).status_code == 200
-        after = client.get("/api/files", headers=AUTH).json()["data"]["files"]
+        assert client.delete(f"/api/v1/files/{doc_id}", headers=AUTH).status_code == 200
+        after = client.get("/api/v1/files", headers=AUTH).json()["data"]["files"]
         assert all(f["id"] != doc_id for f in after)
 
 
@@ -87,7 +87,7 @@ def test_unsupported_file_type_is_structured_error() -> None:
     boot.registries.model_providers.register("fakeembed", _Embed1024(name="fakeembed"))
     with TestClient(create_app(boot)) as client:
         resp = client.post(
-            "/api/files", headers=AUTH, files={"file": ("photo.heic", b"\x00\x01", "image/heic")}
+            "/api/v1/files", headers=AUTH, files={"file": ("photo.heic", b"\x00\x01", "image/heic")}
         )
         assert resp.status_code == 200
         body = resp.json()
@@ -101,7 +101,7 @@ def test_delete_unknown_document_404() -> None:
     boot = bootstrap(config=config)
     boot.registries.model_providers.register("fakeembed", _Embed1024(name="fakeembed"))
     with TestClient(create_app(boot)) as client:
-        assert client.delete("/api/files/does-not-exist", headers=AUTH).status_code == 404
+        assert client.delete("/api/v1/files/does-not-exist", headers=AUTH).status_code == 404
 
 
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
@@ -116,14 +116,14 @@ def test_chat_with_rag_emits_citations() -> None:
     boot.registries.model_providers.register("fakeembed", _Embed1024(name="fakeembed"))
     with TestClient(create_app(boot)) as client:
         up = client.post(
-            "/api/files",
+            "/api/v1/files",
             headers=AUTH,
             files={"file": ("geo.txt", b"Lisbon is the capital of Portugal. " * 10, "text/plain")},
         )
         assert up.json()["data"]["chunk_count"] > 0
         with client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={
                 "messages": [{"role": "user", "content": "What is the capital?"}],
@@ -157,7 +157,7 @@ def test_chat_with_rag_no_matches_emits_no_citations() -> None:
     with TestClient(create_app(boot)) as client:
         with client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={"messages": [{"role": "user", "content": "anything?"}], "use_rag": True},
         ) as resp:
@@ -177,7 +177,7 @@ def test_chat_with_rag_without_storage_streams_normally() -> None:
     with TestClient(create_app(boot)) as client:
         with client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={"messages": [{"role": "user", "content": "hi"}], "use_rag": True},
         ) as resp:

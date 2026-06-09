@@ -1,4 +1,4 @@
-"""Application log buffer + /api/logs endpoint (no DB needed)."""
+"""Application log buffer + /api/v1/logs endpoint (no DB needed)."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def _client() -> TestClient:
 def test_logs_endpoint_returns_recent_app_logs() -> None:
     client = _client()  # installs the buffer
     logging.getLogger("personalai_backend.demo").warning("hello-from-test")
-    logs = client.get("/api/logs", headers=AUTH).json()["data"]["logs"]
+    logs = client.get("/api/v1/logs", headers=AUTH).json()["data"]["logs"]
     assert any(entry["message"] == "hello-from-test" for entry in logs)
     entry = next(e for e in logs if e["message"] == "hello-from-test")
     assert entry["level"] == "WARNING"
@@ -30,7 +30,7 @@ def test_logs_endpoint_returns_recent_app_logs() -> None:
 
 
 def test_logs_require_token() -> None:
-    assert _client().get("/api/logs").status_code == 401
+    assert _client().get("/api/v1/logs").status_code == 401
 
 
 def test_buffer_keeps_personalai_and_warnings_drops_library_noise() -> None:

@@ -1,4 +1,4 @@
-"""Context-usage SSE event from /api/chat (no DB needed)."""
+"""Context-usage SSE event from /api/v1/chat (no DB needed)."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def _client(provider_name: str) -> TestClient:
 
 
 def _body(client: TestClient, payload: dict[str, object]) -> str:
-    with client.stream("POST", "/api/chat", headers=AUTH, json=payload) as resp:
+    with client.stream("POST", "/api/v1/chat", headers=AUTH, json=payload) as resp:
         assert resp.status_code == 200
         return "".join(resp.iter_text())
 
