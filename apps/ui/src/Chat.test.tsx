@@ -272,6 +272,21 @@ test("toggles default on and the settings accordion collapses", async () => {
 });
 
 
+test("collapses and expands the chats column", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("chats-panel")).toBeInTheDocument());
+
+  fireEvent.click(screen.getByTestId("chats-toggle"));
+  await waitFor(() => expect(screen.queryByTestId("chats-panel")).not.toBeInTheDocument());
+
+  fireEvent.click(screen.getByTestId("chats-toggle"));
+  await waitFor(() => expect(screen.getByTestId("chats-panel")).toBeInTheDocument());
+});
+
+
 test("collapses and expands the panel sidebar", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
