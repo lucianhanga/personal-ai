@@ -53,6 +53,7 @@ from personalai_core import (
     summarize,
 )
 from personalai_core.registries import Registries
+from personalai_core.security import current_conversation
 from personalai_modality_files import UnsupportedFileTypeError
 from personalai_storage_postgres import (
     Conversation,
@@ -481,61 +482,67 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             )
 
         async def event_stream() -> AsyncIterator[bytes]:
-            if citations:
-                yield f"event: citations\ndata: {json.dumps(citations)}\n\n".encode()
-            answer = ""
-            usage: Mapping[str, int] = {}
+            # Tag tool-audit + app-log entries produced during this turn with the active chat,
+            # so the UI can show per-conversation history (reset when the stream ends).
+            cv_token = current_conversation.set(req.conversation_id)
             try:
-                if req.use_tools:
-                    async for frame, text, used in _agent_stream(req, provider, generation):
-                        if text is not None:
-                            answer = text
-                        if used:
-                            usage = used
-                        yield frame
-                else:
-                    async for chunk in provider.stream(generation):
-                        answer += chunk.delta
-                        if chunk.usage:
-                            usage = dict(chunk.usage)
-                        payload = {
-                            "delta": chunk.delta,
-                            "thinking": chunk.thinking,
-                            "done": chunk.done,
-                            "finish_reason": chunk.finish_reason,
-                        }
-                        yield f"data: {json.dumps(payload)}\n\n".encode()
-            except Exception as exc:  # noqa: BLE001 - surface as a structured error event (fail-closed)
-                error = StructuredResult(
-                    ok=False, error=ErrorInfo(code="E_GENERATION", message=str(exc))
-                )
-                yield f"event: error\ndata: {error.model_dump_json()}\n\n".encode()
-                return
-            # Report token usage / context fill for this turn (UI meter).
-            usage_frame = _usage_frame(usage, provider)
-            if usage_frame is not None:
-                yield usage_frame
-            # Persist the assistant turn after a successful stream.
-            if persist_id is not None and storage is not None and answer:
-                await storage.conversations.add_message(
-                    conversation_id=persist_id, role="assistant", content=answer
-                )
-                # Long-term memory: extract durable facts from this exchange (skip incognito).
-                if config.memory_enabled and not incognito:
-                    turn = [ChatMessage(Role(m.role), m.content) for m in req.messages]
-                    turn.append(ChatMessage(Role.ASSISTANT, answer))
-                    try:
-                        await remember(
-                            messages=turn,
-                            gen_provider=provider,
-                            gen_model=req.model or config.default_model,
-                            embed_provider=_resolve_provider(config.embed_provider),
-                            embed_model=config.embed_model,
-                            store=storage.memories,
-                            source={"conversation_id": persist_id},
-                        )
-                    except Exception as exc:  # noqa: BLE001 - memory is best-effort, never break chat
-                        logger.warning("memory extraction failed: %s", exc)
+                if citations:
+                    yield f"event: citations\ndata: {json.dumps(citations)}\n\n".encode()
+                answer = ""
+                usage: Mapping[str, int] = {}
+                try:
+                    if req.use_tools:
+                        async for frame, text, used in _agent_stream(req, provider, generation):
+                            if text is not None:
+                                answer = text
+                            if used:
+                                usage = used
+                            yield frame
+                    else:
+                        async for chunk in provider.stream(generation):
+                            answer += chunk.delta
+                            if chunk.usage:
+                                usage = dict(chunk.usage)
+                            payload = {
+                                "delta": chunk.delta,
+                                "thinking": chunk.thinking,
+                                "done": chunk.done,
+                                "finish_reason": chunk.finish_reason,
+                            }
+                            yield f"data: {json.dumps(payload)}\n\n".encode()
+                except Exception as exc:  # noqa: BLE001 - surface as a structured error event
+                    error = StructuredResult(
+                        ok=False, error=ErrorInfo(code="E_GENERATION", message=str(exc))
+                    )
+                    yield f"event: error\ndata: {error.model_dump_json()}\n\n".encode()
+                    return
+                # Report token usage / context fill for this turn (UI meter).
+                usage_frame = _usage_frame(usage, provider)
+                if usage_frame is not None:
+                    yield usage_frame
+                # Persist the assistant turn after a successful stream.
+                if persist_id is not None and storage is not None and answer:
+                    await storage.conversations.add_message(
+                        conversation_id=persist_id, role="assistant", content=answer
+                    )
+                    # Long-term memory: extract durable facts from this exchange (skip incognito).
+                    if config.memory_enabled and not incognito:
+                        turn = [ChatMessage(Role(m.role), m.content) for m in req.messages]
+                        turn.append(ChatMessage(Role.ASSISTANT, answer))
+                        try:
+                            await remember(
+                                messages=turn,
+                                gen_provider=provider,
+                                gen_model=req.model or config.default_model,
+                                embed_provider=_resolve_provider(config.embed_provider),
+                                embed_model=config.embed_model,
+                                store=storage.memories,
+                                source={"conversation_id": persist_id},
+                            )
+                        except Exception as exc:  # noqa: BLE001 - memory is best-effort
+                            logger.warning("memory extraction failed: %s", exc)
+            finally:
+                current_conversation.reset(cv_token)
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -766,8 +773,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.get(
         "/api/tools/log", response_model=StructuredResult, dependencies=[Depends(_require_token)]
     )
-    def tool_log() -> StructuredResult:
-        # The gateway audits every tool call (allowed + denied); surface the tool.* entries.
+    def tool_log(conversation_id: str | None = None) -> StructuredResult:
+        # The gateway audits every tool call (allowed + denied); surface the tool.* entries,
+        # optionally filtered to one conversation (for the per-chat view).
         entries = [
             {
                 "index": i,
@@ -777,14 +785,21 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 "ok": e.payload.get("ok"),
                 "error": e.payload.get("error") or e.payload.get("reason"),
                 "args": e.payload.get("args"),
+                "conversation": e.conversation,
             }
             for i, e in enumerate(app.state.bootstrap.audit.entries())
             if e.type.startswith("tool.")
+            and (conversation_id is None or e.conversation == conversation_id)
         ]
         return StructuredResult(ok=True, data={"entries": list(reversed(entries))})
 
     @app.get("/api/logs", response_model=StructuredResult, dependencies=[Depends(_require_token)])
-    def app_logs() -> StructuredResult:
-        return StructuredResult(ok=True, data={"logs": list(reversed(LOG_BUFFER.records))})
+    def app_logs(conversation_id: str | None = None) -> StructuredResult:
+        logs = [
+            r
+            for r in LOG_BUFFER.records
+            if conversation_id is None or r.get("conversation") == conversation_id
+        ]
+        return StructuredResult(ok=True, data={"logs": list(reversed(logs))})
 
     return app

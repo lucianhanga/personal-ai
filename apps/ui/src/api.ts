@@ -251,17 +251,27 @@ export async function fetchTools(token: string): Promise<ToolInfo[]> {
   return body.data?.tools ?? [];
 }
 
-/** Recent application/server logs (most recent first). */
-export async function fetchLogs(token: string): Promise<LogEntry[]> {
-  const res = await fetch(`${API_BASE}/api/logs`, { headers: authHeaders(token) });
+const convQuery = (conversationId?: string | null): string =>
+  conversationId ? `?conversation_id=${encodeURIComponent(conversationId)}` : "";
+
+/** Recent application/server logs (most recent first), optionally scoped to a conversation. */
+export async function fetchLogs(token: string, conversationId?: string | null): Promise<LogEntry[]> {
+  const res = await fetch(`${API_BASE}/api/logs${convQuery(conversationId)}`, {
+    headers: authHeaders(token),
+  });
   if (!res.ok) throw new Error(`logs request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { logs?: LogEntry[] } };
   return body.data?.logs ?? [];
 }
 
-/** The tool-call audit log (most recent first). */
-export async function fetchToolLog(token: string): Promise<ToolLogEntry[]> {
-  const res = await fetch(`${API_BASE}/api/tools/log`, { headers: authHeaders(token) });
+/** The tool-call audit log (most recent first), optionally scoped to a conversation. */
+export async function fetchToolLog(
+  token: string,
+  conversationId?: string | null,
+): Promise<ToolLogEntry[]> {
+  const res = await fetch(`${API_BASE}/api/tools/log${convQuery(conversationId)}`, {
+    headers: authHeaders(token),
+  });
   if (!res.ok) throw new Error(`tool log request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { entries?: ToolLogEntry[] } };
   return body.data?.entries ?? [];

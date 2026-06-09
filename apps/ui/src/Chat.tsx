@@ -578,8 +578,8 @@ export function Chat({ token }: { token: string }): React.ReactElement {
 
           {usage && <ContextMeter usage={usage} />}
 
-          {showLog && <ToolLog token={token} />}
-          {showAppLogs && <AppLogs token={token} />}
+          {showLog && <ToolLog token={token} conversationId={conversationId} />}
+          {showAppLogs && <AppLogs token={token} conversationId={conversationId} />}
 
           {!showLog && !showAppLogs && !usage && (
             <p data-testid="side-hint" style={{ color: "#888", fontSize: "0.8rem" }}>

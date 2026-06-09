@@ -12,6 +12,8 @@ from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
+from personalai_core.security import current_conversation
+
 
 class RingBufferHandler(logging.Handler):
     """A logging handler that keeps the most recent records in memory."""
@@ -30,6 +32,8 @@ class RingBufferHandler(logging.Handler):
                 "level": record.levelname,
                 "logger": record.name,
                 "message": record.getMessage(),
+                # Tag with the active chat (if any) so the UI can filter per conversation.
+                "conversation": current_conversation.get(),
             }
         )
 

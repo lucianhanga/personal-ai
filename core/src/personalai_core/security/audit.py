@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,10 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from personalai_core.security.redaction import redact
+
+# Conversation in scope for the current request; audit + app-log entries are stamped with it so the
+# UI can show per-chat history. Set/reset by the backend around a chat turn (default None).
+current_conversation: ContextVar[str | None] = ContextVar("current_conversation", default=None)
 
 
 class AuditEvent(BaseModel):
@@ -28,6 +33,7 @@ class AuditEvent(BaseModel):
     actor: str | None = None
     payload: Mapping[str, Any] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    conversation: str | None = None
 
 
 class AuditLog:
@@ -46,7 +52,12 @@ class AuditLog:
         self, event_type: str, payload: Mapping[str, Any] | None = None, actor: str | None = None
     ) -> AuditEvent:
         """Append a redacted event. Returns the stored event."""
-        event = AuditEvent(type=event_type, actor=actor, payload=redact(payload or {}))
+        event = AuditEvent(
+            type=event_type,
+            actor=actor,
+            payload=redact(payload or {}),
+            conversation=current_conversation.get(),
+        )
         self._entries.append(event)
         if self._sink_path is not None:
             with self._sink_path.open("a", encoding="utf-8") as fh:
