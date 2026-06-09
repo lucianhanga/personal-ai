@@ -733,4 +733,24 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             )
         return StructuredResult(ok=True, data=dict(result.output))
 
+    @app.get(
+        "/api/tools/log", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+    )
+    def tool_log() -> StructuredResult:
+        # The gateway audits every tool call (allowed + denied); surface the tool.* entries.
+        entries = [
+            {
+                "index": i,
+                "type": e.type,
+                "timestamp": e.timestamp.isoformat(),
+                "tool": e.payload.get("tool"),
+                "ok": e.payload.get("ok"),
+                "error": e.payload.get("error") or e.payload.get("reason"),
+                "args": e.payload.get("args"),
+            }
+            for i, e in enumerate(app.state.bootstrap.audit.entries())
+            if e.type.startswith("tool.")
+        ]
+        return StructuredResult(ok=True, data={"entries": list(reversed(entries))})
+
     return app

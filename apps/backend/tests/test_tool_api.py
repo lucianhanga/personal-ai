@@ -68,6 +68,32 @@ def test_invoke_http_fetch_with_grant_then_egress_blocked() -> None:
     assert "egress not allowed" in resp["error"]["message"]
 
 
+def test_tool_log_records_calls() -> None:
+    client = _client()
+    client.post(
+        "/api/tools/invoke",
+        headers=AUTH,
+        json={"tool": "calculator", "version": "1.0.0", "args": {"expression": "2+2"}},
+    )
+    client.post(
+        "/api/tools/invoke",
+        headers=AUTH,
+        json={"tool": "http_fetch", "version": "1.0.0", "args": {"url": "http://x"}},  # denied
+    )
+    entries = client.get("/api/tools/log", headers=AUTH).json()["data"]["entries"]
+    assert len(entries) >= 2
+    types = {(e["type"], e["tool"]) for e in entries}
+    assert ("tool.invoke", "calculator") in types
+    assert ("tool.denied", "http_fetch") in types
+    calc = next(e for e in entries if e["tool"] == "calculator")
+    assert calc["args"] == {"expression": "2+2"}  # args captured for the detail view
+    assert calc["ok"] is True
+
+
+def test_tool_log_requires_token() -> None:
+    assert _client().get("/api/tools/log").status_code == 401
+
+
 def test_invoke_invalid_grant_type_is_400() -> None:
     client = _client()
     resp = client.post(

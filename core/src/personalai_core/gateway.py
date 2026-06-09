@@ -79,7 +79,9 @@ class ToolGateway:
         approved: bool = False,
     ) -> ToolResult:
         def deny(reason: str) -> ToolResult:
-            self._audit.append("tool.denied", {"tool": call.tool, "reason": reason})
+            self._audit.append(
+                "tool.denied", {"tool": call.tool, "reason": reason, "args": dict(call.args)}
+            )
             return ToolResult(ok=False, error=reason)
 
         try:
@@ -119,6 +121,12 @@ class ToolGateway:
 
         self._audit.append(
             "tool.invoke",
-            {"tool": call.tool, "version": call.version, "ok": result.ok, "error": result.error},
+            {
+                "tool": call.tool,
+                "version": call.version,
+                "args": dict(call.args),
+                "ok": result.ok,
+                "error": result.error,
+            },
         )
         return result

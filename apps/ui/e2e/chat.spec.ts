@@ -51,6 +51,13 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   await page.route("**/api/files", (r) =>
     r.fulfill({ status: 200, contentType: "application/json", body: FILES_BODY }),
   );
+  await page.route("**/api/tools/log", (r) =>
+    r.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: '{"ok":true,"data":{"entries":[{"index":0,"type":"tool.invoke","timestamp":"2026-06-09T10:00:00Z","tool":"calculator","ok":true,"error":null,"args":{"expression":"2+2"}}]}}',
+    }),
+  );
   await page.route("**/api/tools", (r) =>
     r.fulfill({
       status: 200,
@@ -102,4 +109,9 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   // Tools panel opens and lists the calculator.
   await page.getByTestId("tools-show").click();
   await expect(page.getByTestId("tool-list")).toContainText("calculator");
+
+  // Tool log opens, lists a call, and expands details on click.
+  await page.getByTestId("toollog-show").click();
+  await page.getByTestId("toollog-row-0").click();
+  await expect(page.getByTestId("toollog-detail")).toContainText("2+2");
 });
