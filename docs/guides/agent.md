@@ -17,7 +17,7 @@ audit), so acting autonomously stays safe.
 ```
 user → assemble context (RAG + memory + STM) → agent loop:
         ┌─> model.stream(tools, think)
-        │      ├─ reasoning tokens  ──► live (💭)
+        │      ├─ reasoning tokens  ──► live (Reasoning)
         │      ├─ answer tokens     ──► live
         │      └─ tool_calls        ──► gateway.invoke(...) ──► tool result ─┐
         └───────────────────────────────(feed result back, loop)───────────┘

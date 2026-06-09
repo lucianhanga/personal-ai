@@ -37,16 +37,16 @@ Open the **Memory** panel in the UI to see everything remembered (with kind + pr
 **edit** or **delete** any fact, or **Forget everything**. Over the API:
 
 ```bash
-curl -H "Authorization: Bearer demo" http://127.0.0.1:8765/api/memory            # list
+curl -H "Authorization: Bearer demo" http://127.0.0.1:8765/api/v1/memory            # list
 curl -X PATCH -H "Authorization: Bearer demo" -H "Content-Type: application/json" \
-     -d '{"text":"..."}' http://127.0.0.1:8765/api/memory/<id>                   # edit
-curl -X DELETE -H "Authorization: Bearer demo" http://127.0.0.1:8765/api/memory/<id>  # delete one
-curl -X DELETE -H "Authorization: Bearer demo" http://127.0.0.1:8765/api/memory  # forget all
+     -d '{"text":"..."}' http://127.0.0.1:8765/api/v1/memory/<id>                   # edit
+curl -X DELETE -H "Authorization: Bearer demo" http://127.0.0.1:8765/api/v1/memory/<id>  # delete one
+curl -X DELETE -H "Authorization: Bearer demo" http://127.0.0.1:8765/api/v1/memory  # forget all
 ```
 
 ### Incognito chats
 
-Start a chat with the **incognito** switch (or `POST /api/conversations {"incognito":true}`) and
+Start a chat with the **incognito** switch (or `POST /api/v1/conversations {"incognito":true}`) and
 **nothing from it is remembered** — no long-term writes, no memory injection.
 
 ## Configuration

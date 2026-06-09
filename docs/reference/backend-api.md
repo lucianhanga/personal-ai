@@ -1,8 +1,10 @@
 # Backend API (loopback)
 
 The PersonalAI backend is a FastAPI app that binds to **loopback by default** and is wired
-through the composition root (M0-4). M0-5 ships the skeleton API; feature endpoints arrive in
-later milestones.
+through the composition root. Application endpoints are **versioned under `/api/v1`**; `/health`
+and `/version` are unversioned infrastructure endpoints. The OpenAPI document's `info.version`
+tracks the project version (see [`VERSION`](../../VERSION) / [`CHANGELOG.md`](../../CHANGELOG.md);
+currently `0.6.0`).
 
 ## Running it
 
@@ -17,44 +19,103 @@ OpenAPI docs are served at `/docs`.
 
 ## Endpoints
 
-| Method | Path | Auth | Response | Notes |
-|---|---|---|---|---|
-| GET | `/health` | public | `{"status":"ok"}` | Liveness. |
-| GET | `/version` | public | `{name, version}` | Service identity. |
-| GET | `/api/status` | bearer token | `StructuredResult` | Example protected route returning a validated structured-output envelope. |
-| GET | `/api/providers` | bearer token | `StructuredResult` | Lists registered providers + the default (M2-2). |
-| GET | `/api/models` | bearer token | `StructuredResult` | Lists a provider's models + capabilities; `?provider=` to choose (M1-4/M2-2). |
-| POST | `/api/chat` | bearer token | `text/event-stream` (SSE) | Streaming chat; `"provider"` local/remote; `"use_rag"` grounds + emits `citations`; `"conversation_id"` persists; `"use_memory"` injects long-term memory (M1-3/M2-2/M3-3/M3-4/M4). |
-| POST | `/api/files` | bearer token | `StructuredResult` | Upload a file (txt/md/pdf/docx) -> parse/chunk/embed/store (M3-2). |
-| GET | `/api/files` | bearer token | `StructuredResult` | List ingested documents (M3-2). |
-| DELETE | `/api/files/{id}` | bearer token | `StructuredResult` | Delete a document and its vectors (M3-2). |
-| POST | `/api/conversations` | bearer token | `StructuredResult` | Create a conversation (M3-4). |
-| GET | `/api/conversations` | bearer token | `StructuredResult` | List conversations (most-recent first) (M3-4). |
-| GET | `/api/conversations/{id}` | bearer token | `StructuredResult` | Get a conversation + its messages (M3-4). |
-| DELETE | `/api/conversations/{id}` | bearer token | `StructuredResult` | Delete a conversation (cascades messages) (M3-4). |
-| GET | `/api/memory` | bearer token | `StructuredResult` | List long-term memories (M4-3). |
-| PATCH | `/api/memory/{id}` | bearer token | `StructuredResult` | Edit a memory's text (M4-3). |
-| DELETE | `/api/memory/{id}` | bearer token | `StructuredResult` | Delete a memory (M4-3). |
-| DELETE | `/api/memory` | bearer token | `StructuredResult` | Forget everything (M4-3). |
+All application routes live under `/api/v1` and require a bearer token. `/health` and `/version`
+stay unversioned and public.
+
+### Infrastructure (unversioned, public)
+
+| Method | Path | Response | Notes |
+|---|---|---|---|
+| GET | `/health` | `{"status":"ok"}` | Liveness. |
+| GET | `/version` | `{name, version}` | Service identity (`version` = project version). |
+
+### Status & discovery
+
+| Method | Path | Response | Notes |
+|---|---|---|---|
+| GET | `/api/v1/status` | `StructuredResult` | Runtime config snapshot (provider, vector repo, bind host, egress flag). |
+| GET | `/api/v1/providers` | `StructuredResult` | Registered providers + the default. |
+| GET | `/api/v1/models` | `StructuredResult` | A provider's models + capabilities; `?provider=` to choose. |
+
+### Chat
+
+| Method | Path | Response | Notes |
+|---|---|---|---|
+| POST | `/api/v1/chat` | `text/event-stream` (SSE) | Streaming chat. See the request/SSE detail below. |
+
+### Files & RAG
+
+| Method | Path | Response | Notes |
+|---|---|---|---|
+| POST | `/api/v1/files` | `StructuredResult` | Upload a file (txt/md/pdf/docx) → parse/chunk/embed/store. |
+| GET | `/api/v1/files` | `StructuredResult` | List ingested documents. |
+| DELETE | `/api/v1/files/{document_id}` | `StructuredResult` | Delete a document and its vectors. |
+
+### Conversations
+
+| Method | Path | Response | Notes |
+|---|---|---|---|
+| POST | `/api/v1/conversations` | `StructuredResult` | Create a conversation (`{title?, incognito?}`). |
+| GET | `/api/v1/conversations` | `StructuredResult` | List conversations (most-recent first). |
+| GET | `/api/v1/conversations/{id}` | `StructuredResult` | Get a conversation + its messages (each message carries `meta`). |
+| PATCH | `/api/v1/conversations/{id}` | `StructuredResult` | Rename a conversation (`{title}`). |
+| DELETE | `/api/v1/conversations/{id}` | `StructuredResult` | Delete a conversation (cascades messages). |
+
+### Memory
+
+| Method | Path | Response | Notes |
+|---|---|---|---|
+| GET | `/api/v1/memory` | `StructuredResult` | List long-term memories. |
+| PATCH | `/api/v1/memory/{id}` | `StructuredResult` | Edit a memory's text (`{text}`). |
+| DELETE | `/api/v1/memory/{id}` | `StructuredResult` | Delete a memory. |
+| DELETE | `/api/v1/memory` | `StructuredResult` | Forget everything. |
+
+### Tools & logs
+
+| Method | Path | Response | Notes |
+|---|---|---|---|
+| GET | `/api/v1/tools` | `StructuredResult` | List tool manifests (name, version, risk, permissions, JSON-Schema I/O). |
+| POST | `/api/v1/tools/invoke` | `StructuredResult` | Invoke a tool through the gateway (grants + risk approval enforced). |
+| GET | `/api/v1/tools/log` | `StructuredResult` | The gateway tool-audit entries; `?conversation_id=` filters per chat (**Activity**). |
+| GET | `/api/v1/logs` | `StructuredResult` | Recent application logs; `?conversation_id=` filters per chat (**App logs**). |
 
 ```bash
 curl http://127.0.0.1:8765/health
-curl -H "Authorization: Bearer $PERSONALAI_AUTH_TOKEN" http://127.0.0.1:8765/api/status
+curl -H "Authorization: Bearer $PERSONALAI_AUTH_TOKEN" http://127.0.0.1:8765/api/v1/status
 
-# Streaming chat (SSE). Body is stateless: send the full message history.
-curl -N -X POST http://127.0.0.1:8765/api/chat \
+# Streaming chat (SSE). Body is stateless unless you pass a conversation_id.
+curl -N -X POST http://127.0.0.1:8765/api/v1/chat \
   -H "Authorization: Bearer $PERSONALAI_AUTH_TOKEN" -H "Content-Type: application/json" \
   -d '{"messages":[{"role":"user","content":"hello"}]}'
 ```
 
-### `/api/chat`
+### `/api/v1/chat`
 
-- **Request:** `{ "messages": [{"role","content"}], "model"?: str, "think"?: bool }`. `model`
-  defaults to `CoreConfig.default_model` (`qwen3.6:35b-a3b`); `think` defaults to `false` so
-  reasoning ("thinking") models answer cleanly. Invalid bodies are rejected (422, fail-closed).
-- **Response:** Server-Sent Events. Each `data:` frame is
-  `{delta, thinking, done, finish_reason}`; on failure an `event: error` frame carries a
-  `StructuredResult` error envelope. Conversation persistence arrives in M3.
+- **Request:** `{ "messages": [{"role","content"}], "model"?, "provider"?, "think"?: false,
+  "use_rag"?: false, "rag_top_k"?: 4, "conversation_id"?, "use_memory"?: false,
+  "use_tools"?: false, "approve_tools"?: false }`.
+  - `model` defaults to `CoreConfig.default_model` (`qwen3.6:35b-a3b`); `provider` overrides the
+    default provider for this call.
+  - `think` defaults to `false` so reasoning ("thinking") models answer cleanly.
+  - `use_rag` grounds the answer in ingested documents and emits a `citations` SSE frame.
+  - `conversation_id` persists the turn (user + assistant messages) and enables short-term memory
+    folding for that chat.
+  - `use_memory` injects relevant long-term memories (skipped for incognito conversations).
+  - `use_tools` runs the **single-agent loop** (the model calls tools through the gateway);
+    `approve_tools` approves HIGH/CRITICAL-risk tools for that turn.
+  - Invalid bodies are rejected (422, fail-closed).
+- **Response:** Server-Sent Events. Frame types:
+  - `data: {delta, thinking?, done, finish_reason}` — answer (and, in plain chat, reasoning) tokens.
+  - `event: citations` — RAG sources (when `use_rag` is on).
+  - `event: tool` — `{phase: "call"|"result", tool, args, ok, output, error}` (when `use_tools`).
+    In the agent loop, reasoning streams as `data: {thinking}` frames.
+  - `event: usage` — `{prompt_tokens, completion_tokens, total_tokens, context_limit}` for the
+    UI context-usage meter (`context_limit` is set only for the local Ollama provider).
+  - `event: error` — a `StructuredResult` error envelope on failure.
+- **Persisted detail (`meta.trace`):** when a turn uses tools/reasoning and is persisted to a
+  conversation, the assistant message stores an ordered timeline (reasoning + tool calls/results)
+  under `meta.trace`, surfaced per message as **Details** and returned by
+  `GET /api/v1/conversations/{id}`.
 
 ### Providers (local + remote)
 
@@ -62,19 +123,25 @@ The active provider is `PERSONALAI_MODEL_PROVIDER` (default `ollama`); requests 
 per call (`?provider=` / `"provider"`). A **remote OpenAI-compatible** provider (`openai`) is
 registered when `PERSONALAI_OPENAI_API_KEY` is set. Remote calls go through the egress allowlist,
 so they require `PERSONALAI_EGRESS_ENABLED=true` and the host in `PERSONALAI_ALLOWED_EGRESS_HOSTS`
-(e.g. `api.openai.com`); otherwise they fail closed with an egress error. The full remote setup
-guide is M2-4.
+(e.g. `api.openai.com`); otherwise they fail closed. See
+[Remote / frontier providers](../guides/remote-providers.md).
 
-## Security posture (M0-5)
+## Security posture
 
-- **Loopback by default** — LAN/remote is opt-in via `PERSONALAI_BIND_HOST` (see THREAT-MODEL).
+- **API versioning** — application endpoints are served under `/api/v1`; `/health` and `/version`
+  stay unversioned; OpenAPI `info.version` reflects the project version.
+- **Loopback by default** — LAN/remote is opt-in via `PERSONALAI_BIND_HOST` (see THREAT-MODEL). A
+  non-loopback bind without an auth token is **refused at startup**.
 - **Origin allowlist** — browser requests with an `Origin` not in `CoreConfig.allowed_origins`
-  are rejected with `403`. Non-browser clients (curl, tests) send no `Origin` and are allowed.
+  are rejected. Non-browser clients (curl, tests) send no `Origin` and are allowed.
 - **Bearer-token auth** — protected routes require `Authorization: Bearer <token>`, compared in
   constant time. If no token is configured, protected routes are **fail-closed** (`503`), never open.
-- **No egress** — the app makes no outbound calls; `egress_enabled` defaults to `false`.
-- **Structured outputs** — responses use the schema models (ADR-0003); `/api/status` returns a
+- **Egress fail-closed** — outbound calls are disabled by default. Enabling egress with an **empty
+  allowlist denies all hosts**; set `PERSONALAI_ALLOWED_EGRESS_HOSTS`, or opt into open egress with
+  `PERSONALAI_EGRESS_ALLOW_ANY=true`.
+- **Structured outputs** — responses use the schema models (ADR-0003); `/api/v1/status` returns a
   validated `StructuredResult`.
 
-Configuration is `CoreConfig` (see [Dependency injection & registries](./dependency-injection.md));
-proper secrets handling is M0-10.
+Configuration is `CoreConfig` (see [Dependency injection & registries](./dependency-injection.md)).
+</content>
+</invoke>

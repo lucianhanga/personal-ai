@@ -31,10 +31,10 @@ embedded, and stored; it appears in the list with a chunk count, and **Use my do
 
 **API:**
 ```bash
-curl -X POST http://127.0.0.1:8765/api/files \
+curl -X POST http://127.0.0.1:8765/api/v1/files \
   -H "Authorization: Bearer demo" -F "file=@notes.pdf"
-curl -H "Authorization: Bearer demo" http://127.0.0.1:8765/api/files          # list
-curl -X DELETE -H "Authorization: Bearer demo" http://127.0.0.1:8765/api/files/<id>
+curl -H "Authorization: Bearer demo" http://127.0.0.1:8765/api/v1/files          # list
+curl -X DELETE -H "Authorization: Bearer demo" http://127.0.0.1:8765/api/v1/files/<id>
 ```
 
 ## 3. Ask with RAG
@@ -44,7 +44,7 @@ the top-k chunks are retrieved from pgvector, and they are passed to the model a
 context** with `[n]` citations. The UI shows a **Sources** line under the answer.
 
 ```bash
-curl -N -X POST http://127.0.0.1:8765/api/chat \
+curl -N -X POST http://127.0.0.1:8765/api/v1/chat \
   -H "Authorization: Bearer demo" -H "Content-Type: application/json" \
   -d '{"model":"qwen3:8b","use_rag":true,
        "messages":[{"role":"user","content":"What does my document say about X?"}]}'
@@ -71,8 +71,8 @@ start fresh. History is stored in Postgres (`conversations` + `messages`); delet
 removes its messages. Conversation content is stored verbatim (it's your data); secret redaction
 applies to logs/audit, not to your messages.
 
-API: `POST/GET/GET{id}/DELETE /api/conversations`; pass `"conversation_id"` to `/api/chat` to
-persist a turn.
+API: `POST/GET/GET{id}/PATCH{id}/DELETE{id} /api/v1/conversations` (PATCH renames); pass
+`"conversation_id"` to `/api/v1/chat` to persist a turn.
 
 ## 5. Configuration
 

@@ -30,14 +30,17 @@ Reference & development:
   JSON Schema + drift test, and the TS/Zod bindings kept aligned by shared fixtures.
 - **[Dependency injection & registries](./reference/dependency-injection.md)** — registries,
   config-driven selection, the composition root, and how to register an adapter (M0-4).
-- **[Backend API (loopback)](./reference/backend-api.md)** — running the backend, the endpoints,
-  and the security posture (loopback, auth, origin allowlist, egress-off) (M0-5).
+- **[Backend API (loopback)](./reference/backend-api.md)** — running the backend, the versioned
+  `/api/v1` endpoints, the chat SSE protocol, and the security posture (loopback, auth, origin
+  allowlist, egress fail-closed).
 - **[Coding standards & conventions](./development/coding-standards.md)** — dependency direction,
   structured-output-first, typing, async, testing/coverage policy.
 - **[Toolchain & monorepo](./development/toolchain.md)** — uv + pnpm workspaces, Makefile targets,
   and CI jobs.
 - **[Releasing & signing](./development/releasing.md)** — Sigstore/cosign signing, SBOM attachment,
   verification, and the reproducible-build note (M0-9).
+- **[Changelog](../CHANGELOG.md)** — versioning policy (pre-1.0 semver in `VERSION`; one MINOR per
+  milestone) and the per-release history. The HTTP API is versioned independently as `/api/v1`.
 
 Policies & supply chain:
 

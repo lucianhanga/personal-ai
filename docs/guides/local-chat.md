@@ -25,7 +25,7 @@ stream in token by token. Everything stays on loopback; network egress is off by
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PERSONALAI_AUTH_TOKEN` | (unset) | Bearer token required by `/api/*`. Protected routes fail closed (503) if unset. |
+| `PERSONALAI_AUTH_TOKEN` | (unset) | Bearer token required by `/api/v1/*`. Protected routes fail closed (503) if unset. |
 | `PERSONALAI_DEFAULT_MODEL` | `qwen3.6:35b-a3b` | Default chat model. |
 | `PERSONALAI_OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama server URL. |
 | `PERSONALAI_BIND_HOST` / `PERSONALAI_BIND_PORT` | `127.0.0.1` / `8765` | Backend bind (loopback by default). |
@@ -39,17 +39,17 @@ The UI reads `VITE_API_BASE` (default `http://127.0.0.1:8765`) and an optional `
   message loads ~23 GB, so give it a few seconds.
 - **`qwen3:8b`** / **`gemma3:latest`** — faster for quick iteration.
 - **Thinking models** (qwen3 family): the backend sends `think=false` by default so they answer
-  cleanly. The `/api/chat` body accepts `"think": true` to opt into the reasoning trace.
+  cleanly. The `/api/v1/chat` body accepts `"think": true` to opt into the reasoning trace.
 
 ## How it works
 
 ```
-Browser SPA (React)  --SSE-->  /api/chat  -->  ModelProvider (ollama)  -->  Ollama REST API
-        |                         |                    ^
-   /api/models  <----------------/             registered in the composition root (M0-4)
+Browser SPA (React)  --SSE-->  /api/v1/chat  -->  ModelProvider (ollama)  -->  Ollama REST API
+        |                          |                    ^
+   /api/v1/models  <-------------/             registered in the composition root (M0-4)
 ```
 
-- The SPA streams Server-Sent Events from `POST /api/chat`; `GET /api/models` populates the
+- The SPA streams Server-Sent Events from `POST /api/v1/chat`; `GET /api/v1/models` populates the
   model selector with detected capabilities. See [backend API](../reference/backend-api.md).
 - The chat is **stateless** at M1 (the client sends the message history each turn); conversation
   persistence arrives in **M3**.
