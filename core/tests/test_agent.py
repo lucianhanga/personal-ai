@@ -119,8 +119,10 @@ def test_agent_surfaces_reasoning() -> None:
         ]
 
     events = asyncio.run(_run())
+    # Reasoning is emitted as its own ordered event (before the final answer).
+    assert events[0].type == "reasoning"
+    assert events[0].thinking == "step by step"
     assert events[-1].type == "final"
-    assert events[-1].thinking == "step by step"
 
 
 def test_agent_stops_at_iteration_cap() -> None:

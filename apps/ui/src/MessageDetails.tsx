@@ -1,27 +1,45 @@
 import { useState } from "react";
 
-import type { ToolStep } from "./api";
+import type { ToolStep, TraceItem } from "./api";
+
+/** Build an ordered trace from legacy (separate thinking + tool_steps) meta for old messages. */
+function legacyTrace(steps?: ToolStep[], thinking?: string | null): TraceItem[] {
+  const items: TraceItem[] = [];
+  if (thinking) items.push({ kind: "reasoning", text: thinking });
+  for (const s of steps ?? []) {
+    items.push(
+      s.phase === "call"
+        ? { kind: "tool_call", tool: s.tool, args: s.args }
+        : { kind: "tool_result", tool: s.tool, ok: s.ok, output: s.output, error: s.error },
+    );
+  }
+  return items;
+}
 
 /**
- * Collapsible per-message detail (ChatGPT-style): the tool calls the model made and its reasoning.
- * Lives with the assistant message, so it survives chat switches and conversation reloads.
+ * Collapsible per-message detail (ChatGPT-style): the model's reasoning and tool calls, shown in
+ * the order they actually happened. Survives chat switches + conversation reloads.
  */
 export function MessageDetails({
+  trace,
   steps,
   thinking,
   defaultOpen = false,
 }: {
+  trace?: TraceItem[];
   steps?: ToolStep[];
   thinking?: string | null;
   defaultOpen?: boolean;
 }): React.ReactElement | null {
   const [open, setOpen] = useState(defaultOpen);
-  const calls = (steps ?? []).filter((s) => s.phase === "call").length;
-  if (!steps?.length && !thinking) return null;
+  const items = trace?.length ? trace : legacyTrace(steps, thinking);
+  if (items.length === 0) return null;
 
+  const calls = items.filter((t) => t.kind === "tool_call").length;
+  const hasReasoning = items.some((t) => t.kind === "reasoning");
   const summary = [
     calls ? `${calls} tool call${calls > 1 ? "s" : ""}` : null,
-    thinking ? "reasoning" : null,
+    hasReasoning ? "reasoning" : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -31,13 +49,7 @@ export function MessageDetails({
       <button
         data-testid="details-toggle"
         onClick={() => setOpen((o) => !o)}
-        style={{
-          background: "none",
-          border: "none",
-          color: "#666",
-          cursor: "pointer",
-          padding: 0,
-        }}
+        style={{ background: "none", border: "none", color: "#666", cursor: "pointer", padding: 0 }}
       >
         {open ? "▾" : "▸"} Details{summary ? ` · ${summary}` : ""}
       </button>
@@ -51,19 +63,22 @@ export function MessageDetails({
             color: "#555",
           }}
         >
-          {thinking && (
-            <div data-testid="details-thinking" style={{ whiteSpace: "pre-wrap", marginBottom: 4 }}>
-              💭 {thinking}
-            </div>
-          )}
-          {steps?.map((s, k) =>
-            s.phase === "call" ? (
+          {items.map((t, k) =>
+            t.kind === "reasoning" ? (
+              <div
+                key={k}
+                data-testid="details-thinking"
+                style={{ whiteSpace: "pre-wrap", margin: "2px 0" }}
+              >
+                💭 {t.text}
+              </div>
+            ) : t.kind === "tool_call" ? (
               <div key={k}>
-                🔧 {s.tool}({JSON.stringify(s.args ?? {})})
+                🔧 {t.tool}({JSON.stringify(t.args ?? {})})
               </div>
             ) : (
-              <div key={k} style={{ color: s.ok ? "#2a7" : "#b00" }}>
-                ↳ {s.tool}: {s.ok ? "ok" : `error: ${s.error}`}
+              <div key={k} style={{ color: t.ok ? "#2a7" : "#b00" }}>
+                ↳ {t.tool}: {t.ok ? "ok" : `error: ${t.error}`}
               </div>
             ),
           )}

@@ -17,7 +17,7 @@ import {
   type ConversationSummary,
   type DocumentInfo,
   type ModelInfo,
-  type ToolStep,
+  type TraceItem,
   type UsageInfo,
 } from "./api";
 import { AppLogs } from "./AppLogs";
@@ -35,8 +35,8 @@ const NEW_CHAT = "__new__";
 interface ChatState {
   messages: ChatMessage[];
   citations: Record<number, Citation[]>;
-  toolSteps: Record<number, ToolStep[]>;
-  thinking: Record<number, string>;
+  // Ordered reasoning + tool-step timeline per assistant message index.
+  trace: Record<number, TraceItem[]>;
   usage: UsageInfo | null;
   busy: boolean;
 }
@@ -44,11 +44,22 @@ interface ChatState {
 const EMPTY_CHAT: ChatState = {
   messages: [],
   citations: {},
-  toolSteps: {},
-  thinking: {},
+  trace: {},
   usage: null,
   busy: false,
 };
+
+/** Append a trace item in order, merging consecutive reasoning deltas into one item. */
+function appendTrace(list: TraceItem[] | undefined, item: TraceItem): TraceItem[] {
+  const next = [...(list ?? [])];
+  const last = next[next.length - 1];
+  if (item.kind === "reasoning" && last?.kind === "reasoning") {
+    next[next.length - 1] = { ...last, text: (last.text ?? "") + (item.text ?? "") };
+  } else {
+    next.push(item);
+  }
+  return next;
+}
 
 export function Chat({
   token,
@@ -92,7 +103,7 @@ export function Chat({
 
   const activeKey = activeId ?? NEW_CHAT;
   const view = chats[activeKey] ?? EMPTY_CHAT;
-  const { messages, citations, toolSteps, thinking, usage, busy } = view;
+  const { messages, citations, trace, usage, busy } = view;
 
   const patchChat = (key: string, fn: (s: ChatState) => ChatState): void => {
     setChats((prev) => ({ ...prev, [key]: fn(prev[key] ?? EMPTY_CHAT) }));
@@ -294,13 +305,29 @@ export function Chat({
         (step) =>
           patchChat(key, (s) => ({
             ...s,
-            toolSteps: { ...s.toolSteps, [assistantIndex]: [...(s.toolSteps[assistantIndex] ?? []), step] },
+            trace: {
+              ...s.trace,
+              [assistantIndex]: appendTrace(s.trace[assistantIndex], {
+                kind: step.phase === "call" ? "tool_call" : "tool_result",
+                tool: step.tool,
+                args: step.args,
+                ok: step.ok,
+                output: step.output,
+                error: step.error,
+              }),
+            },
           })),
         (u) => patchChat(key, (s) => ({ ...s, usage: u })),
         (delta) =>
           patchChat(key, (s) => ({
             ...s,
-            thinking: { ...s.thinking, [assistantIndex]: (s.thinking[assistantIndex] ?? "") + delta },
+            trace: {
+              ...s.trace,
+              [assistantIndex]: appendTrace(s.trace[assistantIndex], {
+                kind: "reasoning",
+                text: delta,
+              }),
+            },
           })),
       );
       if (persistence) setConversations(await fetchConversations(token));
@@ -663,8 +690,9 @@ export function Chat({
                   <div key={i} data-testid="msg-assistant" style={{ margin: "0.4rem 0" }}>
                     <strong>AI:</strong>
                     <MessageDetails
-                      steps={toolSteps[i]?.length ? toolSteps[i] : m.meta?.tool_steps}
-                      thinking={thinking[i] || m.meta?.thinking}
+                      trace={trace[i]?.length ? trace[i] : m.meta?.trace}
+                      steps={m.meta?.tool_steps}
+                      thinking={m.meta?.thinking}
                       defaultOpen={busy && i === messages.length - 1}
                     />
                     <Markdown content={m.content} />

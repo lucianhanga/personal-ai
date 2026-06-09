@@ -18,7 +18,20 @@ export interface ModelInfo {
   capabilities: ModelCapabilities;
 }
 
+export interface TraceItem {
+  kind: "reasoning" | "tool_call" | "tool_result";
+  text?: string;
+  tool?: string | null;
+  args?: Record<string, unknown> | null;
+  ok?: boolean | null;
+  output?: Record<string, unknown> | null;
+  error?: string | null;
+}
+
 export interface MessageMeta {
+  // Ordered timeline of reasoning + tool steps (new format).
+  trace?: TraceItem[];
+  // Legacy (pre-ordered-trace) fields, kept for older persisted messages.
   tool_steps?: ToolStep[];
   thinking?: string;
 }
