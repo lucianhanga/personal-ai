@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
@@ -262,7 +263,13 @@ def test_memory_api_list_update_delete_clear() -> None:
         ) as resp:
             "".join(resp.iter_text())
 
-        memories = client.get("/api/v1/memory", headers=AUTH).json()["data"]["memories"]
+        # Memory extraction runs in the background; poll until the fact lands.
+        memories: list[dict[str, Any]] = []
+        for _ in range(50):
+            memories = client.get("/api/v1/memory", headers=AUTH).json()["data"]["memories"]
+            if any(_FACT in m["text"] for m in memories):
+                break
+            time.sleep(0.1)
         assert any(_FACT in m["text"] for m in memories)
         mid = memories[0]["id"]
 
