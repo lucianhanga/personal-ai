@@ -71,6 +71,7 @@ export function Chat({
   const [useMemory, setUseMemory] = useState(true);
   const [useTools, setUseTools] = useState(true);
   const [approveTools, setApproveTools] = useState(true);
+  const [useThink, setUseThink] = useState(false);
   const [incognito, setIncognito] = useState(false);
   const [showSettings, setShowSettings] = useState(true);
   const [showMemory, setShowMemory] = useState(false);
@@ -281,6 +282,7 @@ export function Chat({
           useMemory,
           useTools,
           approveTools,
+          think: useThink,
           conversationId: targetId ?? undefined,
           token,
         },
@@ -499,6 +501,26 @@ export function Chat({
               </label>
             </div>
             {showMemory && <Memory token={token} />}
+
+            {/* Line 4: Reasoning */}
+            <div
+              data-testid="settings-reasoning"
+              style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}
+            >
+              <span style={{ color: "#555" }}>Reasoning</span>
+              <label
+                style={{ marginLeft: "auto" }}
+                title="Ask the model to show its reasoning (slower; shown under Details)"
+              >
+                <input
+                  data-testid="think-toggle"
+                  type="checkbox"
+                  checked={useThink}
+                  onChange={(e) => setUseThink(e.target.checked)}
+                />{" "}
+                Show reasoning
+              </label>
+            </div>
           </div>
         )}
       </div>

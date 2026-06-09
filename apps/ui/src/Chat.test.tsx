@@ -318,6 +318,32 @@ test("keeps a chat streaming (with an in-progress marker) when switching chats",
 });
 
 
+test("the Reasoning toggle is sent to the chat request", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  const stream = vi.spyOn(api, "streamChat").mockResolvedValue();
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+  fireEvent.click(screen.getByTestId("think-toggle"));
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "why?" } });
+  fireEvent.click(screen.getByTestId("send"));
+
+  await waitFor(() =>
+    expect(stream).toHaveBeenCalledWith(
+      expect.objectContaining({ think: true }),
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Function),
+    ),
+  );
+});
+
+
 test("collapses and expands the chats column", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);

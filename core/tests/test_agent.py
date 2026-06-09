@@ -100,6 +100,29 @@ def test_agent_answers_directly_without_tools() -> None:
     assert events[0].answer == "echo: hi"
 
 
+def test_agent_surfaces_reasoning() -> None:
+    class _Thinker(FakeModelProvider):
+        async def generate(self, request: GenerationRequest) -> GenerationResult:
+            return GenerationResult(text="the answer", model=request.model, thinking="step by step")
+
+    async def _run() -> list[AgentEvent]:
+        return [
+            ev
+            async for ev in run_agent(
+                messages=[ChatMessage(Role.USER, "why?")],
+                provider=_Thinker(),
+                model="m",
+                gateway=_gateway(),
+                tools=[RegisteredTool(CALC, _Calc())],
+                think=True,
+            )
+        ]
+
+    events = asyncio.run(_run())
+    assert events[-1].type == "final"
+    assert events[-1].thinking == "step by step"
+
+
 def test_agent_stops_at_iteration_cap() -> None:
     class _Loopy(FakeModelProvider):
         async def generate(self, request: GenerationRequest) -> GenerationResult:
