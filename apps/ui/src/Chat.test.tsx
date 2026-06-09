@@ -261,9 +261,11 @@ test("toggles default on and the settings accordion collapses", async () => {
   expect(screen.getByTestId("memory-toggle")).toBeChecked();
   expect(screen.getByTestId("tools-toggle")).toBeChecked();
   expect(screen.getByTestId("approve-tools-toggle")).toBeChecked();
-  // Three grouped lines.
+  expect(screen.getByTestId("think-toggle")).toBeChecked(); // reasoning on by default
+  // Grouped lines incl. MCP (in Settings, not the sidebar).
   expect(screen.getByTestId("settings-tools")).toBeInTheDocument();
   expect(screen.getByTestId("settings-memory")).toBeInTheDocument();
+  expect(screen.getByTestId("settings-mcp")).toBeInTheDocument();
 
   // Accordion collapses and re-expands.
   fireEvent.click(screen.getByTestId("settings-toggle"));
@@ -348,7 +350,7 @@ test("the Reasoning toggle is sent to the chat request", async () => {
   await waitFor(() =>
     expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
   );
-  fireEvent.click(screen.getByTestId("think-toggle"));
+  // Reasoning is on by default — send without toggling and it's requested.
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "why?" } });
   fireEvent.click(screen.getByTestId("send"));
 

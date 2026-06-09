@@ -84,7 +84,7 @@ export function Chat({
   const [useMemory, setUseMemory] = useState(true);
   const [useTools, setUseTools] = useState(true);
   const [approveTools, setApproveTools] = useState(true);
-  const [useThink, setUseThink] = useState(false);
+  const [useThink, setUseThink] = useState(true);
   const [incognito, setIncognito] = useState(false);
   const [showSettings, setShowSettings] = useState(true);
   const [showMemory, setShowMemory] = useState(false);
@@ -565,6 +565,18 @@ export function Chat({
                 Enable reasoning
               </label>
             </div>
+
+            {/* Line 5: MCP servers */}
+            <div
+              data-testid="settings-mcp"
+              style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}
+            >
+              <button data-testid="mcp-show" onClick={() => setShowMcp((v) => !v)}>
+                {showMcp ? "Hide MCP" : "MCP"}
+              </button>
+              <span style={{ marginLeft: "auto", color: "#888" }}>MCP servers (tool sources)</span>
+            </div>
+            {showMcp && <McpPanel token={token} />}
           </div>
         )}
       </div>
@@ -807,9 +819,6 @@ export function Chat({
                 <button data-testid="applogs-show" onClick={() => setShowAppLogs((v) => !v)}>
                   {showAppLogs ? "Hide app logs" : "App logs"}
                 </button>
-                <button data-testid="mcp-show" onClick={() => setShowMcp((v) => !v)}>
-                  {showMcp ? "Hide MCP" : "MCP"}
-                </button>
                 <button
                   data-testid="side-toggle"
                   onClick={() => setSidebarCollapsed(true)}
@@ -824,11 +833,10 @@ export function Chat({
 
               {showLog && <ToolLog token={token} conversationId={activeId} />}
               {showAppLogs && <AppLogs token={token} conversationId={activeId} />}
-              {showMcp && <McpPanel token={token} />}
 
-              {!showLog && !showAppLogs && !showMcp && !usage && (
+              {!showLog && !showAppLogs && !usage && (
                 <p data-testid="side-hint" style={{ color: "#888", fontSize: "0.8rem" }}>
-                  Open a panel above to view logs, MCP servers, or context usage.
+                  Open a panel above to view logs or context usage.
                 </p>
               )}
             </aside>
