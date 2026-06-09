@@ -62,10 +62,16 @@ class FakeModelProvider:
         return GenerationResult(text=f"echo: {last}", model=request.model, finish_reason="stop")
 
     async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
-        last = request.messages[-1].content if request.messages else ""
-        for token in f"echo: {last}".split(" "):
-            yield GenerationChunk(delta=token + " ")
-        yield GenerationChunk(done=True, finish_reason="stop")
+        # Delegate to generate() so subclasses that script generate() (incl. tool_calls + thinking)
+        # also drive the streaming/agent path. Token-by-token splitting isn't needed for tests.
+        result = await self.generate(request)
+        yield GenerationChunk(
+            delta=result.text,
+            thinking=result.thinking,
+            tool_calls=tuple(result.tool_calls),
+            usage=result.usage,
+        )
+        yield GenerationChunk(done=True, finish_reason=result.finish_reason or "stop")
 
     async def list_models(self) -> Sequence[ModelDescriptor]:
         return [ModelDescriptor(name="fake", capabilities=self._capabilities)]
