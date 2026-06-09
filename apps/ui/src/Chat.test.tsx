@@ -262,7 +262,7 @@ test("toggles default on and the settings accordion collapses", async () => {
   expect(screen.getByTestId("memory-toggle")).toBeChecked();
   expect(screen.getByTestId("tools-toggle")).toBeChecked();
   expect(screen.getByTestId("approve-tools-toggle")).toBeChecked();
-  expect(screen.getByTestId("think-toggle")).toBeChecked(); // reasoning on by default
+  expect((screen.getByTestId("reasoning-select") as HTMLSelectElement).value).toBe("full"); // default
   // Grouped lines incl. MCP (in Settings, not the sidebar).
   expect(screen.getByTestId("settings-tools")).toBeInTheDocument();
   expect(screen.getByTestId("settings-memory")).toBeInTheDocument();
@@ -342,7 +342,7 @@ test("keeps a chat streaming (with an in-progress marker) when switching chats",
 });
 
 
-test("the Reasoning toggle is sent to the chat request", async () => {
+test("the chosen reasoning amount is sent to the chat request", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   const stream = vi.spyOn(api, "streamChat").mockResolvedValue();
@@ -351,19 +351,24 @@ test("the Reasoning toggle is sent to the chat request", async () => {
   await waitFor(() =>
     expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
   );
-  // Reasoning is on by default — send without toggling and it's requested.
+  // Default is Full (think on).
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "why?" } });
   fireEvent.click(screen.getByTestId("send"));
-
   await waitFor(() =>
     expect(stream).toHaveBeenCalledWith(
-      expect.objectContaining({ think: true }),
-      expect.any(Function),
-      expect.any(Function),
-      expect.any(Function),
-      expect.any(Function),
-      expect.any(Function),
-      expect.any(Function),
+      expect.objectContaining({ reasoning: "full", think: true }),
+      ...Array(6).fill(expect.any(Function)),
+    ),
+  );
+
+  // Switch to Off -> reasoning off, think false.
+  fireEvent.change(screen.getByTestId("reasoning-select"), { target: { value: "off" } });
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "again" } });
+  fireEvent.click(screen.getByTestId("send"));
+  await waitFor(() =>
+    expect(stream).toHaveBeenCalledWith(
+      expect.objectContaining({ reasoning: "off", think: false }),
+      ...Array(6).fill(expect.any(Function)),
     ),
   );
 });
