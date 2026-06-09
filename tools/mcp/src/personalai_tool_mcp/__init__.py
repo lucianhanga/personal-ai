@@ -7,11 +7,13 @@ from personalai_tool_mcp.client import (
     build_tools,
     manifest_from_mcp_tool,
 )
+from personalai_tool_mcp.config import load_server_configs
 
 __all__ = [
     "McpClient",
     "McpServerConfig",
     "McpToolHandler",
     "build_tools",
+    "load_server_configs",
     "manifest_from_mcp_tool",
 ]

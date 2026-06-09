@@ -22,6 +22,7 @@ _ENV_FIELDS = {
     "DEFAULT_MODEL": "default_model",
     "OLLAMA_HOST": "ollama_host",
     "OLLAMA_NUM_CTX": "ollama_num_ctx",
+    "MCP_CONFIG": "mcp_config_path",
     "RETRIEVER": "retriever",
     "VECTOR_REPOSITORY": "vector_repository",
     "OBJECT_STORE": "object_store",
@@ -69,6 +70,8 @@ class CoreConfig(StrictModel):
     ollama_host: str = "http://127.0.0.1:11434"
     # Bound the Ollama context window (KV cache) to control memory / avoid swap on constrained RAM.
     ollama_num_ctx: int = 32768
+    # Path to an mcp.json (mcpServers map) of MCP servers to connect at startup (M7); empty = none.
+    mcp_config_path: str = ""
     retriever: str = "pgvector"
     vector_repository: str = "pgvector"
     object_store: str = "local"
