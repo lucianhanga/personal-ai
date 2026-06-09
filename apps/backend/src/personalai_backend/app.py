@@ -13,6 +13,7 @@ This module makes no outbound network calls; egress remains disabled until expli
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import logging
@@ -216,6 +217,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         try:
             yield
         finally:
+            # Let in-flight background work (e.g. memory extraction) finish before tearing down.
+            if app.state.bg_tasks:
+                await asyncio.gather(*app.state.bg_tasks, return_exceptions=True)
             for client in app.state.mcp_clients:
                 await client.aclose()
             storage = app.state.storage
@@ -241,6 +245,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     app.state.storage = None  # set on startup if a database is reachable
     app.state.mcp_clients = []  # connected MCP servers (set on startup)
     app.state.mcp_status = []  # per-server connect status for /api/v1/mcp
+    app.state.bg_tasks = set()  # fire-and-forget background tasks (e.g. memory extraction)
 
     # CORS restricted to the configured (loopback) origins: enables the browser SPA while still
     # acting as an origin allowlist. The bearer token remains the real auth control; credentials
@@ -284,6 +289,33 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         except RegistryError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         return provider
+
+    def _schedule_memory(
+        turn: list[ChatMessage], provider: ModelProvider, model: str, conversation_id: str
+    ) -> None:
+        """Extract + store long-term memory in the background (don't block the chat stream)."""
+        storage: Storage | None = app.state.storage
+        config: CoreConfig = app.state.config
+        if storage is None:  # pragma: no cover - callers only schedule when storage is available
+            return
+
+        async def _run() -> None:
+            try:
+                await remember(
+                    messages=turn,
+                    gen_provider=provider,
+                    gen_model=model,
+                    embed_provider=_resolve_provider(config.embed_provider),
+                    embed_model=config.embed_model,
+                    store=storage.memories,
+                    source={"conversation_id": conversation_id},
+                )
+            except Exception as exc:  # noqa: BLE001 - memory is best-effort, never break chat
+                logger.warning("memory extraction failed: %s", exc)
+
+        task = asyncio.create_task(_run())
+        app.state.bg_tasks.add(task)
+        task.add_done_callback(app.state.bg_tasks.discard)
 
     @app.get(
         "/api/v1/providers", response_model=StructuredResult, dependencies=[Depends(_require_token)]
@@ -630,22 +662,14 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                         content=answer,
                         meta={"trace": trace} if trace else None,
                     )
-                    # Long-term memory: extract durable facts from this exchange (skip incognito).
+                    # Long-term memory: extract durable facts in the BACKGROUND so the stream closes
+                    # right after the answer (otherwise this extra LLM call keeps Send disabled).
                     if config.memory_enabled and not incognito and answer:
                         turn = [ChatMessage(Role(m.role), m.content) for m in req.messages]
                         turn.append(ChatMessage(Role.ASSISTANT, answer))
-                        try:
-                            await remember(
-                                messages=turn,
-                                gen_provider=provider,
-                                gen_model=req.model or config.default_model,
-                                embed_provider=_resolve_provider(config.embed_provider),
-                                embed_model=config.embed_model,
-                                store=storage.memories,
-                                source={"conversation_id": persist_id},
-                            )
-                        except Exception as exc:  # noqa: BLE001 - memory is best-effort
-                            logger.warning("memory extraction failed: %s", exc)
+                        _schedule_memory(
+                            turn, provider, req.model or config.default_model, persist_id
+                        )
             finally:
                 current_conversation.reset(cv_token)
 

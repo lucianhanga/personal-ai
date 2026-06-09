@@ -59,6 +59,8 @@ async def extract_facts(
         messages=[ChatMessage(Role.USER, _PROMPT + transcript)],
         model=model,
         json_schema=ExtractionResult.model_json_schema(),
+        # Extraction is a JSON task — never reason (faster, and keeps the output clean JSON).
+        think=False,
     )
     result = await provider.generate(request)
     try:
