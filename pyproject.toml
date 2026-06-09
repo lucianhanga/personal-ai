@@ -73,7 +73,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-ra -q --import-mode=importlib --cov --cov-report=term-missing --cov-report=xml"
-testpaths = ["contracts/tests", "core/tests", "apps/backend/tests", "providers/ollama/tests", "providers/openai_compat/tests", "storage/postgres/tests", "modalities/files/tests", "tools/builtin/tests", "tools/mcp/tests"]
+testpaths = ["contracts/tests", "core/tests", "apps/backend/tests", "providers/ollama/tests", "providers/openai_compat/tests", "storage/postgres/tests", "modalities/files/tests", "tools/builtin/tests", "tools/mcp/tests", "tools/markitdown-ollama/tests"]
 filterwarnings = [
     # Third-party: starlette's TestClient warns to migrate to httpx2; tracked, not ours.
     "ignore:Using `httpx` with `starlette.testclient`.*",
