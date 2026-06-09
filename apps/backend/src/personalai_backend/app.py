@@ -126,6 +126,12 @@ class ConversationCreate(BaseModel):
     incognito: bool = False
 
 
+class ConversationRename(BaseModel):
+    """Request body for renaming a conversation."""
+
+    title: str
+
+
 class MemoryUpdate(BaseModel):
     """Request body for editing a memory."""
 
@@ -718,6 +724,23 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return StructuredResult(
             ok=True, data={"id": conv.id, "title": conv.title, "messages": messages}
         )
+
+    @app.patch(
+        "/api/conversations/{conversation_id}",
+        response_model=StructuredResult,
+        dependencies=[Depends(_require_token)],
+    )
+    async def rename_conversation(
+        conversation_id: str, body: ConversationRename
+    ) -> StructuredResult:
+        storage = _require_storage()
+        title = body.title.strip()
+        if not title:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="title required")
+        if await storage.conversations.get(conversation_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation")
+        await storage.conversations.rename(conversation_id, title=title)
+        return StructuredResult(ok=True, data={"id": conversation_id, "title": title})
 
     @app.delete(
         "/api/conversations/{conversation_id}",

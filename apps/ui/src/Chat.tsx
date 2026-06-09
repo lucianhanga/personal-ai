@@ -10,6 +10,7 @@ import {
   fetchMemories,
   fetchModels,
   fetchProviders,
+  renameConversation,
   streamChat,
   uploadFile,
   type ChatMessage,
@@ -99,6 +100,8 @@ export function Chat({
   const [persistence, setPersistence] = useState(false);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
 
   const activeKey = activeId ?? NEW_CHAT;
@@ -205,6 +208,18 @@ export function Chat({
           ? prev
           : { ...prev, [id]: { ...EMPTY_CHAT, messages: conv.messages, usage: prev[id]?.usage ?? null } },
       );
+    } catch (e: unknown) {
+      setError(String(e));
+    }
+  }
+
+  async function commitRename(id: string): Promise<void> {
+    const title = renameDraft.trim();
+    setRenamingId(null);
+    if (!title) return;
+    try {
+      await renameConversation(token, id, title);
+      setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, title } : c)));
     } catch (e: unknown) {
       setError(String(e));
     }
@@ -602,33 +617,69 @@ export function Chat({
                     key={c.id}
                     style={{ display: "flex", alignItems: "center", gap: "0.25rem", fontSize: "0.8rem" }}
                   >
-                    <button
-                      data-testid={`open-${c.id}`}
-                      onClick={() => void openConversation(c.id)}
-                      style={{
-                        flex: 1,
-                        textAlign: "left",
-                        fontWeight: c.id === activeId ? 700 : 400,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {chats[c.id]?.busy && (
-                        <span data-testid={`busy-${c.id}`} title="Generating…" aria-label="generating">
-                          ⏳{" "}
-                        </span>
-                      )}
-                      {c.title}
-                    </button>
-                    <button
-                      data-testid={`del-conv-${c.id}`}
-                      onClick={() => void removeConversation(c.id)}
-                      title="delete conversation"
-                      style={{ fontSize: "0.7rem" }}
-                    >
-                      ×
-                    </button>
+                    {renamingId === c.id ? (
+                      <input
+                        data-testid={`rename-input-${c.id}`}
+                        autoFocus
+                        value={renameDraft}
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        onBlur={() => void commitRename(c.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void commitRename(c.id);
+                          if (e.key === "Escape") setRenamingId(null);
+                        }}
+                        style={{ flex: 1 }}
+                      />
+                    ) : (
+                      <>
+                        <button
+                          data-testid={`open-${c.id}`}
+                          onClick={() => void openConversation(c.id)}
+                          onDoubleClick={() => {
+                            setRenamingId(c.id);
+                            setRenameDraft(c.title);
+                          }}
+                          style={{
+                            flex: 1,
+                            textAlign: "left",
+                            fontWeight: c.id === activeId ? 700 : 400,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {chats[c.id]?.busy && (
+                            <span
+                              data-testid={`busy-${c.id}`}
+                              title="Generating…"
+                              aria-label="generating"
+                            >
+                              ⏳{" "}
+                            </span>
+                          )}
+                          {c.title}
+                        </button>
+                        <button
+                          data-testid={`rename-${c.id}`}
+                          onClick={() => {
+                            setRenamingId(c.id);
+                            setRenameDraft(c.title);
+                          }}
+                          title="rename conversation"
+                          style={{ fontSize: "0.7rem" }}
+                        >
+                          ✎
+                        </button>
+                        <button
+                          data-testid={`del-conv-${c.id}`}
+                          onClick={() => void removeConversation(c.id)}
+                          title="delete conversation"
+                          style={{ fontSize: "0.7rem" }}
+                        >
+                          ×
+                        </button>
+                      </>
+                    )}
                   </span>
                 ))}
               </div>

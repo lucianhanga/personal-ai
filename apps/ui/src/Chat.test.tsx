@@ -273,6 +273,27 @@ test("toggles default on and the settings accordion collapses", async () => {
 });
 
 
+test("renames a chat", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchConversations").mockResolvedValue([
+    { id: "cA", title: "Old name", updated_at: "2026-06-09T00:00:00Z" },
+  ]);
+  const rename = vi.spyOn(api, "renameConversation").mockResolvedValue();
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("rename-cA")).toBeInTheDocument());
+
+  fireEvent.click(screen.getByTestId("rename-cA"));
+  const input = screen.getByTestId("rename-input-cA");
+  fireEvent.change(input, { target: { value: "Renamed" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+
+  await waitFor(() => expect(rename).toHaveBeenCalledWith("demo", "cA", "Renamed"));
+  await waitFor(() => expect(screen.getByTestId("open-cA")).toHaveTextContent("Renamed"));
+});
+
+
 test("keeps a chat streaming (with an in-progress marker) when switching chats", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);

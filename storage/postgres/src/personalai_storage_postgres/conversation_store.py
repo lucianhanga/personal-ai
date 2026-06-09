@@ -81,6 +81,13 @@ class PgConversationStore:
             summary_through,
         )
 
+    async def rename(self, conversation_id: str, *, title: str) -> None:
+        await self._pool.execute(
+            "UPDATE conversations SET title = $2, updated_at = now() WHERE id = $1",
+            conversation_id,
+            title,
+        )
+
     async def delete(self, conversation_id: str) -> None:
         await self._pool.execute("DELETE FROM conversations WHERE id = $1", conversation_id)
 
