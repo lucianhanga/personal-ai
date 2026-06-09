@@ -1,4 +1,4 @@
-"""Agent loop via /api/chat use_tools (no DB needed; gateway runs the real calculator)."""
+"""Agent loop via /api/v1/chat use_tools (no DB needed; gateway runs the real calculator)."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def test_use_tools_runs_agent_and_emits_tool_events() -> None:
         _client() as client,
         client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={"messages": [{"role": "user", "content": "what is 23*19?"}], "use_tools": True},
         ) as resp,
@@ -65,7 +65,7 @@ def test_chat_without_tools_still_streams() -> None:
         TestClient(create_app(boot)) as client,
         client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             headers=AUTH,
             json={"messages": [{"role": "user", "content": "hi"}]},
         ) as resp,

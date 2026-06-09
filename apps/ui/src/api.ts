@@ -150,7 +150,7 @@ export async function fetchHealth(): Promise<boolean> {
 export async function fetchProviders(
   token: string,
 ): Promise<{ default: string; providers: string[] }> {
-  const res = await fetch(`${API_BASE}/api/providers`, { headers: authHeaders(token) });
+  const res = await fetch(`${API_BASE}/api/v1/providers`, { headers: authHeaders(token) });
   if (!res.ok) throw new Error(`providers request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { default?: string; providers?: string[] } };
   return { default: body.data?.default ?? "", providers: body.data?.providers ?? [] };
@@ -161,7 +161,7 @@ export async function fetchModels(
   token: string,
   provider?: string,
 ): Promise<{ defaultModel: string; models: ModelInfo[] }> {
-  const url = new URL(`${API_BASE}/api/models`);
+  const url = new URL(`${API_BASE}/api/v1/models`);
   if (provider) url.searchParams.set("provider", provider);
   const res = await fetch(url, { headers: authHeaders(token) });
   if (!res.ok) throw new Error(`models request failed: ${res.status}`);
@@ -178,7 +178,7 @@ export async function fetchModels(
 export async function uploadFile(token: string, file: File): Promise<DocumentInfo> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${API_BASE}/api/files`, {
+  const res = await fetch(`${API_BASE}/api/v1/files`, {
     method: "POST",
     headers: authHeaders(token),
     body: form,
@@ -195,7 +195,7 @@ export async function uploadFile(token: string, file: File): Promise<DocumentInf
 
 /** List ingested documents. */
 export async function fetchFiles(token: string): Promise<DocumentInfo[]> {
-  const res = await fetch(`${API_BASE}/api/files`, { headers: authHeaders(token) });
+  const res = await fetch(`${API_BASE}/api/v1/files`, { headers: authHeaders(token) });
   if (!res.ok) throw new Error(`files request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { files?: DocumentInfo[] } };
   return body.data?.files ?? [];
@@ -203,7 +203,7 @@ export async function fetchFiles(token: string): Promise<DocumentInfo[]> {
 
 /** Delete an ingested document. */
 export async function deleteFile(token: string, id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/files/${id}`, {
+  const res = await fetch(`${API_BASE}/api/v1/files/${id}`, {
     method: "DELETE",
     headers: authHeaders(token),
   });
@@ -216,7 +216,7 @@ export async function createConversation(
   title?: string,
   incognito = false,
 ): Promise<ConversationSummary> {
-  const res = await fetch(`${API_BASE}/api/conversations`, {
+  const res = await fetch(`${API_BASE}/api/v1/conversations`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
     body: JSON.stringify({ title, incognito }),
@@ -229,7 +229,7 @@ export async function createConversation(
 
 /** List long-term memories. */
 export async function fetchMemories(token: string): Promise<MemoryItem[]> {
-  const res = await fetch(`${API_BASE}/api/memory`, { headers: authHeaders(token) });
+  const res = await fetch(`${API_BASE}/api/v1/memory`, { headers: authHeaders(token) });
   if (!res.ok) throw new Error(`memory request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { memories?: MemoryItem[] } };
   return body.data?.memories ?? [];
@@ -237,7 +237,7 @@ export async function fetchMemories(token: string): Promise<MemoryItem[]> {
 
 /** Edit a memory's text. */
 export async function updateMemory(token: string, id: string, text: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/memory/${id}`, {
+  const res = await fetch(`${API_BASE}/api/v1/memory/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
     body: JSON.stringify({ text }),
@@ -247,7 +247,7 @@ export async function updateMemory(token: string, id: string, text: string): Pro
 
 /** Delete a single memory. */
 export async function deleteMemory(token: string, id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/memory/${id}`, {
+  const res = await fetch(`${API_BASE}/api/v1/memory/${id}`, {
     method: "DELETE",
     headers: authHeaders(token),
   });
@@ -256,7 +256,7 @@ export async function deleteMemory(token: string, id: string): Promise<void> {
 
 /** Forget everything (delete all memories). */
 export async function forgetAllMemory(token: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/memory`, {
+  const res = await fetch(`${API_BASE}/api/v1/memory`, {
     method: "DELETE",
     headers: authHeaders(token),
   });
@@ -265,7 +265,7 @@ export async function forgetAllMemory(token: string): Promise<void> {
 
 /** List the tools registered behind the gateway. */
 export async function fetchTools(token: string): Promise<ToolInfo[]> {
-  const res = await fetch(`${API_BASE}/api/tools`, { headers: authHeaders(token) });
+  const res = await fetch(`${API_BASE}/api/v1/tools`, { headers: authHeaders(token) });
   if (!res.ok) throw new Error(`tools request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { tools?: ToolInfo[] } };
   return body.data?.tools ?? [];
@@ -276,7 +276,7 @@ const convQuery = (conversationId?: string | null): string =>
 
 /** Recent application/server logs (most recent first), optionally scoped to a conversation. */
 export async function fetchLogs(token: string, conversationId?: string | null): Promise<LogEntry[]> {
-  const res = await fetch(`${API_BASE}/api/logs${convQuery(conversationId)}`, {
+  const res = await fetch(`${API_BASE}/api/v1/logs${convQuery(conversationId)}`, {
     headers: authHeaders(token),
   });
   if (!res.ok) throw new Error(`logs request failed: ${res.status}`);
@@ -289,7 +289,7 @@ export async function fetchToolLog(
   token: string,
   conversationId?: string | null,
 ): Promise<ToolLogEntry[]> {
-  const res = await fetch(`${API_BASE}/api/tools/log${convQuery(conversationId)}`, {
+  const res = await fetch(`${API_BASE}/api/v1/tools/log${convQuery(conversationId)}`, {
     headers: authHeaders(token),
   });
   if (!res.ok) throw new Error(`tool log request failed: ${res.status}`);
@@ -308,7 +308,7 @@ export async function invokeTool(
     approved?: boolean;
   },
 ): Promise<ToolInvokeResult> {
-  const res = await fetch(`${API_BASE}/api/tools/invoke`, {
+  const res = await fetch(`${API_BASE}/api/v1/tools/invoke`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
     body: JSON.stringify({
@@ -330,7 +330,7 @@ export async function invokeTool(
 
 /** List conversations (most-recent first). */
 export async function fetchConversations(token: string): Promise<ConversationSummary[]> {
-  const res = await fetch(`${API_BASE}/api/conversations`, { headers: authHeaders(token) });
+  const res = await fetch(`${API_BASE}/api/v1/conversations`, { headers: authHeaders(token) });
   if (!res.ok) throw new Error(`conversations request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { conversations?: ConversationSummary[] } };
   return body.data?.conversations ?? [];
@@ -341,7 +341,7 @@ export async function fetchConversation(
   token: string,
   id: string,
 ): Promise<{ id: string; title: string; messages: ChatMessage[] }> {
-  const res = await fetch(`${API_BASE}/api/conversations/${id}`, { headers: authHeaders(token) });
+  const res = await fetch(`${API_BASE}/api/v1/conversations/${id}`, { headers: authHeaders(token) });
   if (!res.ok) throw new Error(`conversation request failed: ${res.status}`);
   const body = (await res.json()) as {
     data?: { id: string; title: string; messages: ChatMessage[] };
@@ -353,7 +353,7 @@ export async function fetchConversation(
 /** Delete a conversation. */
 /** Rename a conversation. */
 export async function renameConversation(token: string, id: string, title: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/conversations/${id}`, {
+  const res = await fetch(`${API_BASE}/api/v1/conversations/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
     body: JSON.stringify({ title }),
@@ -362,7 +362,7 @@ export async function renameConversation(token: string, id: string, title: strin
 }
 
 export async function deleteConversation(token: string, id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/conversations/${id}`, {
+  const res = await fetch(`${API_BASE}/api/v1/conversations/${id}`, {
     method: "DELETE",
     headers: authHeaders(token),
   });
@@ -371,7 +371,7 @@ export async function deleteConversation(token: string, id: string): Promise<voi
 
 /**
  * Stream a chat completion. Calls `onDelta` for each token, `onCitations` for the RAG citations
- * event (if any), and resolves when done. Parses the SSE frames emitted by POST /api/chat.
+ * event (if any), and resolves when done. Parses the SSE frames emitted by POST /api/v1/chat.
  */
 export async function streamChat(
   params: {
@@ -392,7 +392,7 @@ export async function streamChat(
   onUsage?: (usage: UsageInfo) => void,
   onThinking?: (delta: string) => void,
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/chat`, {
+  const res = await fetch(`${API_BASE}/api/v1/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders(params.token) },
     body: JSON.stringify({

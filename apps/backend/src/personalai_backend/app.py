@@ -217,7 +217,15 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 if aclose is not None:
                     await aclose()
 
-    app = FastAPI(title="PersonalAI Backend", version=__version__, lifespan=lifespan)
+    app = FastAPI(
+        title="PersonalAI Backend",
+        version=__version__,
+        description=(
+            "Local-first PersonalAI HTTP API. Application endpoints are versioned under `/api/v1`; "
+            "`/health` and `/version` are unversioned infrastructure endpoints."
+        ),
+        lifespan=lifespan,
+    )
     app.state.bootstrap = boot
     app.state.config = boot.config
     app.state.storage = None  # set on startup if a database is reachable
@@ -241,7 +249,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     def version() -> VersionResponse:
         return VersionResponse(name="personalai-backend", version=__version__)
 
-    @app.get("/api/status", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    @app.get("/api/v1/status", response_model=StructuredResult, dependencies=[Depends(_require_token)])
     def api_status() -> StructuredResult:
         config: CoreConfig = app.state.config
         return StructuredResult(
@@ -264,7 +272,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return provider
 
     @app.get(
-        "/api/providers", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+        "/api/v1/providers", response_model=StructuredResult, dependencies=[Depends(_require_token)]
     )
     def api_providers() -> StructuredResult:
         config: CoreConfig = app.state.config
@@ -277,7 +285,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             },
         )
 
-    @app.get("/api/models", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    @app.get("/api/v1/models", response_model=StructuredResult, dependencies=[Depends(_require_token)])
     async def api_models(provider: str | None = None) -> StructuredResult:
         config: CoreConfig = app.state.config
         resolved = _resolve_provider(provider)
@@ -475,7 +483,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     None,
                 )
 
-    @app.post("/api/chat", dependencies=[Depends(_require_token)])
+    @app.post("/api/v1/chat", dependencies=[Depends(_require_token)])
     async def chat(req: ChatRequest) -> StreamingResponse:
         config: CoreConfig = app.state.config
         provider = _resolve_provider(req.provider)
@@ -610,7 +618,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             )
         return storage
 
-    @app.post("/api/files", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    @app.post("/api/v1/files", response_model=StructuredResult, dependencies=[Depends(_require_token)])
     async def upload_file(file: UploadFile = File(...)) -> StructuredResult:
         config: CoreConfig = app.state.config
         storage = _require_storage()
@@ -646,7 +654,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             data={"id": doc.id, "name": doc.name, "mime": doc.mime, "chunk_count": doc.chunk_count},
         )
 
-    @app.get("/api/files", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    @app.get("/api/v1/files", response_model=StructuredResult, dependencies=[Depends(_require_token)])
     async def list_files() -> StructuredResult:
         storage = _require_storage()
         docs = [
@@ -663,7 +671,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return StructuredResult(ok=True, data={"files": docs})
 
     @app.delete(
-        "/api/files/{document_id}",
+        "/api/v1/files/{document_id}",
         response_model=StructuredResult,
         dependencies=[Depends(_require_token)],
     )
@@ -677,7 +685,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return StructuredResult(ok=True, data={"id": doc.id})
 
     @app.post(
-        "/api/conversations",
+        "/api/v1/conversations",
         response_model=StructuredResult,
         dependencies=[Depends(_require_token)],
     )
@@ -697,7 +705,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         )
 
     @app.get(
-        "/api/conversations",
+        "/api/v1/conversations",
         response_model=StructuredResult,
         dependencies=[Depends(_require_token)],
     )
@@ -710,7 +718,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return StructuredResult(ok=True, data={"conversations": items})
 
     @app.get(
-        "/api/conversations/{conversation_id}",
+        "/api/v1/conversations/{conversation_id}",
         response_model=StructuredResult,
         dependencies=[Depends(_require_token)],
     )
@@ -728,7 +736,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         )
 
     @app.patch(
-        "/api/conversations/{conversation_id}",
+        "/api/v1/conversations/{conversation_id}",
         response_model=StructuredResult,
         dependencies=[Depends(_require_token)],
     )
@@ -745,7 +753,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return StructuredResult(ok=True, data={"id": conversation_id, "title": title})
 
     @app.delete(
-        "/api/conversations/{conversation_id}",
+        "/api/v1/conversations/{conversation_id}",
         response_model=StructuredResult,
         dependencies=[Depends(_require_token)],
     )
@@ -754,7 +762,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         await storage.conversations.delete(conversation_id)
         return StructuredResult(ok=True, data={"id": conversation_id})
 
-    @app.get("/api/memory", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    @app.get("/api/v1/memory", response_model=StructuredResult, dependencies=[Depends(_require_token)])
     async def list_memory() -> StructuredResult:
         storage = _require_storage()
         memories = [
@@ -772,7 +780,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return StructuredResult(ok=True, data={"memories": memories})
 
     @app.patch(
-        "/api/memory/{memory_id}",
+        "/api/v1/memory/{memory_id}",
         response_model=StructuredResult,
         dependencies=[Depends(_require_token)],
     )
@@ -784,7 +792,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return StructuredResult(ok=True, data={"id": updated.id, "text": updated.text})
 
     @app.delete(
-        "/api/memory/{memory_id}",
+        "/api/v1/memory/{memory_id}",
         response_model=StructuredResult,
         dependencies=[Depends(_require_token)],
     )
@@ -794,14 +802,14 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return StructuredResult(ok=True, data={"id": memory_id})
 
     @app.delete(
-        "/api/memory", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+        "/api/v1/memory", response_model=StructuredResult, dependencies=[Depends(_require_token)]
     )
     async def forget_all_memory() -> StructuredResult:
         storage = _require_storage()
         await storage.memories.clear()
         return StructuredResult(ok=True, data={"cleared": True})
 
-    @app.get("/api/tools", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    @app.get("/api/v1/tools", response_model=StructuredResult, dependencies=[Depends(_require_token)])
     def list_tools() -> StructuredResult:
         registries: Registries = app.state.bootstrap.registries
         tools = []
@@ -823,7 +831,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return StructuredResult(ok=True, data={"tools": tools})
 
     @app.post(
-        "/api/tools/invoke", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+        "/api/v1/tools/invoke", response_model=StructuredResult, dependencies=[Depends(_require_token)]
     )
     async def invoke_tool(req: ToolInvokeRequest) -> StructuredResult:
         gateway = app.state.bootstrap.gateway
@@ -843,7 +851,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return StructuredResult(ok=True, data=dict(result.output))
 
     @app.get(
-        "/api/tools/log", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+        "/api/v1/tools/log", response_model=StructuredResult, dependencies=[Depends(_require_token)]
     )
     def tool_log(conversation_id: str | None = None) -> StructuredResult:
         # The gateway audits every tool call (allowed + denied); surface the tool.* entries,
@@ -865,7 +873,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         ]
         return StructuredResult(ok=True, data={"entries": list(reversed(entries))})
 
-    @app.get("/api/logs", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    @app.get("/api/v1/logs", response_model=StructuredResult, dependencies=[Depends(_require_token)])
     def app_logs(conversation_id: str | None = None) -> StructuredResult:
         logs = [
             r

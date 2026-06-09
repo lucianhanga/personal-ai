@@ -39,48 +39,48 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   await page.route("**/health", (r) =>
     r.fulfill({ status: 200, contentType: "application/json", body: '{"status":"ok"}' }),
   );
-  await page.route("**/api/providers", (r) =>
+  await page.route("**/api/v1/providers", (r) =>
     r.fulfill({
       status: 200,
       contentType: "application/json",
       body: '{"ok":true,"data":{"default":"ollama","providers":["ollama","openai"]}}',
     }),
   );
-  await page.route("**/api/models**", (r) =>
+  await page.route("**/api/v1/models**", (r) =>
     r.fulfill({ status: 200, contentType: "application/json", body: MODELS_BODY }),
   );
-  await page.route("**/api/files", (r) =>
+  await page.route("**/api/v1/files", (r) =>
     r.fulfill({ status: 200, contentType: "application/json", body: FILES_BODY }),
   );
-  await page.route("**/api/logs*", (r) =>
+  await page.route("**/api/v1/logs*", (r) =>
     r.fulfill({
       status: 200,
       contentType: "application/json",
       body: '{"ok":true,"data":{"logs":[{"time":"2026-06-09T10:00:00Z","level":"INFO","logger":"personalai_backend.app","message":"started"}]}}',
     }),
   );
-  await page.route("**/api/tools/log*", (r) =>
+  await page.route("**/api/v1/tools/log*", (r) =>
     r.fulfill({
       status: 200,
       contentType: "application/json",
       body: '{"ok":true,"data":{"entries":[{"index":0,"type":"tool.invoke","timestamp":"2026-06-09T10:00:00Z","tool":"calculator","ok":true,"error":null,"args":{"expression":"2+2"}}]}}',
     }),
   );
-  await page.route("**/api/tools", (r) =>
+  await page.route("**/api/v1/tools", (r) =>
     r.fulfill({
       status: 200,
       contentType: "application/json",
       body: '{"ok":true,"data":{"tools":[{"name":"calculator","version":"1.0.0","risk":"low","capabilities":[],"permissions":[],"inputs":{},"outputs":{}}]}}',
     }),
   );
-  await page.route("**/api/memory", (r) =>
+  await page.route("**/api/v1/memory", (r) =>
     r.fulfill({
       status: 200,
       contentType: "application/json",
       body: '{"ok":true,"data":{"memories":[]}}',
     }),
   );
-  await page.route("**/api/conversations", (r) =>
+  await page.route("**/api/v1/conversations", (r) =>
     r.request().method() === "POST"
       ? r.fulfill({
           status: 200,
@@ -93,7 +93,7 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
           body: '{"ok":true,"data":{"conversations":[]}}',
         }),
   );
-  await page.route("**/api/chat", (r) =>
+  await page.route("**/api/v1/chat", (r) =>
     r.fulfill({ status: 200, contentType: "text/event-stream", body: CHAT_SSE }),
   );
 

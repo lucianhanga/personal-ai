@@ -1085,7 +1085,7 @@ wheels = [
 
 [[package]]
 name = "personalai-backend"
-version = "0.0.0"
+version = "0.6.0"
 source = { editable = "apps/backend" }
 dependencies = [
     { name = "fastapi" },
