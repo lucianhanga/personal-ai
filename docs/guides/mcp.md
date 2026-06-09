@@ -14,7 +14,7 @@ point PersonalAI at it:
 ```json
 {
   "mcpServers": {
-    "playwright": { "command": "npx", "args": ["-y", "@playwright/mcp@latest"] }
+    "playwright": { "command": "npx", "args": ["-y", "@playwright/mcp@latest", "--headless"] }
   }
 }
 ```
@@ -30,6 +30,33 @@ skipped — the app still runs. Add `"enabled": false` to a server to keep it de
 **Prerequisites:** servers run in their own runtime. The Playwright MCP is a Node package, so it
 needs **Node/`npx`** on the machine (`npx -y @playwright/mcp@latest`). Python servers run via
 `uvx`/`pipx`. PersonalAI itself only needs the `mcp` Python SDK (already a dependency).
+
+## Example: Playwright + MarkItDown (with local Ollama OCR)
+
+Two useful servers — browser automation and document→Markdown conversion:
+
+```json
+{
+  "mcpServers": {
+    "playwright": { "command": "npx", "args": ["-y", "@playwright/mcp@latest", "--headless"] },
+    "markitdown": {
+      "command": "uv",
+      "args": ["run", "--script", "/ABS/PATH/personalAI/tools/markitdown-ollama/server.py"],
+      "env": { "MARKITDOWN_OLLAMA_MODEL": "qwen2.5vl:7b" }
+    }
+  }
+}
+```
+
+- **Playwright:** run `npx playwright install chromium` once (browser, ~150 MB). First `npx` run
+  downloads the server.
+- **MarkItDown + local OCR:** the official `markitdown-mcp` does plain conversion only and can't use
+  a local model for image descriptions, so PersonalAI ships a small wrapper —
+  [`tools/markitdown-ollama/server.py`](../../tools/markitdown-ollama/README.md) — that points
+  MarkItDown's image converter at **Ollama** (no remote services). Pull a vision model first:
+  `ollama pull qwen2.5vl:7b` (~6 GB; `qwen2.5vl:32b` for higher quality — both fit alongside the
+  chat model on 48 GB). Configure the endpoint/model via `MARKITDOWN_OLLAMA_BASE_URL` /
+  `MARKITDOWN_OLLAMA_MODEL` (defaults: `http://localhost:11434/v1`, `qwen2.5vl:7b`).
 
 ## Use it
 
