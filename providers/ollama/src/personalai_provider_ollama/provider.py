@@ -62,12 +62,17 @@ def _options(request: GenerationRequest) -> dict[str, Any]:
     return options
 
 
-def _chat_payload(request: GenerationRequest, *, stream: bool) -> dict[str, Any]:
+def _chat_payload(
+    request: GenerationRequest, *, stream: bool, num_ctx: int | None = None
+) -> dict[str, Any]:
+    options = _options(request)
+    if num_ctx is not None:
+        options["num_ctx"] = num_ctx
     payload: dict[str, Any] = {
         "model": request.model,
         "messages": [{"role": m.role.value, "content": m.content} for m in request.messages],
         "stream": stream,
-        "options": _options(request),
+        "options": options,
     }
     if request.json_schema is not None:
         payload["format"] = dict(request.json_schema)
@@ -116,11 +121,16 @@ class OllamaProvider:
     name = "ollama"
 
     def __init__(
-        self, base_url: str = DEFAULT_HOST, client: httpx.AsyncClient | None = None
+        self,
+        base_url: str = DEFAULT_HOST,
+        client: httpx.AsyncClient | None = None,
+        num_ctx: int | None = None,
     ) -> None:
         self._base = base_url.rstrip("/")
         self._client = client or httpx.AsyncClient(timeout=httpx.Timeout(120.0))
         self._owns_client = client is None
+        # Bound the context window (KV cache) to control memory; None leaves Ollama's default.
+        self._num_ctx = num_ctx
         # Names of models Ollama proxies to the cloud (remote_host set); populated by list_models.
         # Used to warn before a request silently leaves the machine (stop-gap until M2).
         self._remote_models: set[str] = set()
@@ -162,7 +172,9 @@ class OllamaProvider:
 
     async def generate(self, request: GenerationRequest) -> GenerationResult:
         self._warn_if_remote(request.model)
-        data = await self._post("/api/chat", _chat_payload(request, stream=False))
+        data = await self._post(
+            "/api/chat", _chat_payload(request, stream=False, num_ctx=self._num_ctx)
+        )
         message = data.get("message") or {}
         return GenerationResult(
             text=message.get("content", ""),
@@ -176,7 +188,9 @@ class OllamaProvider:
     async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
         self._warn_if_remote(request.model)
         async with self._client.stream(
-            "POST", f"{self._base}/api/chat", json=_chat_payload(request, stream=True)
+            "POST",
+            f"{self._base}/api/chat",
+            json=_chat_payload(request, stream=True, num_ctx=self._num_ctx),
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():

@@ -35,7 +35,9 @@ def register_adapters(registries: Registries, config: CoreConfig) -> None:
     """
     from personalai_provider_ollama import OllamaProvider
 
-    registries.model_providers.register("ollama", OllamaProvider(base_url=config.ollama_host))
+    registries.model_providers.register(
+        "ollama", OllamaProvider(base_url=config.ollama_host, num_ctx=config.ollama_num_ctx)
+    )
 
     # Remote OpenAI-compatible provider, only when an API key is configured. Its egress guard is
     # wired to the core egress allowlist (the provider itself cannot import the core).

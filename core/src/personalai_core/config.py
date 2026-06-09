@@ -21,6 +21,7 @@ _ENV_FIELDS = {
     "MODEL_PROVIDER": "model_provider",
     "DEFAULT_MODEL": "default_model",
     "OLLAMA_HOST": "ollama_host",
+    "OLLAMA_NUM_CTX": "ollama_num_ctx",
     "RETRIEVER": "retriever",
     "VECTOR_REPOSITORY": "vector_repository",
     "OBJECT_STORE": "object_store",
@@ -42,7 +43,7 @@ _ENV_FIELDS = {
     "MEMORY_TOP_K": "memory_top_k",
 }
 
-_INT_FIELDS = {"bind_port", "max_upload_bytes", "stm_keep_recent", "memory_top_k"}
+_INT_FIELDS = {"bind_port", "max_upload_bytes", "stm_keep_recent", "memory_top_k", "ollama_num_ctx"}
 _BOOL_FIELDS = {"egress_enabled", "stm_summarize", "memory_enabled"}
 
 _CSV_FIELDS = {"allowed_origins", "allowed_egress_hosts"}
@@ -65,6 +66,8 @@ class CoreConfig(StrictModel):
     model_provider: str = "ollama"
     default_model: str = "qwen3.6:35b-a3b"
     ollama_host: str = "http://127.0.0.1:11434"
+    # Bound the Ollama context window (KV cache) to control memory / avoid swap on constrained RAM.
+    ollama_num_ctx: int = 32768
     retriever: str = "pgvector"
     vector_repository: str = "pgvector"
     object_store: str = "local"
