@@ -19,6 +19,7 @@ import {
   type ModelInfo,
   type ToolStep,
 } from "./api";
+import { AppLogs } from "./AppLogs";
 import { Markdown } from "./Markdown";
 import { Memory } from "./Memory";
 import { ToolLog } from "./ToolLog";
@@ -39,6 +40,7 @@ export function Chat({ token }: { token: string }): React.ReactElement {
   const [showMemory, setShowMemory] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [showLog, setShowLog] = useState(false);
+  const [showAppLogs, setShowAppLogs] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [persistence, setPersistence] = useState(false);
@@ -391,11 +393,15 @@ export function Chat({ token }: { token: string }): React.ReactElement {
         <button data-testid="toollog-show" onClick={() => setShowLog((v) => !v)}>
           {showLog ? "Hide log" : "Log"}
         </button>
+        <button data-testid="applogs-show" onClick={() => setShowAppLogs((v) => !v)}>
+          {showAppLogs ? "Hide app logs" : "App logs"}
+        </button>
       </div>
 
       {showMemory && <Memory token={token} />}
       {showTools && <Tools token={token} />}
       {showLog && <ToolLog token={token} />}
+      {showAppLogs && <AppLogs token={token} />}
 
       {files.length > 0 && (
         <ul data-testid="file-list" style={{ margin: 0, paddingLeft: "1rem", fontSize: "0.8rem" }}>

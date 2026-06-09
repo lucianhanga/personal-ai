@@ -51,6 +51,13 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   await page.route("**/api/files", (r) =>
     r.fulfill({ status: 200, contentType: "application/json", body: FILES_BODY }),
   );
+  await page.route("**/api/logs", (r) =>
+    r.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: '{"ok":true,"data":{"logs":[{"time":"2026-06-09T10:00:00Z","level":"INFO","logger":"personalai_backend.app","message":"started"}]}}',
+    }),
+  );
   await page.route("**/api/tools/log", (r) =>
     r.fulfill({
       status: 200,
@@ -114,4 +121,8 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   await page.getByTestId("toollog-show").click();
   await page.getByTestId("toollog-row-0").click();
   await expect(page.getByTestId("toollog-detail")).toContainText("2+2");
+
+  // App logs panel opens and shows a log line.
+  await page.getByTestId("applogs-show").click();
+  await expect(page.getByTestId("applogs-panel")).toContainText("started");
 });

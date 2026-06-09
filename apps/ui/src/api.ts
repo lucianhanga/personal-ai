@@ -96,6 +96,13 @@ export interface ToolLogEntry {
   args?: Record<string, unknown> | null;
 }
 
+export interface LogEntry {
+  time: string;
+  level: string;
+  logger: string;
+  message: string;
+}
+
 function authHeaders(token: string): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -235,6 +242,14 @@ export async function fetchTools(token: string): Promise<ToolInfo[]> {
   if (!res.ok) throw new Error(`tools request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { tools?: ToolInfo[] } };
   return body.data?.tools ?? [];
+}
+
+/** Recent application/server logs (most recent first). */
+export async function fetchLogs(token: string): Promise<LogEntry[]> {
+  const res = await fetch(`${API_BASE}/api/logs`, { headers: authHeaders(token) });
+  if (!res.ok) throw new Error(`logs request failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { logs?: LogEntry[] } };
+  return body.data?.logs ?? [];
 }
 
 /** The tool-call audit log (most recent first). */
