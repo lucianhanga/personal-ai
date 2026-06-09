@@ -11,14 +11,20 @@ const LEVEL_COLOR: Record<string, string> = {
 };
 
 /** Recent backend/application logs, surfaced for visibility (M-obs). */
-export function AppLogs({ token }: { token: string }): React.ReactElement {
+export function AppLogs({
+  token,
+  conversationId,
+}: {
+  token: string;
+  conversationId?: string | null;
+}): React.ReactElement {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   function reload(): void {
     setLoading(true);
-    fetchLogs(token)
+    fetchLogs(token, conversationId)
       .then((l) => {
         setLogs(l);
         setError(null);
@@ -27,7 +33,8 @@ export function AppLogs({ token }: { token: string }): React.ReactElement {
       .finally(() => setLoading(false));
   }
 
-  useEffect(reload, [token]);
+  // Refetch when the token or selected conversation changes.
+  useEffect(reload, [token, conversationId]);
 
   return (
     <section

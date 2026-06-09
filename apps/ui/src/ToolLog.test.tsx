@@ -43,6 +43,12 @@ test("clicking an entry shows details", async () => {
   await waitFor(() => expect(screen.getByTestId("toollog-detail")).toHaveTextContent("2+2"));
 });
 
+test("scopes the request to the selected conversation", async () => {
+  const spy = vi.spyOn(api, "fetchToolLog").mockResolvedValue([]);
+  render(<ToolLog token="demo" conversationId="conv-123" />);
+  await waitFor(() => expect(spy).toHaveBeenCalledWith("demo", "conv-123"));
+});
+
 test("shows empty state", async () => {
   vi.spyOn(api, "fetchToolLog").mockResolvedValue([]);
   render(<ToolLog token="demo" />);

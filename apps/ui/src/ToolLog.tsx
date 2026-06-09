@@ -3,7 +3,13 @@ import { useEffect, useState } from "react";
 import { fetchToolLog, type ToolLogEntry } from "./api";
 
 /** The tool-call protocol: every gateway call (allowed + denied); click a row for details. */
-export function ToolLog({ token }: { token: string }): React.ReactElement {
+export function ToolLog({
+  token,
+  conversationId,
+}: {
+  token: string;
+  conversationId?: string | null;
+}): React.ReactElement {
   const [entries, setEntries] = useState<ToolLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -11,7 +17,7 @@ export function ToolLog({ token }: { token: string }): React.ReactElement {
 
   function reload(): void {
     setLoading(true);
-    fetchToolLog(token)
+    fetchToolLog(token, conversationId)
       .then((e) => {
         setEntries(e);
         setError(null);
@@ -20,7 +26,8 @@ export function ToolLog({ token }: { token: string }): React.ReactElement {
       .finally(() => setLoading(false));
   }
 
-  useEffect(reload, [token]);
+  // Refetch when the token or selected conversation changes.
+  useEffect(reload, [token, conversationId]);
 
   return (
     <section
