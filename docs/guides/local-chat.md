@@ -70,3 +70,16 @@ PERSONALAI_OLLAMA_IT=1 uv run pytest providers/ollama/tests/test_integration.py 
 - **Empty replies from a qwen3 model:** that's the thinking trace; the default `think=false` avoids
   it — make sure you're on the latest backend.
 - **401 in the UI:** the API token field must match `PERSONALAI_AUTH_TOKEN`.
+
+## Memory / context size (local models)
+
+The KV cache grows with the context window, so on constrained unified memory (e.g. a 48 GB Mac) a
+huge context can trigger swap. PersonalAI bounds it: **`PERSONALAI_OLLAMA_NUM_CTX`** (default
+**32768**) is sent to Ollama as `num_ctx`. Lower it (e.g. `8192`) for less memory, raise it for
+longer documents/agent runs. Shrink the KV cache further at the Ollama level:
+
+```bash
+OLLAMA_FLASH_ATTENTION=1      # efficient attention
+OLLAMA_KV_CACHE_TYPE=q8_0     # ~half the KV memory, negligible quality loss
+OLLAMA_MAX_LOADED_MODELS=1    # don't hold multiple models in RAM
+```
