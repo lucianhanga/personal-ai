@@ -46,6 +46,7 @@ from personalai_core import (
     VectorRetriever,
     recall,
     remember,
+    run_agent,
     split_recent,
     summarize,
 )
@@ -110,6 +111,9 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
     # Use long-term memory: inject "what I remember about you" (M4-3).
     use_memory: bool = False
+    # Autonomous tool use: let the model call tools through the gateway (M6-2).
+    use_tools: bool = False
+    approve_tools: bool = False  # approve high-risk tools for this turn
 
 
 class ConversationCreate(BaseModel):
@@ -385,6 +389,43 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             )
         ]
 
+    async def _agent_stream(
+        req: ChatRequest, provider: ModelProvider, generation: GenerationRequest
+    ) -> AsyncIterator[tuple[bytes, str | None]]:
+        """Run the agent loop, yielding (SSE frame, final-answer-or-None) tuples."""
+        registries: Registries = app.state.bootstrap.registries
+        gateway = app.state.bootstrap.gateway
+        tool_list = [registries.tools.get(name) for name in registries.tools.names()]
+        # Enabling tools grants the registered tools their declared permissions; high-risk tools
+        # still need approve_tools, and egress is still enforced by the gateway.
+        grants = [p for rt in tool_list for p in rt.manifest.permissions]
+        async for ev in run_agent(
+            messages=generation.messages,
+            provider=provider,
+            model=generation.model,
+            gateway=gateway,
+            tools=tool_list,
+            grants=grants,
+            approved=req.approve_tools,
+        ):
+            if ev.type == "final":
+                done = {"delta": "", "done": True, "finish_reason": "stop"}
+                yield (
+                    f"data: {json.dumps({'delta': ev.answer or '', 'done': False})}\n\n".encode(),
+                    ev.answer or "",
+                )
+                yield (f"data: {json.dumps(done)}\n\n".encode(), None)
+            else:
+                payload = {
+                    "phase": "call" if ev.type == "tool_call" else "result",
+                    "tool": ev.tool,
+                    "args": ev.args,
+                    "ok": ev.ok,
+                    "output": ev.output,
+                    "error": ev.error,
+                }
+                yield (f"event: tool\ndata: {json.dumps(payload)}\n\n".encode(), None)
+
     @app.post("/api/chat", dependencies=[Depends(_require_token)])
     async def chat(req: ChatRequest) -> StreamingResponse:
         config: CoreConfig = app.state.config
@@ -423,15 +464,21 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 yield f"event: citations\ndata: {json.dumps(citations)}\n\n".encode()
             answer = ""
             try:
-                async for chunk in provider.stream(generation):
-                    answer += chunk.delta
-                    payload = {
-                        "delta": chunk.delta,
-                        "thinking": chunk.thinking,
-                        "done": chunk.done,
-                        "finish_reason": chunk.finish_reason,
-                    }
-                    yield f"data: {json.dumps(payload)}\n\n".encode()
+                if req.use_tools:
+                    async for frame, text in _agent_stream(req, provider, generation):
+                        if text is not None:
+                            answer = text
+                        yield frame
+                else:
+                    async for chunk in provider.stream(generation):
+                        answer += chunk.delta
+                        payload = {
+                            "delta": chunk.delta,
+                            "thinking": chunk.thinking,
+                            "done": chunk.done,
+                            "finish_reason": chunk.finish_reason,
+                        }
+                        yield f"data: {json.dumps(payload)}\n\n".encode()
             except Exception as exc:  # noqa: BLE001 - surface as a structured error event (fail-closed)
                 error = StructuredResult(
                     ok=False, error=ErrorInfo(code="E_GENERATION", message=str(exc))

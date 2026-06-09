@@ -81,6 +81,7 @@ class ToolManifest(VersionedModel):
     name: str
     version: str
     provenance: Provenance
+    description: str = Field(default="", description="What the tool does (shown to the model).")
     capabilities: Sequence[str] = Field(default_factory=tuple)
     permissions: Sequence[Permission] = Field(
         default_factory=tuple, description="Least-privilege; empty means no special access."
