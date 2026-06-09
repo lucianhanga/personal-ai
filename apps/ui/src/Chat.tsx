@@ -187,9 +187,31 @@ export function Chat({
     };
   }, [token]);
 
+  // Sticky-bottom auto-scroll: follow new content while the user is at the bottom; if they scroll
+  // up, pause until they return to the bottom (then resume). `atBottom` also drives a jump button.
+  const stickToBottom = useRef(true);
+  const [atBottom, setAtBottom] = useState(true);
+
+  function onMessagesScroll(): void {
+    const el = listRef.current;
+    if (!el) return;
+    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    stickToBottom.current = bottom;
+    setAtBottom(bottom);
+  }
+
+  function scrollToBottom(): void {
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+    stickToBottom.current = true;
+    setAtBottom(true);
+  }
+
   useEffect(() => {
-    listRef.current?.scrollTo(0, listRef.current.scrollHeight);
-  }, [messages]);
+    if (stickToBottom.current && listRef.current) {
+      listRef.current.scrollTop = listRef.current.scrollHeight;
+    }
+  }, [messages, trace]);
 
   function newChat(): void {
     setChats((prev) => ({ ...prev, [NEW_CHAT]: EMPTY_CHAT }));
@@ -746,6 +768,7 @@ export function Chat({
             <div
               ref={listRef}
               data-testid="messages"
+              onScroll={onMessagesScroll}
               style={{
                 border: "1px solid #ddd",
                 borderRadius: 8,
@@ -789,6 +812,16 @@ export function Chat({
                 ),
               )}
             </div>
+
+            {!atBottom && (
+              <button
+                data-testid="scroll-bottom"
+                onClick={scrollToBottom}
+                style={{ alignSelf: "center", fontSize: "0.75rem", marginTop: "-0.25rem" }}
+              >
+                ↓ Jump to latest
+              </button>
+            )}
 
             {error && (
               <p data-testid="chat-error" style={{ color: "#b00" }}>
