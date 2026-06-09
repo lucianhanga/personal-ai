@@ -35,7 +35,7 @@ export function App(): React.ReactElement {
   }
 
   return (
-    <main style={{ fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: 760 }}>
+    <main style={{ fontFamily: "system-ui, sans-serif", padding: "2rem" }}>
       <h1>PersonalAI</h1>
 
       <p>

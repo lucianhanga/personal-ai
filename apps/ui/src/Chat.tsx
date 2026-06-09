@@ -239,10 +239,10 @@ export function Chat({ token }: { token: string }): React.ReactElement {
   const selected = models.find((m) => m.name === model);
 
   return (
-    <div style={{ display: "flex", gap: "1rem", alignItems: "flex-start" }}>
+    <div style={{ display: "flex", gap: "1rem", alignItems: "flex-start", width: "100%" }}>
       <section
         aria-label="chat"
-        style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "0.75rem" }}
+        style={{ flex: 2, minWidth: 0, display: "flex", flexDirection: "column", gap: "0.75rem" }}
       >
       {persistence && (
         <div
@@ -393,6 +393,9 @@ export function Chat({ token }: { token: string }): React.ReactElement {
             approve high-risk
           </label>
         )}
+        <button data-testid="tools-show" onClick={() => setShowTools((v) => !v)}>
+          {showTools ? "Hide tools" : "Tools"}
+        </button>
         {sidebarCollapsed && (
           <button
             data-testid="side-toggle"
@@ -404,6 +407,8 @@ export function Chat({ token }: { token: string }): React.ReactElement {
           </button>
         )}
       </div>
+
+      {showTools && <Tools token={token} />}
 
       {files.length > 0 && (
         <ul data-testid="file-list" style={{ margin: 0, paddingLeft: "1rem", fontSize: "0.8rem" }}>
@@ -503,8 +508,8 @@ export function Chat({ token }: { token: string }): React.ReactElement {
           data-testid="side-panel"
           aria-label="panels"
           style={{
-            width: 380,
-            flexShrink: 0,
+            flex: 1,
+            minWidth: 0,
             display: "flex",
             flexDirection: "column",
             gap: "0.5rem",
@@ -513,9 +518,6 @@ export function Chat({ token }: { token: string }): React.ReactElement {
           <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", flexWrap: "wrap" }}>
             <button data-testid="memory-show" onClick={() => setShowMemory((v) => !v)}>
               {showMemory ? "Hide memory" : "Memory"}
-            </button>
-            <button data-testid="tools-show" onClick={() => setShowTools((v) => !v)}>
-              {showTools ? "Hide tools" : "Tools"}
             </button>
             <button data-testid="toollog-show" onClick={() => setShowLog((v) => !v)}>
               {showLog ? "Hide log" : "Log"}
@@ -536,13 +538,12 @@ export function Chat({ token }: { token: string }): React.ReactElement {
           {usage && <ContextMeter usage={usage} />}
 
           {showMemory && <Memory token={token} />}
-          {showTools && <Tools token={token} />}
           {showLog && <ToolLog token={token} />}
           {showAppLogs && <AppLogs token={token} />}
 
-          {!showMemory && !showTools && !showLog && !showAppLogs && !usage && (
+          {!showMemory && !showLog && !showAppLogs && !usage && (
             <p data-testid="side-hint" style={{ color: "#888", fontSize: "0.8rem" }}>
-              Open a panel above to view memory, tools, logs, or context usage.
+              Open a panel above to view memory, logs, or context usage.
             </p>
           )}
         </aside>
