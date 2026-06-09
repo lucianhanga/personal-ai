@@ -510,7 +510,7 @@ export function Chat({
               <span style={{ color: "#555" }}>Reasoning</span>
               <label
                 style={{ marginLeft: "auto" }}
-                title="Ask the model to show its reasoning (slower; shown under Details)"
+                title="Ask the model to think before answering (slower). The reasoning is saved and shown under each message's Details."
               >
                 <input
                   data-testid="think-toggle"
@@ -518,7 +518,7 @@ export function Chat({
                   checked={useThink}
                   onChange={(e) => setUseThink(e.target.checked)}
                 />{" "}
-                Show reasoning
+                Enable reasoning
               </label>
             </div>
           </div>
