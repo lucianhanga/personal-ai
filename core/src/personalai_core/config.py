@@ -29,6 +29,7 @@ _ENV_FIELDS = {
     "BIND_PORT": "bind_port",
     "EGRESS_ENABLED": "egress_enabled",
     "ALLOWED_EGRESS_HOSTS": "allowed_egress_hosts",
+    "EGRESS_ALLOW_ANY": "egress_allow_any",
     "AUTH_TOKEN": "auth_token",
     "ALLOWED_ORIGINS": "allowed_origins",
     "OPENAI_API_KEY": "openai_api_key",  # pragma: allowlist secret  (env var name, not a secret)
@@ -44,7 +45,7 @@ _ENV_FIELDS = {
 }
 
 _INT_FIELDS = {"bind_port", "max_upload_bytes", "stm_keep_recent", "memory_top_k", "ollama_num_ctx"}
-_BOOL_FIELDS = {"egress_enabled", "stm_summarize", "memory_enabled"}
+_BOOL_FIELDS = {"egress_enabled", "stm_summarize", "memory_enabled", "egress_allow_any"}
 
 _CSV_FIELDS = {"allowed_origins", "allowed_egress_hosts"}
 
@@ -87,7 +88,11 @@ class CoreConfig(StrictModel):
     egress_enabled: bool = Field(default=False, description="Network egress off by default.")
     allowed_egress_hosts: tuple[str, ...] = Field(
         default=(),
-        description="When egress is enabled, restrict to these hosts; empty means no restriction.",
+        description="When egress is enabled, the hosts allowed. Empty = fail-closed (deny all).",
+    )
+    egress_allow_any: bool = Field(
+        default=False,
+        description="Explicit opt-in to allow ANY host when egress is enabled with no allowlist.",
     )
     auth_token: str | None = Field(
         default=None, description="Bearer token required by protected routes; set via env."

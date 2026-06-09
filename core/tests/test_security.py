@@ -49,8 +49,16 @@ def test_egress_allows_loopback_even_when_disabled() -> None:
         assert_egress_allowed(CoreConfig(egress_enabled=False), host=host)
 
 
-def test_egress_allowed_when_enabled() -> None:
-    assert_egress_allowed(CoreConfig(egress_enabled=True), host="api.example.com")  # no raise
+def test_egress_enabled_empty_allowlist_fails_closed() -> None:
+    # Enabling egress without an allowlist must NOT open everything (security review H2).
+    with pytest.raises(EgressBlockedError, match="no allowlist is set"):
+        assert_egress_allowed(CoreConfig(egress_enabled=True), host="api.example.com")
+
+
+def test_egress_allow_any_opt_in() -> None:
+    # The explicit escape hatch allows any host when egress is enabled with no allowlist.
+    config = CoreConfig(egress_enabled=True, egress_allow_any=True)
+    assert_egress_allowed(config, host="api.example.com")  # no raise
 
 
 def test_egress_allowlist_enforced() -> None:

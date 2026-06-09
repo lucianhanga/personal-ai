@@ -6,7 +6,7 @@ JSON-Schema output validation — auditing the outcome. Fail-closed: any check t
 ``ToolResult(ok=False, ...)`` and is recorded; nothing executes until every gate passes.
 
 The executor seam keeps tool isolation swappable (in-process now; subprocess/container/remote-MCP
-later). Untrusted MCP servers (M6) run out-of-process by protocol and plug in here unchanged.
+later). Untrusted MCP servers (M7) run out-of-process by protocol and plug in here unchanged.
 """
 
 from __future__ import annotations

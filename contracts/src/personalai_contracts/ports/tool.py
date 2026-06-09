@@ -2,7 +2,7 @@
 
 The execution contract for a tool or MCP server action. The full tool/MCP **manifest**
 (provenance, permissions, I/O schemas, egress, risk, signature) is defined as a schema in
-M0-3; permission enforcement and sandboxing live in the Tool/MCP gateway (M4). Tool handlers
+M0-3; permission enforcement and sandboxing live in the Tool/MCP gateway (M5). Tool handlers
 are never invoked directly by agents — only through the gateway (ADR-0004).
 """
 
@@ -45,7 +45,7 @@ class ToolHandler(Protocol):
 @runtime_checkable
 class ToolExecutor(Protocol):
     """Runs a handler with a time bound. The seam that scales tool isolation: the in-process
-    executor today; subprocess / container / remote-MCP executors later (M6+). Implementations
+    executor today; subprocess / container / remote-MCP executors later (M7+). Implementations
     must be fail-closed (return ``ToolResult(ok=False, ...)`` on timeout/error, never raise)."""
 
     async def execute(self, handler: ToolHandler, call: ToolCall, *, timeout: float) -> ToolResult:
