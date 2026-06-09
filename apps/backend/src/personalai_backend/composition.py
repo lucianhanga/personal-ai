@@ -1,10 +1,8 @@
 """Composition root: build the registries, register adapters, resolve services.
 
-This is the one place that knows about concrete adapters (ADR-0001). At M0-4 no production
-adapters exist yet, so :func:`register_adapters` is an intentionally empty seam; concrete
-adapters (Ollama provider, pgvector repository, local object store, ...) are registered here
-starting in M0-5. Tests prove the wiring by registering adapters and resolving them without any
-change to the core.
+This is the one place that knows about concrete adapters (ADR-0001): :func:`register_adapters`
+wires the Ollama + OpenAI providers, pgvector repository, built-in tools, and the tool gateway.
+New capabilities are added here as new adapters behind existing ports, without changing the core.
 """
 
 from __future__ import annotations
