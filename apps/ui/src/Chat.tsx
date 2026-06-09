@@ -43,6 +43,7 @@ export function Chat({ token }: { token: string }): React.ReactElement {
   const [showTools, setShowTools] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const [showAppLogs, setShowAppLogs] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [persistence, setPersistence] = useState(false);
@@ -238,7 +239,11 @@ export function Chat({ token }: { token: string }): React.ReactElement {
   const selected = models.find((m) => m.name === model);
 
   return (
-    <section aria-label="chat" style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+    <div style={{ display: "flex", gap: "1rem", alignItems: "flex-start" }}>
+      <section
+        aria-label="chat"
+        style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "0.75rem" }}
+      >
       {persistence && (
         <div
           data-testid="conversations"
@@ -388,24 +393,17 @@ export function Chat({ token }: { token: string }): React.ReactElement {
             approve high-risk
           </label>
         )}
-        <button data-testid="memory-show" onClick={() => setShowMemory((v) => !v)}>
-          {showMemory ? "Hide memory" : "Memory"}
-        </button>
-        <button data-testid="tools-show" onClick={() => setShowTools((v) => !v)}>
-          {showTools ? "Hide tools" : "Tools"}
-        </button>
-        <button data-testid="toollog-show" onClick={() => setShowLog((v) => !v)}>
-          {showLog ? "Hide log" : "Log"}
-        </button>
-        <button data-testid="applogs-show" onClick={() => setShowAppLogs((v) => !v)}>
-          {showAppLogs ? "Hide app logs" : "App logs"}
-        </button>
+        {sidebarCollapsed && (
+          <button
+            data-testid="side-toggle"
+            onClick={() => setSidebarCollapsed(false)}
+            title="Show panels"
+            style={{ marginLeft: "auto" }}
+          >
+            Panels ‹
+          </button>
+        )}
       </div>
-
-      {showMemory && <Memory token={token} />}
-      {showTools && <Tools token={token} />}
-      {showLog && <ToolLog token={token} />}
-      {showAppLogs && <AppLogs token={token} />}
 
       {files.length > 0 && (
         <ul data-testid="file-list" style={{ margin: 0, paddingLeft: "1rem", fontSize: "0.8rem" }}>
@@ -483,8 +481,6 @@ export function Chat({ token }: { token: string }): React.ReactElement {
         </p>
       )}
 
-      {usage && <ContextMeter usage={usage} />}
-
       <div style={{ display: "flex", gap: "0.5rem" }}>
         <input
           data-testid="composer"
@@ -500,6 +496,57 @@ export function Chat({ token }: { token: string }): React.ReactElement {
           {busy ? "..." : "Send"}
         </button>
       </div>
-    </section>
+      </section>
+
+      {!sidebarCollapsed && (
+        <aside
+          data-testid="side-panel"
+          aria-label="panels"
+          style={{
+            width: 380,
+            flexShrink: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.5rem",
+          }}
+        >
+          <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", flexWrap: "wrap" }}>
+            <button data-testid="memory-show" onClick={() => setShowMemory((v) => !v)}>
+              {showMemory ? "Hide memory" : "Memory"}
+            </button>
+            <button data-testid="tools-show" onClick={() => setShowTools((v) => !v)}>
+              {showTools ? "Hide tools" : "Tools"}
+            </button>
+            <button data-testid="toollog-show" onClick={() => setShowLog((v) => !v)}>
+              {showLog ? "Hide log" : "Log"}
+            </button>
+            <button data-testid="applogs-show" onClick={() => setShowAppLogs((v) => !v)}>
+              {showAppLogs ? "Hide app logs" : "App logs"}
+            </button>
+            <button
+              data-testid="side-toggle"
+              onClick={() => setSidebarCollapsed(true)}
+              title="Collapse panel"
+              style={{ marginLeft: "auto" }}
+            >
+              Collapse ›
+            </button>
+          </div>
+
+          {usage && <ContextMeter usage={usage} />}
+
+          {showMemory && <Memory token={token} />}
+          {showTools && <Tools token={token} />}
+          {showLog && <ToolLog token={token} />}
+          {showAppLogs && <AppLogs token={token} />}
+
+          {!showMemory && !showTools && !showLog && !showAppLogs && !usage && (
+            <p data-testid="side-hint" style={{ color: "#888", fontSize: "0.8rem" }}>
+              Open a panel above to view memory, tools, logs, or context usage.
+            </p>
+          )}
+        </aside>
+      )}
+    </div>
   );
 }
