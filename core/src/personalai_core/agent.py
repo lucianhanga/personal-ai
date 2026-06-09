@@ -21,6 +21,7 @@ from personalai_contracts.ports import (
     ModelProvider,
     Role,
     ToolCall,
+    ToolCallRequest,
     ToolSpec,
 )
 from personalai_contracts.schemas.tools import Permission
@@ -31,7 +32,7 @@ from personalai_core.gateway import RegisteredTool, ToolGateway
 class AgentEvent:
     """A step in the agent loop: a tool call, its result, or the final answer."""
 
-    type: Literal["reasoning", "tool_call", "tool_result", "final"]
+    type: Literal["reasoning", "answer", "tool_call", "tool_result", "final"]
     tool: str | None = None
     args: Mapping[str, Any] | None = None
     ok: bool | None = None
@@ -69,16 +70,24 @@ async def run_agent(
     text = ""
     usage: Mapping[str, int] = {}
     for _ in range(max_iterations):
-        result = await provider.generate(
+        # Stream each model turn so reasoning and the answer arrive token-by-token; tool calls are
+        # parsed from the stream. Reasoning is emitted in order, before this turn's tool calls.
+        text = ""
+        tool_calls: list[ToolCallRequest] = []
+        async for chunk in provider.stream(
             GenerationRequest(messages=convo, model=model, tools=specs or None, think=think)
-        )
-        text = result.text
-        usage = result.usage
-        # Emit reasoning in order — before this iteration's tool calls — so the UI can interleave
-        # reasoning and tool steps as they actually happened.
-        if result.thinking:
-            yield AgentEvent(type="reasoning", thinking=result.thinking)
-        if not result.tool_calls:
+        ):
+            if chunk.thinking:
+                yield AgentEvent(type="reasoning", thinking=chunk.thinking)
+            if chunk.delta:
+                text += chunk.delta
+                yield AgentEvent(type="answer", answer=chunk.delta)
+            if chunk.tool_calls:
+                tool_calls = list(chunk.tool_calls)
+            if chunk.usage:
+                usage = chunk.usage
+
+        if not tool_calls:
             yield AgentEvent(type="final", answer=text, usage=dict(usage))
             return
 
@@ -86,7 +95,7 @@ async def run_agent(
         # so the model sees the call was answered (native protocol) and produces a final reply.
         if text.strip():
             convo.append(ChatMessage(Role.ASSISTANT, text))
-        for call in result.tool_calls:
+        for call in tool_calls:
             yield AgentEvent(type="tool_call", tool=call.name, args=dict(call.arguments))
             tool_result = await gateway.invoke(
                 ToolCall(call.name, versions.get(call.name, "1.0.0"), call.arguments),

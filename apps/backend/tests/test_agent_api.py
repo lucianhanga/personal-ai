@@ -57,8 +57,12 @@ def test_use_tools_runs_agent_and_emits_tool_events() -> None:
 
 
 def test_chat_without_tools_still_streams() -> None:
+    # A plain echo provider (no scripted tool calls) on the non-tools path.
+    config = CoreConfig(auth_token=TOKEN, model_provider="plain")
+    boot = bootstrap(config=config)
+    boot.registries.model_providers.register("plain", FakeModelProvider(name="plain"))
     with (
-        _client() as client,
+        TestClient(create_app(boot)) as client,
         client.stream(
             "POST",
             "/api/chat",
@@ -68,4 +72,4 @@ def test_chat_without_tools_still_streams() -> None:
     ):
         body = "".join(resp.iter_text())
     assert "event: tool" not in body
-    assert "echo:" in body  # streamed tokens (no tool steps)
+    assert "echo:" in body  # streamed answer (no tool steps)

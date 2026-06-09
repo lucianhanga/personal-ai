@@ -76,10 +76,14 @@ def test_agent_calls_tool_then_answers() -> None:
 
     events = asyncio.run(_run())
     kinds = [e.type for e in events]
-    assert kinds == ["tool_call", "tool_result", "final"]
+    # tool turn first (no answer text), then the streamed answer, then final.
+    assert kinds == ["tool_call", "tool_result", "answer", "final"]
     assert events[0].tool == "calculator"
     assert events[1].ok is True and events[1].output == {"result": 437}
-    assert events[2].answer == "The answer is 437."
+    # The answer streams as "answer" deltas and is repeated on the final event.
+    answer = "".join(e.answer or "" for e in events if e.type == "answer")
+    assert answer == "The answer is 437."
+    assert events[-1].answer == "The answer is 437."
 
 
 def test_agent_answers_directly_without_tools() -> None:
@@ -96,8 +100,9 @@ def test_agent_answers_directly_without_tools() -> None:
         ]
 
     events = asyncio.run(_run())
-    assert [e.type for e in events] == ["final"]
+    assert [e.type for e in events] == ["answer", "final"]  # answer streamed, then final
     assert events[0].answer == "echo: hi"
+    assert events[-1].answer == "echo: hi"
 
 
 def test_agent_surfaces_reasoning() -> None:

@@ -204,6 +204,7 @@ class OllamaProvider:
                     done=bool(data.get("done")),
                     finish_reason=data.get("done_reason"),
                     usage=_usage(data),  # token counts arrive on the final ("done") line
+                    tool_calls=_tool_calls(message),  # tool calls arrive on a chunk's message
                 )
 
     async def _get(self, path: str) -> dict[str, Any]:

@@ -446,16 +446,18 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     None,
                     ev.thinking,
                 )
-            elif ev.type == "final":
-                done = {"delta": "", "done": True, "finish_reason": "stop"}
+            elif ev.type == "answer":
+                # Stream the answer token-by-token (ev.answer is a delta here).
                 yield (
                     f"data: {json.dumps({'delta': ev.answer or '', 'done': False})}\n\n".encode(),
                     ev.answer or "",
-                    ev.usage,
+                    None,
                     None,
                     None,
                 )
-                yield (f"data: {json.dumps(done)}\n\n".encode(), None, None, None, None)
+            elif ev.type == "final":
+                done = {"delta": "", "done": True, "finish_reason": "stop"}
+                yield (f"data: {json.dumps(done)}\n\n".encode(), None, ev.usage, None, None)
             else:
                 payload = {
                     "phase": "call" if ev.type == "tool_call" else "result",
@@ -527,11 +529,11 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
 
                 try:
                     if req.use_tools:
-                        async for frame, text, used, step, think_delta in _agent_stream(
+                        async for frame, delta, used, step, think_delta in _agent_stream(
                             req, provider, generation
                         ):
-                            if text is not None:
-                                answer = text
+                            if delta:
+                                answer += delta
                             if used:
                                 usage = used
                             if step is not None:

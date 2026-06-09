@@ -88,6 +88,26 @@ def _tool_calls(message: Mapping[str, Any]) -> tuple[ToolCallRequest, ...]:
     return tuple(calls)
 
 
+def _assemble(partial: Mapping[int, Mapping[str, str]]) -> tuple[ToolCallRequest, ...]:
+    """Build ToolCallRequest objects from reassembled streaming tool-call fragments."""
+    calls = []
+    for slot in partial.values():
+        if not slot["name"]:
+            continue
+        try:
+            args = json.loads(slot["args"] or "{}")
+        except (ValueError, TypeError):
+            args = {}
+        calls.append(
+            ToolCallRequest(
+                name=slot["name"],
+                arguments=args if isinstance(args, dict) else {},
+                id=slot["id"] or None,
+            )
+        )
+    return tuple(calls)
+
+
 def _remote_capabilities() -> ModelCapabilities:
     # Remote OpenAI-compatible APIs do not expose a capability endpoint; assume the common set.
     return ModelCapabilities(
@@ -170,6 +190,8 @@ class OpenAICompatProvider:
         body = _chat_payload(request, stream=True)
         body["stream_options"] = {"include_usage": True}  # ask for token usage in the final chunk
         usage: dict[str, int] = {}
+        # Reassemble tool calls streamed as deltas (keyed by index; name + argument fragments).
+        partial: dict[int, dict[str, str]] = {}
         async with self._client.stream(
             "POST", f"{self._base}/chat/completions", headers=self._headers(), json=body
         ) as response:
@@ -179,7 +201,7 @@ class OpenAICompatProvider:
                     continue
                 payload = line[len("data:") :].strip()
                 if payload == "[DONE]":
-                    yield GenerationChunk(done=True, usage=usage)
+                    yield GenerationChunk(done=True, usage=usage, tool_calls=_assemble(partial))
                     break
                 data = json.loads(payload)
                 raw = data.get("usage") or {}
@@ -190,6 +212,14 @@ class OpenAICompatProvider:
                 } or usage
                 choice = (data.get("choices") or [{}])[0]
                 delta = choice.get("delta") or {}
+                for tc in delta.get("tool_calls") or []:
+                    slot = partial.setdefault(
+                        tc.get("index", 0), {"id": "", "name": "", "args": ""}
+                    )
+                    fn = tc.get("function") or {}
+                    slot["id"] = tc.get("id") or slot["id"]
+                    slot["name"] = fn.get("name") or slot["name"]
+                    slot["args"] += fn.get("arguments") or ""
                 yield GenerationChunk(
                     delta=delta.get("content") or "",
                     finish_reason=choice.get("finish_reason"),

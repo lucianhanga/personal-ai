@@ -12,6 +12,7 @@ import respx
 
 from personalai_contracts.ports import (
     ChatMessage,
+    GenerationChunk,
     GenerationRequest,
     ModelProvider,
     Role,
@@ -133,6 +134,39 @@ def test_stream_parses_sse_until_done() -> None:
     chunks = asyncio.run(_collect())
     assert [c[0] for c in chunks] == ["He", "llo", ""]
     assert chunks[-1][1] is True
+
+
+@respx.mock
+def test_stream_reassembles_tool_calls() -> None:
+    # OpenAI streams tool-call name + argument fragments across chunks; we reassemble them.
+    body = (
+        b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1",'
+        b'"function":{"name":"calculator","arguments":"{\\"expr"}}]}}]}\n\n'
+        b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+        b'"function":{"arguments":"ession\\": \\"2+2\\"}"}}]}}]}\n\n'
+        b"data: [DONE]\n\n"
+    )
+    respx.post(f"{BASE}/chat/completions").mock(return_value=httpx.Response(200, content=body))
+
+    async def _collect() -> list[GenerationChunk]:
+        provider = OpenAICompatProvider(api_key="k", base_url=BASE)
+        try:
+            return [
+                c
+                async for c in provider.stream(
+                    GenerationRequest(messages=[ChatMessage(Role.USER, "2+2?")], model="gpt-x")
+                )
+            ]
+        finally:
+            await provider.aclose()
+
+    chunks = asyncio.run(_collect())
+    done = chunks[-1]
+    assert done.done is True
+    assert len(done.tool_calls) == 1
+    assert done.tool_calls[0].name == "calculator"
+    assert done.tool_calls[0].arguments == {"expression": "2+2"}
+    assert done.tool_calls[0].id == "c1"
 
 
 @respx.mock
