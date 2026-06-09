@@ -24,6 +24,7 @@ import { AppLogs } from "./AppLogs";
 import { ContextMeter } from "./ContextMeter";
 import { Markdown } from "./Markdown";
 import { Memory } from "./Memory";
+import { MessageDetails } from "./MessageDetails";
 import { ToolLog } from "./ToolLog";
 import { Tools } from "./Tools";
 
@@ -35,11 +36,19 @@ interface ChatState {
   messages: ChatMessage[];
   citations: Record<number, Citation[]>;
   toolSteps: Record<number, ToolStep[]>;
+  thinking: Record<number, string>;
   usage: UsageInfo | null;
   busy: boolean;
 }
 
-const EMPTY_CHAT: ChatState = { messages: [], citations: {}, toolSteps: {}, usage: null, busy: false };
+const EMPTY_CHAT: ChatState = {
+  messages: [],
+  citations: {},
+  toolSteps: {},
+  thinking: {},
+  usage: null,
+  busy: false,
+};
 
 export function Chat({
   token,
@@ -82,7 +91,7 @@ export function Chat({
 
   const activeKey = activeId ?? NEW_CHAT;
   const view = chats[activeKey] ?? EMPTY_CHAT;
-  const { messages, citations, toolSteps, usage, busy } = view;
+  const { messages, citations, toolSteps, thinking, usage, busy } = view;
 
   const patchChat = (key: string, fn: (s: ChatState) => ChatState): void => {
     setChats((prev) => ({ ...prev, [key]: fn(prev[key] ?? EMPTY_CHAT) }));
@@ -286,6 +295,11 @@ export function Chat({
             toolSteps: { ...s.toolSteps, [assistantIndex]: [...(s.toolSteps[assistantIndex] ?? []), step] },
           })),
         (u) => patchChat(key, (s) => ({ ...s, usage: u })),
+        (delta) =>
+          patchChat(key, (s) => ({
+            ...s,
+            thinking: { ...s.thinking, [assistantIndex]: (s.thinking[assistantIndex] ?? "") + delta },
+          })),
       );
       if (persistence) setConversations(await fetchConversations(token));
     } catch (e: unknown) {
@@ -626,21 +640,11 @@ export function Chat({
                 m.role === "assistant" ? (
                   <div key={i} data-testid="msg-assistant" style={{ margin: "0.4rem 0" }}>
                     <strong>AI:</strong>
-                    {toolSteps[i]?.length ? (
-                      <div data-testid="tool-steps" style={{ fontSize: "0.75rem", color: "#555" }}>
-                        {toolSteps[i].map((s, k) =>
-                          s.phase === "call" ? (
-                            <div key={k}>
-                              🔧 {s.tool}({JSON.stringify(s.args ?? {})})
-                            </div>
-                          ) : (
-                            <div key={k} style={{ color: s.ok ? "#2a7" : "#b00" }}>
-                              ↳ {s.tool}: {s.ok ? "ok" : `error: ${s.error}`}
-                            </div>
-                          ),
-                        )}
-                      </div>
-                    ) : null}
+                    <MessageDetails
+                      steps={toolSteps[i]?.length ? toolSteps[i] : m.meta?.tool_steps}
+                      thinking={thinking[i] || m.meta?.thinking}
+                      defaultOpen={busy && i === messages.length - 1}
+                    />
                     <Markdown content={m.content} />
                     {citations[i]?.length ? (
                       <div data-testid="citations" style={{ fontSize: "0.75rem", color: "#555" }}>

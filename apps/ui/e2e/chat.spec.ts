@@ -108,7 +108,7 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   await expect(page.getByTestId("msg-user")).toContainText("hi there");
   await expect(page.getByTestId("msg-assistant")).toContainText("Hello world");
   await expect(page.getByTestId("citations")).toContainText("geo.txt");
-  await expect(page.getByTestId("tool-steps")).toContainText("web_search");
+  await expect(page.getByTestId("details-body")).toContainText("web_search");
   await expect(page.getByTestId("context-meter-label")).toContainText("4,096 / 32,768");
 
   // Memory panel opens and shows the empty state.

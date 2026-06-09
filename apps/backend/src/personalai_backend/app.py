@@ -20,7 +20,7 @@ import uuid
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -412,8 +412,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
 
     async def _agent_stream(
         req: ChatRequest, provider: ModelProvider, generation: GenerationRequest
-    ) -> AsyncIterator[tuple[bytes, str | None, Mapping[str, int] | None]]:
-        """Run the agent loop, yielding (SSE frame, final-answer-or-None, usage-or-None) tuples."""
+    ) -> AsyncIterator[tuple[bytes, str | None, Mapping[str, int] | None, dict[str, Any] | None]]:
+        """Yield (SSE frame, final-answer-or-None, usage-or-None, tool-step-or-None) tuples."""
         registries: Registries = app.state.bootstrap.registries
         gateway = app.state.bootstrap.gateway
         tool_list = [registries.tools.get(name) for name in registries.tools.names()]
@@ -435,8 +435,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     f"data: {json.dumps({'delta': ev.answer or '', 'done': False})}\n\n".encode(),
                     ev.answer or "",
                     ev.usage,
+                    None,
                 )
-                yield (f"data: {json.dumps(done)}\n\n".encode(), None, None)
+                yield (f"data: {json.dumps(done)}\n\n".encode(), None, None, None)
             else:
                 payload = {
                     "phase": "call" if ev.type == "tool_call" else "result",
@@ -446,7 +447,12 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     "output": ev.output,
                     "error": ev.error,
                 }
-                yield (f"event: tool\ndata: {json.dumps(payload)}\n\n".encode(), None, None)
+                yield (
+                    f"event: tool\ndata: {json.dumps(payload)}\n\n".encode(),
+                    None,
+                    None,
+                    payload,
+                )
 
     @app.post("/api/chat", dependencies=[Depends(_require_token)])
     async def chat(req: ChatRequest) -> StreamingResponse:
@@ -490,17 +496,25 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     yield f"event: citations\ndata: {json.dumps(citations)}\n\n".encode()
                 answer = ""
                 usage: Mapping[str, int] = {}
+                tool_steps: list[dict[str, Any]] = []
+                thinking = ""
                 try:
                     if req.use_tools:
-                        async for frame, text, used in _agent_stream(req, provider, generation):
+                        async for frame, text, used, step in _agent_stream(
+                            req, provider, generation
+                        ):
                             if text is not None:
                                 answer = text
                             if used:
                                 usage = used
+                            if step is not None:
+                                tool_steps.append(step)
                             yield frame
                     else:
                         async for chunk in provider.stream(generation):
                             answer += chunk.delta
+                            if chunk.thinking:
+                                thinking += chunk.thinking
                             if chunk.usage:
                                 usage = dict(chunk.usage)
                             payload = {
@@ -520,10 +534,18 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 usage_frame = _usage_frame(usage, provider)
                 if usage_frame is not None:
                     yield usage_frame
-                # Persist the assistant turn after a successful stream.
+                # Persist the assistant turn (with tool/reasoning meta) after a successful stream.
                 if persist_id is not None and storage is not None and answer:
+                    meta: dict[str, Any] = {}
+                    if tool_steps:
+                        meta["tool_steps"] = tool_steps
+                    if thinking:
+                        meta["thinking"] = thinking
                     await storage.conversations.add_message(
-                        conversation_id=persist_id, role="assistant", content=answer
+                        conversation_id=persist_id,
+                        role="assistant",
+                        content=answer,
+                        meta=meta or None,
                     )
                     # Long-term memory: extract durable facts from this exchange (skip incognito).
                     if config.memory_enabled and not incognito:
@@ -665,7 +687,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         if conv is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation")
         messages = [
-            {"role": m.role, "content": m.content}
+            {"role": m.role, "content": m.content, "meta": m.meta}
             for m in await storage.conversations.list_messages(conversation_id)
         ]
         return StructuredResult(

@@ -6,9 +6,11 @@ logging/audit path, not to the user's own messages.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 import asyncpg
 
@@ -35,6 +37,7 @@ class Message:
     role: str
     content: str
     created_at: datetime
+    meta: Mapping[str, Any] | None = None  # tool steps + reasoning, for the UI details view
 
 
 class PgConversationStore:
@@ -81,13 +84,21 @@ class PgConversationStore:
     async def delete(self, conversation_id: str) -> None:
         await self._pool.execute("DELETE FROM conversations WHERE id = $1", conversation_id)
 
-    async def add_message(self, *, conversation_id: str, role: str, content: str) -> Message:
+    async def add_message(
+        self,
+        *,
+        conversation_id: str,
+        role: str,
+        content: str,
+        meta: Mapping[str, Any] | None = None,
+    ) -> Message:
         row = await self._pool.fetchrow(
-            "INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3) "
-            "RETURNING id, conversation_id, role, content, created_at",
+            "INSERT INTO messages (conversation_id, role, content, meta) VALUES ($1, $2, $3, $4) "
+            "RETURNING id, conversation_id, role, content, created_at, meta",
             conversation_id,
             role,
             content,
+            json.dumps(meta) if meta else None,
         )
         assert row is not None
         await self._pool.execute(
@@ -97,7 +108,7 @@ class PgConversationStore:
 
     async def list_messages(self, conversation_id: str) -> Sequence[Message]:
         rows = await self._pool.fetch(
-            "SELECT id, conversation_id, role, content, created_at "
+            "SELECT id, conversation_id, role, content, created_at, meta "
             "FROM messages WHERE conversation_id = $1 ORDER BY id",
             conversation_id,
         )
@@ -117,10 +128,13 @@ def _to_conversation(row: asyncpg.Record) -> Conversation:
 
 
 def _to_message(row: asyncpg.Record) -> Message:
+    raw_meta = row.get("meta")
     return Message(
         id=row["id"],
         conversation_id=row["conversation_id"],
         role=row["role"],
         content=row["content"],
         created_at=row["created_at"],
+        # asyncpg returns jsonb as a string unless a codec is set; decode defensively.
+        meta=json.loads(raw_meta) if isinstance(raw_meta, str) else raw_meta,
     )
