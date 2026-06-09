@@ -27,6 +27,20 @@ import { Memory } from "./Memory";
 import { ToolLog } from "./ToolLog";
 import { Tools } from "./Tools";
 
+// Key for the not-yet-persisted "new" chat (before its conversation id exists).
+const NEW_CHAT = "__new__";
+
+/** All per-conversation state, so chats stream independently and survive switching. */
+interface ChatState {
+  messages: ChatMessage[];
+  citations: Record<number, Citation[]>;
+  toolSteps: Record<number, ToolStep[]>;
+  usage: UsageInfo | null;
+  busy: boolean;
+}
+
+const EMPTY_CHAT: ChatState = { messages: [], citations: {}, toolSteps: {}, usage: null, busy: false };
+
 export function Chat({
   token,
   status = "connected",
@@ -57,16 +71,22 @@ export function Chat({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chatsCollapsed, setChatsCollapsed] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
-  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  // Per-conversation state, keyed by conversation id (NEW_CHAT for the unsaved one). Streams run
+  // independently against their key, so switching chats never interrupts a generating answer.
+  const [chats, setChats] = useState<Record<string, ChatState>>({});
   const [persistence, setPersistence] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [citations, setCitations] = useState<Record<number, Citation[]>>({});
-  const [toolSteps, setToolSteps] = useState<Record<number, ToolStep[]>>({});
-  const [usage, setUsage] = useState<UsageInfo | null>(null);
   const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+
+  const activeKey = activeId ?? NEW_CHAT;
+  const view = chats[activeKey] ?? EMPTY_CHAT;
+  const { messages, citations, toolSteps, usage, busy } = view;
+
+  const patchChat = (key: string, fn: (s: ChatState) => ChatState): void => {
+    setChats((prev) => ({ ...prev, [key]: fn(prev[key] ?? EMPTY_CHAT) }));
+  };
 
   useEffect(() => {
     let active = true;
@@ -146,19 +166,24 @@ export function Chat({
   }, [messages]);
 
   function newChat(): void {
-    setConversationId(null);
-    setMessages([]);
-    setCitations({});
+    setChats((prev) => ({ ...prev, [NEW_CHAT]: EMPTY_CHAT }));
+    setActiveId(null);
     setError(null);
   }
 
   async function openConversation(id: string): Promise<void> {
     setError(null);
+    setActiveId(id);
+    // If this chat is mid-stream, keep its live state; otherwise load from the server.
+    if (chats[id]?.busy) return;
     try {
       const conv = await fetchConversation(token, id);
-      setConversationId(conv.id);
-      setMessages(conv.messages);
-      setCitations({});
+      // If the chat started streaming while we were loading, keep its live state (don't clobber).
+      setChats((prev) =>
+        prev[id]?.busy
+          ? prev
+          : { ...prev, [id]: { ...EMPTY_CHAT, messages: conv.messages, usage: prev[id]?.usage ?? null } },
+      );
     } catch (e: unknown) {
       setError(String(e));
     }
@@ -167,8 +192,12 @@ export function Chat({
   async function removeConversation(id: string): Promise<void> {
     try {
       await deleteConversation(token, id);
-      setConversations(conversations.filter((c) => c.id !== id));
-      if (id === conversationId) newChat();
+      setConversations((prev) => prev.filter((c) => c.id !== id));
+      setChats((prev) => {
+        const { [id]: _omit, ...rest } = prev;
+        return rest;
+      });
+      if (id === activeId) newChat();
     } catch (e: unknown) {
       setError(String(e));
     }
@@ -200,21 +229,39 @@ export function Chat({
 
   async function send(): Promise<void> {
     const content = input.trim();
-    if (!content || busy) return;
+    if (!content || !model || view.busy) return;
     setError(null);
     setInput("");
-    const history: ChatMessage[] = [...messages, { role: "user", content }];
+
+    const startKey = activeId ?? NEW_CHAT;
+    const history: ChatMessage[] = [...(chats[startKey]?.messages ?? []), { role: "user", content }];
     const assistantIndex = history.length;
-    setMessages([...history, { role: "assistant", content: "" }]);
-    setBusy(true);
+    // Optimistically show the user turn + an empty assistant bubble and mark this chat busy.
+    patchChat(startKey, (s) => ({
+      ...s,
+      messages: [...history, { role: "assistant", content: "" }],
+      busy: true,
+      usage: null,
+    }));
+
+    let targetId = activeId;
+    let key = startKey;
     try {
-      // Persist into a conversation (create one lazily on the first message).
-      let convId = conversationId;
-      if (persistence && convId === null) {
+      // Persist into a conversation (create lazily on the first message); migrate the optimistic
+      // state from NEW_CHAT to the real id so streaming continues there.
+      if (persistence && targetId === null) {
         const conv = await createConversation(token, content.slice(0, 60), incognito);
-        convId = conv.id;
-        setConversationId(conv.id);
+        targetId = conv.id;
+        key = conv.id;
+        setChats((prev) => {
+          const cur = prev[NEW_CHAT] ?? EMPTY_CHAT;
+          const { [NEW_CHAT]: _omit, ...rest } = prev;
+          return { ...rest, [conv.id]: cur };
+        });
+        setActiveId((cur) => (cur === null ? conv.id : cur)); // don't yank focus if user switched
+        setConversations(await fetchConversations(token)); // show the new chat (with its marker)
       }
+
       let acc = "";
       await streamChat(
         {
@@ -225,26 +272,26 @@ export function Chat({
           useMemory,
           useTools,
           approveTools,
-          conversationId: convId ?? undefined,
+          conversationId: targetId ?? undefined,
           token,
         },
         (delta) => {
           acc += delta;
-          setMessages([...history, { role: "assistant", content: acc }]);
+          patchChat(key, (s) => ({ ...s, messages: [...history, { role: "assistant", content: acc }] }));
         },
-        (cites) => setCitations((prev) => ({ ...prev, [assistantIndex]: cites })),
+        (cites) => patchChat(key, (s) => ({ ...s, citations: { ...s.citations, [assistantIndex]: cites } })),
         (step) =>
-          setToolSteps((prev) => ({
-            ...prev,
-            [assistantIndex]: [...(prev[assistantIndex] ?? []), step],
+          patchChat(key, (s) => ({
+            ...s,
+            toolSteps: { ...s.toolSteps, [assistantIndex]: [...(s.toolSteps[assistantIndex] ?? []), step] },
           })),
-        (u) => setUsage(u),
+        (u) => patchChat(key, (s) => ({ ...s, usage: u })),
       );
       if (persistence) setConversations(await fetchConversations(token));
     } catch (e: unknown) {
       setError(String(e));
     } finally {
-      setBusy(false);
+      patchChat(key, (s) => ({ ...s, busy: false }));
     }
   }
 
@@ -498,12 +545,17 @@ export function Chat({
                       style={{
                         flex: 1,
                         textAlign: "left",
-                        fontWeight: c.id === conversationId ? 700 : 400,
+                        fontWeight: c.id === activeId ? 700 : 400,
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
                       }}
                     >
+                      {chats[c.id]?.busy && (
+                        <span data-testid={`busy-${c.id}`} title="Generating…" aria-label="generating">
+                          ⏳{" "}
+                        </span>
+                      )}
                       {c.title}
                     </button>
                     <button
@@ -660,8 +712,8 @@ export function Chat({
 
               {usage && <ContextMeter usage={usage} />}
 
-              {showLog && <ToolLog token={token} conversationId={conversationId} />}
-              {showAppLogs && <AppLogs token={token} conversationId={conversationId} />}
+              {showLog && <ToolLog token={token} conversationId={activeId} />}
+              {showAppLogs && <AppLogs token={token} conversationId={activeId} />}
 
               {!showLog && !showAppLogs && !usage && (
                 <p data-testid="side-hint" style={{ color: "#888", fontSize: "0.8rem" }}>

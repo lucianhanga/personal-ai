@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { Chat } from "./Chat";
@@ -269,6 +269,51 @@ test("toggles default on and the settings accordion collapses", async () => {
   await waitFor(() => expect(screen.queryByTestId("settings-documents")).toBeNull());
   fireEvent.click(screen.getByTestId("settings-toggle"));
   await waitFor(() => expect(screen.getByTestId("settings-documents")).toBeInTheDocument());
+});
+
+
+test("keeps a chat streaming (with an in-progress marker) when switching chats", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchConversations").mockResolvedValue([
+    { id: "cA", title: "A", updated_at: "2026-06-09T00:00:00Z" },
+    { id: "cB", title: "B", updated_at: "2026-06-09T00:00:00Z" },
+  ]);
+  vi.spyOn(api, "fetchConversation").mockImplementation(async (_t, id) => ({
+    id,
+    title: id,
+    messages: [],
+  }));
+  let release: () => void = () => {};
+  vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
+    onDelta("partial from A");
+    await new Promise<void>((res) => {
+      release = res;
+    });
+  });
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+  await waitFor(() => expect(screen.getByTestId("open-cA")).toBeInTheDocument());
+
+  // Start generating in chat A.
+  fireEvent.click(screen.getByTestId("open-cA"));
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "hi A" } });
+  fireEvent.click(screen.getByTestId("send"));
+  await waitFor(() => expect(screen.getByTestId("busy-cA")).toBeInTheDocument());
+
+  // Switch to chat B while A is still generating.
+  fireEvent.click(screen.getByTestId("open-cB"));
+  await waitFor(() => expect(screen.getByTestId("open-cB")).toBeInTheDocument());
+  // A keeps its in-progress marker (not cancelled); B's view doesn't show A's partial output.
+  expect(screen.getByTestId("busy-cA")).toBeInTheDocument();
+  expect(screen.queryByText(/partial from A/)).toBeNull();
+
+  // Complete A's stream; its marker clears.
+  act(() => release());
+  await waitFor(() => expect(screen.queryByTestId("busy-cA")).toBeNull());
 });
 
 
