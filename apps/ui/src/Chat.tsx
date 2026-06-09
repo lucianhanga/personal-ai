@@ -33,12 +33,13 @@ export function Chat({ token }: { token: string }): React.ReactElement {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [model, setModel] = useState<string>("");
   const [files, setFiles] = useState<DocumentInfo[]>([]);
-  const [useRag, setUseRag] = useState(false);
+  const [useRag, setUseRag] = useState(true);
   const [uploading, setUploading] = useState(false);
-  const [useMemory, setUseMemory] = useState(false);
-  const [useTools, setUseTools] = useState(false);
-  const [approveTools, setApproveTools] = useState(false);
+  const [useMemory, setUseMemory] = useState(true);
+  const [useTools, setUseTools] = useState(true);
+  const [approveTools, setApproveTools] = useState(true);
   const [incognito, setIncognito] = useState(false);
+  const [showSettings, setShowSettings] = useState(true);
   const [showMemory, setShowMemory] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [showLog, setShowLog] = useState(false);
@@ -327,75 +328,6 @@ export function Chat({ token }: { token: string }): React.ReactElement {
               .join(" · ")}
           </span>
         )}
-      </div>
-
-      <div
-        data-testid="documents"
-        style={{
-          display: "flex",
-          gap: "0.5rem",
-          alignItems: "center",
-          flexWrap: "wrap",
-          fontSize: "0.85rem",
-        }}
-      >
-        <label>
-          Documents:{" "}
-          <input
-            data-testid="file-input"
-            type="file"
-            accept=".txt,.md,.markdown,.pdf,.docx"
-            disabled={uploading}
-            onChange={(e) => void onUpload(e.target.files?.[0])}
-          />
-        </label>
-        {uploading && <span data-testid="upload-status">uploading…</span>}
-        {files.length > 0 && !useRag && (
-          <span data-testid="rag-hint" style={{ marginLeft: "auto", color: "#b06f00" }}>
-            Not using your documents — turn on to ground answers.
-          </span>
-        )}
-        <label style={{ marginLeft: files.length > 0 && !useRag ? "0.5rem" : "auto" }}>
-          <input
-            data-testid="rag-toggle"
-            type="checkbox"
-            checked={useRag}
-            onChange={(e) => setUseRag(e.target.checked)}
-          />{" "}
-          Use my documents
-        </label>
-        <label>
-          <input
-            data-testid="memory-toggle"
-            type="checkbox"
-            checked={useMemory}
-            onChange={(e) => setUseMemory(e.target.checked)}
-          />{" "}
-          Use my memory
-        </label>
-        <label>
-          <input
-            data-testid="tools-toggle"
-            type="checkbox"
-            checked={useTools}
-            onChange={(e) => setUseTools(e.target.checked)}
-          />{" "}
-          Use tools
-        </label>
-        {useTools && (
-          <label title="Allow high-risk tools (e.g. http_fetch) to run this session">
-            <input
-              data-testid="approve-tools-toggle"
-              type="checkbox"
-              checked={approveTools}
-              onChange={(e) => setApproveTools(e.target.checked)}
-            />{" "}
-            approve high-risk
-          </label>
-        )}
-        <button data-testid="tools-show" onClick={() => setShowTools((v) => !v)}>
-          {showTools ? "Hide tools" : "Tools"}
-        </button>
         {sidebarCollapsed && (
           <button
             data-testid="side-toggle"
@@ -408,7 +340,119 @@ export function Chat({ token }: { token: string }): React.ReactElement {
         )}
       </div>
 
-      {showTools && <Tools token={token} />}
+      <div
+        data-testid="settings-accordion"
+        style={{ border: "1px solid #ddd", borderRadius: 8, fontSize: "0.85rem" }}
+      >
+        <button
+          data-testid="settings-toggle"
+          onClick={() => setShowSettings((v) => !v)}
+          style={{
+            width: "100%",
+            textAlign: "left",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: "0.5rem 0.75rem",
+            fontWeight: 600,
+          }}
+        >
+          {showSettings ? "▾" : "▸"} Settings
+        </button>
+        {showSettings && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.5rem",
+              padding: "0 0.75rem 0.75rem",
+            }}
+          >
+            {/* Line 1: Documents */}
+            <div
+              data-testid="settings-documents"
+              style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}
+            >
+              <label>
+                Documents:{" "}
+                <input
+                  data-testid="file-input"
+                  type="file"
+                  accept=".txt,.md,.markdown,.pdf,.docx"
+                  disabled={uploading}
+                  onChange={(e) => void onUpload(e.target.files?.[0])}
+                />
+              </label>
+              {uploading && <span data-testid="upload-status">uploading…</span>}
+              {files.length > 0 && !useRag && (
+                <span data-testid="rag-hint" style={{ marginLeft: "auto", color: "#b06f00" }}>
+                  Not using your documents — turn on to ground answers.
+                </span>
+              )}
+              <label style={{ marginLeft: files.length > 0 && !useRag ? "0.5rem" : "auto" }}>
+                <input
+                  data-testid="rag-toggle"
+                  type="checkbox"
+                  checked={useRag}
+                  onChange={(e) => setUseRag(e.target.checked)}
+                />{" "}
+                Use my documents
+              </label>
+            </div>
+
+            {/* Line 2: Tools */}
+            <div
+              data-testid="settings-tools"
+              style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}
+            >
+              <button data-testid="tools-show" onClick={() => setShowTools((v) => !v)}>
+                {showTools ? "Hide tools" : "Tools"}
+              </button>
+              <label style={{ marginLeft: "auto" }}>
+                <input
+                  data-testid="tools-toggle"
+                  type="checkbox"
+                  checked={useTools}
+                  onChange={(e) => setUseTools(e.target.checked)}
+                />{" "}
+                Use tools
+              </label>
+              {useTools && (
+                <label title="Allow high-risk tools (e.g. http_fetch) to run this session">
+                  <input
+                    data-testid="approve-tools-toggle"
+                    type="checkbox"
+                    checked={approveTools}
+                    onChange={(e) => setApproveTools(e.target.checked)}
+                  />{" "}
+                  approve high-risk
+                </label>
+              )}
+            </div>
+            {showTools && <Tools token={token} />}
+
+            {/* Line 3: Memory */}
+            <div
+              data-testid="settings-memory"
+              style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}
+            >
+              <button data-testid="memory-show" onClick={() => setShowMemory((v) => !v)}>
+                {showMemory ? "Hide memory" : "Memory"}
+              </button>
+              <label style={{ marginLeft: "auto" }}>
+                <input
+                  data-testid="memory-toggle"
+                  type="checkbox"
+                  checked={useMemory}
+                  onChange={(e) => setUseMemory(e.target.checked)}
+                />{" "}
+                Use my memory
+              </label>
+            </div>
+            {showMemory && <Memory token={token} />}
+          </div>
+        )}
+      </div>
 
       {files.length > 0 && (
         <ul data-testid="file-list" style={{ margin: 0, paddingLeft: "1rem", fontSize: "0.8rem" }}>
@@ -516,9 +560,6 @@ export function Chat({ token }: { token: string }): React.ReactElement {
           }}
         >
           <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", flexWrap: "wrap" }}>
-            <button data-testid="memory-show" onClick={() => setShowMemory((v) => !v)}>
-              {showMemory ? "Hide memory" : "Memory"}
-            </button>
             <button data-testid="toollog-show" onClick={() => setShowLog((v) => !v)}>
               {showLog ? "Hide log" : "Log"}
             </button>
@@ -537,13 +578,12 @@ export function Chat({ token }: { token: string }): React.ReactElement {
 
           {usage && <ContextMeter usage={usage} />}
 
-          {showMemory && <Memory token={token} />}
           {showLog && <ToolLog token={token} />}
           {showAppLogs && <AppLogs token={token} />}
 
-          {!showMemory && !showLog && !showAppLogs && !usage && (
+          {!showLog && !showAppLogs && !usage && (
             <p data-testid="side-hint" style={{ color: "#888", fontSize: "0.8rem" }}>
-              Open a panel above to view memory, logs, or context usage.
+              Open a panel above to view logs or context usage.
             </p>
           )}
         </aside>
