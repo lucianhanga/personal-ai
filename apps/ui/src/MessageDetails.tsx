@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { ToolStep, TraceItem } from "./api";
 
@@ -32,7 +32,14 @@ export function MessageDetails({
   defaultOpen?: boolean;
 }): React.ReactElement | null {
   const [open, setOpen] = useState(defaultOpen);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const items = trace?.length ? trace : legacyTrace(steps, thinking);
+
+  // Keep the compact window following the latest reasoning/step while it streams.
+  useEffect(() => {
+    if (open && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+  }, [open, items]);
+
   if (items.length === 0) return null;
 
   const calls = items.filter((t) => t.kind === "tool_call").length;
@@ -56,11 +63,15 @@ export function MessageDetails({
       {open && (
         <div
           data-testid="details-body"
+          ref={bodyRef}
           style={{
             marginTop: "0.3rem",
             paddingLeft: "0.6rem",
             borderLeft: "2px solid rgba(127,127,127,0.3)",
             color: "#555",
+            // Compact running window (~5 lines); scroll inside to read the full reasoning.
+            maxHeight: "7.5em",
+            overflowY: "auto",
           }}
         >
           {items.map((t, k) =>
