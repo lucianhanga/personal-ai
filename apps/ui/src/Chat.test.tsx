@@ -249,6 +249,25 @@ test("renders tool steps when the agent uses tools", async () => {
 });
 
 
+test("collapses and expands the panel sidebar", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("side-panel")).toBeInTheDocument());
+  // Panel buttons live in the sidebar.
+  expect(screen.getByTestId("memory-show")).toBeInTheDocument();
+
+  // Collapse -> sidebar gone, chat takes full width.
+  fireEvent.click(screen.getByTestId("side-toggle"));
+  await waitFor(() => expect(screen.queryByTestId("side-panel")).not.toBeInTheDocument());
+
+  // A re-open control remains; clicking it restores the sidebar.
+  fireEvent.click(screen.getByTestId("side-toggle"));
+  await waitFor(() => expect(screen.getByTestId("side-panel")).toBeInTheDocument());
+});
+
+
 test("opens a past conversation and loads its messages", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);

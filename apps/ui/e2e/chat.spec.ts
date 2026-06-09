@@ -127,4 +127,10 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   // App logs panel opens and shows a log line.
   await page.getByTestId("applogs-show").click();
   await expect(page.getByTestId("applogs-panel")).toContainText("started");
+
+  // The panel sidebar collapses and re-expands.
+  await page.getByTestId("side-toggle").click();
+  await expect(page.getByTestId("side-panel")).toHaveCount(0);
+  await page.getByTestId("side-toggle").click();
+  await expect(page.getByTestId("side-panel")).toBeVisible();
 });
