@@ -47,6 +47,15 @@ def test_http_fetch_loopback_passes_egress_then_fetches() -> None:
     assert not result.ok and "fetch failed" in (result.error or "")  # reached the fetch, not egress
 
 
+def test_web_search_blocked_by_egress_when_off() -> None:
+    boot = bootstrap(config=CoreConfig())  # egress off by default
+    grants = [Permission(type=PermissionType.NETWORK, scope="html.duckduckgo.com")]
+    result = asyncio.run(
+        boot.gateway.invoke(ToolCall("web_search", "1.0.0", {"query": "x"}), grants=grants)
+    )
+    assert not result.ok and "egress blocked" in (result.error or "")
+
+
 def test_gateway_enforces_static_egress_for_a_tool() -> None:
     # A tool that declares a static egress host is blocked by the gateway when egress is off.
     boot = bootstrap(config=CoreConfig())

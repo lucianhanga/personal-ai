@@ -59,11 +59,15 @@ def register_adapters(registries: Registries, config: CoreConfig) -> None:
     from personalai_tool_builtin import (
         CALCULATOR_MANIFEST,
         HTTP_FETCH_MANIFEST,
+        WEB_SEARCH_MANIFEST,
         Calculator,
         HttpFetch,
+        WebSearch,
     )
 
     registries.tools.register("calculator", RegisteredTool(CALCULATOR_MANIFEST, Calculator()))
+    # web_search declares a static egress host, so the gateway enforces the egress allowlist for it.
+    registries.tools.register("web_search", RegisteredTool(WEB_SEARCH_MANIFEST, WebSearch()))
 
     def _fetch_egress_allowed(host: str) -> bool:
         try:
