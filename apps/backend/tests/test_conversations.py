@@ -116,9 +116,9 @@ def test_conversation_crud() -> None:
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_conversation_rename() -> None:
     with _client() as client:
-        cid = client.post("/api/v1/conversations", headers=AUTH, json={"title": "Old"}).json()["data"][
-            "id"
-        ]
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={"title": "Old"}).json()[
+            "data"
+        ]["id"]
         renamed = client.patch(
             f"/api/v1/conversations/{cid}", headers=AUTH, json={"title": "New name"}
         )
@@ -134,7 +134,9 @@ def test_conversation_rename() -> None:
             == 400
         )
         assert (
-            client.patch("/api/v1/conversations/nope", headers=AUTH, json={"title": "x"}).status_code
+            client.patch(
+                "/api/v1/conversations/nope", headers=AUTH, json={"title": "x"}
+            ).status_code
             == 404
         )
 
@@ -267,7 +269,8 @@ def test_memory_api_list_update_delete_clear() -> None:
         patched = client.patch(f"/api/v1/memory/{mid}", headers=AUTH, json={"text": "edited fact"})
         assert patched.json()["data"]["text"] == "edited fact"
         assert (
-            client.patch("/api/v1/memory/missing", headers=AUTH, json={"text": "x"}).status_code == 404
+            client.patch("/api/v1/memory/missing", headers=AUTH, json={"text": "x"}).status_code
+            == 404
         )
 
         assert client.delete(f"/api/v1/memory/{mid}", headers=AUTH).status_code == 200
@@ -348,9 +351,9 @@ def test_memory_extracted_after_chat() -> None:
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_incognito_conversation_skips_memory() -> None:
     with _mem_client() as client:
-        created = client.post("/api/v1/conversations", headers=AUTH, json={"incognito": True}).json()[
-            "data"
-        ]
+        created = client.post(
+            "/api/v1/conversations", headers=AUTH, json={"incognito": True}
+        ).json()["data"]
         assert created["incognito"] is True
         cid = created["id"]
         with client.stream(

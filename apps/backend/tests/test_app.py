@@ -81,7 +81,9 @@ def test_version(client: TestClient) -> None:
 
 def test_protected_route_requires_token(client: TestClient) -> None:
     assert client.get("/api/v1/status").status_code == 401
-    assert client.get("/api/v1/status", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert (
+        client.get("/api/v1/status", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    )
 
 
 def test_protected_route_with_valid_token_returns_structured_result(client: TestClient) -> None:
@@ -150,7 +152,9 @@ def test_models_requires_token() -> None:
 
 def test_providers_lists_registered() -> None:
     client = _app_with_provider("fake", FakeModelProvider(name="fake"))
-    data = client.get("/api/v1/providers", headers={"Authorization": f"Bearer {TOKEN}"}).json()["data"]
+    data = client.get("/api/v1/providers", headers={"Authorization": f"Bearer {TOKEN}"}).json()[
+        "data"
+    ]
     assert "ollama" in data["providers"]
     assert "fake" in data["providers"]
     assert data["default"] == "fake"
@@ -188,9 +192,9 @@ def test_openai_registered_and_egress_blocked_by_default() -> None:
     # An API key registers the remote provider; with egress off, using it fails closed.
     config = CoreConfig(auth_token=TOKEN, openai_api_key="sk-test")
     client = TestClient(create_app(bootstrap(config=config)))
-    providers = client.get("/api/v1/providers", headers={"Authorization": f"Bearer {TOKEN}"}).json()[
-        "data"
-    ]["providers"]
+    providers = client.get(
+        "/api/v1/providers", headers={"Authorization": f"Bearer {TOKEN}"}
+    ).json()["data"]["providers"]
     assert "openai" in providers
 
     with client.stream(

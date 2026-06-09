@@ -249,7 +249,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     def version() -> VersionResponse:
         return VersionResponse(name="personalai-backend", version=__version__)
 
-    @app.get("/api/v1/status", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    @app.get(
+        "/api/v1/status", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+    )
     def api_status() -> StructuredResult:
         config: CoreConfig = app.state.config
         return StructuredResult(
@@ -285,7 +287,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             },
         )
 
-    @app.get("/api/v1/models", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    @app.get(
+        "/api/v1/models", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+    )
     async def api_models(provider: str | None = None) -> StructuredResult:
         config: CoreConfig = app.state.config
         resolved = _resolve_provider(provider)
@@ -618,7 +622,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             )
         return storage
 
-    @app.post("/api/v1/files", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    @app.post(
+        "/api/v1/files", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+    )
     async def upload_file(file: UploadFile = File(...)) -> StructuredResult:
         config: CoreConfig = app.state.config
         storage = _require_storage()
@@ -654,7 +660,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             data={"id": doc.id, "name": doc.name, "mime": doc.mime, "chunk_count": doc.chunk_count},
         )
 
-    @app.get("/api/v1/files", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    @app.get(
+        "/api/v1/files", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+    )
     async def list_files() -> StructuredResult:
         storage = _require_storage()
         docs = [
@@ -762,7 +770,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         await storage.conversations.delete(conversation_id)
         return StructuredResult(ok=True, data={"id": conversation_id})
 
-    @app.get("/api/v1/memory", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    @app.get(
+        "/api/v1/memory", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+    )
     async def list_memory() -> StructuredResult:
         storage = _require_storage()
         memories = [
@@ -809,7 +819,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         await storage.memories.clear()
         return StructuredResult(ok=True, data={"cleared": True})
 
-    @app.get("/api/v1/tools", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    @app.get(
+        "/api/v1/tools", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+    )
     def list_tools() -> StructuredResult:
         registries: Registries = app.state.bootstrap.registries
         tools = []
@@ -831,7 +843,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return StructuredResult(ok=True, data={"tools": tools})
 
     @app.post(
-        "/api/v1/tools/invoke", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+        "/api/v1/tools/invoke",
+        response_model=StructuredResult,
+        dependencies=[Depends(_require_token)],
     )
     async def invoke_tool(req: ToolInvokeRequest) -> StructuredResult:
         gateway = app.state.bootstrap.gateway
@@ -873,7 +887,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         ]
         return StructuredResult(ok=True, data={"entries": list(reversed(entries))})
 
-    @app.get("/api/v1/logs", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    @app.get(
+        "/api/v1/logs", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+    )
     def app_logs(conversation_id: str | None = None) -> StructuredResult:
         logs = [
             r
