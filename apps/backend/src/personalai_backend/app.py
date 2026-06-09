@@ -17,7 +17,7 @@ import hmac
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Literal
@@ -392,10 +392,27 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             )
         ]
 
+    def _usage_frame(usage: Mapping[str, int], provider: ModelProvider) -> bytes | None:
+        """Build a `usage` SSE event (token counts + the context window) for the UI meter."""
+        if not usage:
+            return None
+        config: CoreConfig = app.state.config
+        prompt = usage.get("prompt_tokens")
+        completion = usage.get("completion_tokens")
+        total = (prompt or 0) + (completion or 0)
+        payload = {
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": total or None,
+            # The bound window only applies to the local Ollama provider.
+            "context_limit": config.ollama_num_ctx if provider.name == "ollama" else None,
+        }
+        return f"event: usage\ndata: {json.dumps(payload)}\n\n".encode()
+
     async def _agent_stream(
         req: ChatRequest, provider: ModelProvider, generation: GenerationRequest
-    ) -> AsyncIterator[tuple[bytes, str | None]]:
-        """Run the agent loop, yielding (SSE frame, final-answer-or-None) tuples."""
+    ) -> AsyncIterator[tuple[bytes, str | None, Mapping[str, int] | None]]:
+        """Run the agent loop, yielding (SSE frame, final-answer-or-None, usage-or-None) tuples."""
         registries: Registries = app.state.bootstrap.registries
         gateway = app.state.bootstrap.gateway
         tool_list = [registries.tools.get(name) for name in registries.tools.names()]
@@ -416,8 +433,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 yield (
                     f"data: {json.dumps({'delta': ev.answer or '', 'done': False})}\n\n".encode(),
                     ev.answer or "",
+                    ev.usage,
                 )
-                yield (f"data: {json.dumps(done)}\n\n".encode(), None)
+                yield (f"data: {json.dumps(done)}\n\n".encode(), None, None)
             else:
                 payload = {
                     "phase": "call" if ev.type == "tool_call" else "result",
@@ -427,7 +445,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     "output": ev.output,
                     "error": ev.error,
                 }
-                yield (f"event: tool\ndata: {json.dumps(payload)}\n\n".encode(), None)
+                yield (f"event: tool\ndata: {json.dumps(payload)}\n\n".encode(), None, None)
 
     @app.post("/api/chat", dependencies=[Depends(_require_token)])
     async def chat(req: ChatRequest) -> StreamingResponse:
@@ -466,15 +484,20 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             if citations:
                 yield f"event: citations\ndata: {json.dumps(citations)}\n\n".encode()
             answer = ""
+            usage: Mapping[str, int] = {}
             try:
                 if req.use_tools:
-                    async for frame, text in _agent_stream(req, provider, generation):
+                    async for frame, text, used in _agent_stream(req, provider, generation):
                         if text is not None:
                             answer = text
+                        if used:
+                            usage = used
                         yield frame
                 else:
                     async for chunk in provider.stream(generation):
                         answer += chunk.delta
+                        if chunk.usage:
+                            usage = dict(chunk.usage)
                         payload = {
                             "delta": chunk.delta,
                             "thinking": chunk.thinking,
@@ -488,6 +511,10 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 )
                 yield f"event: error\ndata: {error.model_dump_json()}\n\n".encode()
                 return
+            # Report token usage / context fill for this turn (UI meter).
+            usage_frame = _usage_frame(usage, provider)
+            if usage_frame is not None:
+                yield usage_frame
             # Persist the assistant turn after a successful stream.
             if persist_id is not None and storage is not None and answer:
                 await storage.conversations.add_message(

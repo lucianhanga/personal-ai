@@ -28,7 +28,8 @@ const CHAT_SSE =
   'event: tool\ndata: {"phase":"result","tool":"web_search","ok":true,"output":{"results":[]}}\n\n' +
   'data: {"delta":"Hello","done":false}\n\n' +
   'data: {"delta":" world","done":false}\n\n' +
-  'data: {"delta":"","done":true,"finish_reason":"stop"}\n\n';
+  'data: {"delta":"","done":true,"finish_reason":"stop"}\n\n' +
+  'event: usage\ndata: {"prompt_tokens":4096,"completion_tokens":12,"total_tokens":4108,"context_limit":32768}\n\n';
 
 const FILES_BODY = JSON.stringify({ ok: true, data: { files: [] } });
 
@@ -108,6 +109,7 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   await expect(page.getByTestId("msg-assistant")).toContainText("Hello world");
   await expect(page.getByTestId("citations")).toContainText("geo.txt");
   await expect(page.getByTestId("tool-steps")).toContainText("web_search");
+  await expect(page.getByTestId("context-meter-label")).toContainText("4,096 / 32,768");
 
   // Memory panel opens and shows the empty state.
   await page.getByTestId("memory-show").click();

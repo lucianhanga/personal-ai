@@ -38,6 +38,7 @@ class AgentEvent:
     output: Mapping[str, Any] | None = None
     error: str | None = None
     answer: str | None = None
+    usage: Mapping[str, int] | None = None
 
 
 async def run_agent(
@@ -64,13 +65,15 @@ async def run_agent(
     versions = {rt.manifest.name: rt.manifest.version for rt in tools}
 
     text = ""
+    usage: Mapping[str, int] = {}
     for _ in range(max_iterations):
         result = await provider.generate(
             GenerationRequest(messages=convo, model=model, tools=specs or None)
         )
         text = result.text
+        usage = result.usage
         if not result.tool_calls:
-            yield AgentEvent(type="final", answer=text)
+            yield AgentEvent(type="final", answer=text, usage=dict(usage))
             return
 
         # Echo the assistant's (possibly empty) turn, then each tool result as a TOOL-role message
@@ -101,4 +104,5 @@ async def run_agent(
     yield AgentEvent(
         type="final",
         answer=text or "I couldn't complete that within the tool-step limit.",
+        usage=dict(usage),
     )

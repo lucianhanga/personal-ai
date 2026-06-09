@@ -167,11 +167,11 @@ class OpenAICompatProvider:
 
     async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
         self._check_egress()
+        body = _chat_payload(request, stream=True)
+        body["stream_options"] = {"include_usage": True}  # ask for token usage in the final chunk
+        usage: dict[str, int] = {}
         async with self._client.stream(
-            "POST",
-            f"{self._base}/chat/completions",
-            headers=self._headers(),
-            json=_chat_payload(request, stream=True),
+            "POST", f"{self._base}/chat/completions", headers=self._headers(), json=body
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
@@ -179,9 +179,15 @@ class OpenAICompatProvider:
                     continue
                 payload = line[len("data:") :].strip()
                 if payload == "[DONE]":
-                    yield GenerationChunk(done=True)
+                    yield GenerationChunk(done=True, usage=usage)
                     break
                 data = json.loads(payload)
+                raw = data.get("usage") or {}
+                usage = {
+                    k: raw[k]
+                    for k in ("prompt_tokens", "completion_tokens")
+                    if isinstance(raw.get(k), int)
+                } or usage
                 choice = (data.get("choices") or [{}])[0]
                 delta = choice.get("delta") or {}
                 yield GenerationChunk(

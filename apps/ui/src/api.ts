@@ -103,6 +103,13 @@ export interface LogEntry {
   message: string;
 }
 
+export interface UsageInfo {
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  total_tokens: number | null;
+  context_limit: number | null;
+}
+
 function authHeaders(token: string): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -341,6 +348,7 @@ export async function streamChat(
   onDelta: (delta: string) => void,
   onCitations?: (citations: Citation[]) => void,
   onToolStep?: (step: ToolStep) => void,
+  onUsage?: (usage: UsageInfo) => void,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
@@ -379,6 +387,10 @@ export async function streamChat(
       }
       if (event === "tool") {
         onToolStep?.(JSON.parse(data) as ToolStep);
+        continue;
+      }
+      if (event === "usage") {
+        onUsage?.(JSON.parse(data) as UsageInfo);
         continue;
       }
       const payload = JSON.parse(data) as { delta?: string };
