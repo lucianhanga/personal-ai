@@ -249,6 +249,29 @@ test("renders tool steps when the agent uses tools", async () => {
 });
 
 
+test("toggles default on and the settings accordion collapses", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("settings-documents")).toBeInTheDocument());
+
+  expect(screen.getByTestId("rag-toggle")).toBeChecked();
+  expect(screen.getByTestId("memory-toggle")).toBeChecked();
+  expect(screen.getByTestId("tools-toggle")).toBeChecked();
+  expect(screen.getByTestId("approve-tools-toggle")).toBeChecked();
+  // Three grouped lines.
+  expect(screen.getByTestId("settings-tools")).toBeInTheDocument();
+  expect(screen.getByTestId("settings-memory")).toBeInTheDocument();
+
+  // Accordion collapses and re-expands.
+  fireEvent.click(screen.getByTestId("settings-toggle"));
+  await waitFor(() => expect(screen.queryByTestId("settings-documents")).toBeNull());
+  fireEvent.click(screen.getByTestId("settings-toggle"));
+  await waitFor(() => expect(screen.getByTestId("settings-documents")).toBeInTheDocument());
+});
+
+
 test("collapses and expands the panel sidebar", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
