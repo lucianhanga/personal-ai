@@ -12,19 +12,15 @@ namespaced ``<server>.<tool>`` to avoid collisions.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping, Sequence
-from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from personalai_contracts.ports import ToolCall, ToolResult
 from personalai_contracts.schemas.tools import Provenance, RiskLevel, ToolManifest
 
 MCP_TOOL_VERSION = "mcp-1"
-
-# An MCP client session (mcp.ClientSession, or a duck-typed fake in tests). Typed Any because the
-# SDK's call_tool signature is broader than the slice we use.
-Session = Any
 
 
 @dataclass(frozen=True)
@@ -68,47 +64,87 @@ def _result_to_tool_result(raw: Any) -> ToolResult:
     return ToolResult(ok=True, output=output)
 
 
-class McpToolHandler:
-    """A ToolHandler that proxies a single MCP tool call to the server session."""
+class _Caller(Protocol):
+    """Something that can run a named MCP tool call (the McpClient, or a fake in tests)."""
 
-    def __init__(self, server_name: str, mcp_name: str, session: Session) -> None:
+    async def call(self, name: str, args: Mapping[str, Any]) -> Any: ...
+
+
+class McpToolHandler:
+    """A ToolHandler that proxies a single MCP tool call to the owning client."""
+
+    def __init__(self, server_name: str, mcp_name: str, caller: _Caller) -> None:
         self.name = f"{server_name}.{mcp_name}"
         self._mcp_name = mcp_name
-        self._session = session
+        self._caller = caller
 
     async def invoke(self, call: ToolCall) -> ToolResult:
         try:
-            raw = await self._session.call_tool(self._mcp_name, dict(call.args))
+            raw = await self._caller.call(self._mcp_name, dict(call.args))
         except Exception as exc:  # noqa: BLE001 - fail-closed: never raise out of a tool handler
             return ToolResult(ok=False, error=f"MCP call failed: {exc}")
         return _result_to_tool_result(raw)
 
 
 def build_tools(
-    server_name: str, session: Session, tools: Sequence[Any]
+    server_name: str, caller: _Caller, tools: Sequence[Any]
 ) -> list[tuple[ToolManifest, McpToolHandler]]:
     """Wrap each MCP tool as a (manifest, handler) pair for registration behind the gateway."""
     return [
-        (manifest_from_mcp_tool(server_name, t), McpToolHandler(server_name, t.name, session))
+        (manifest_from_mcp_tool(server_name, t), McpToolHandler(server_name, t.name, caller))
         for t in tools
     ]
 
 
 class McpClient:
-    """Manages a long-lived MCP stdio session and exposes its tools as gateway tools."""
+    """A long-lived MCP stdio connection.
+
+    The ``mcp`` SDK ties a stdio session to the task that opened it (anyio cancel scopes), so the
+    session is opened, used for every call, and closed entirely inside a single **owner task**.
+    ``connect``/``call``/``aclose`` hand work to that task over a queue, so different request tasks
+    (chat, the management API) can drive one connection without cross-task cancel-scope errors.
+    """
 
     def __init__(self, config: McpServerConfig) -> None:
         self._config = config
-        self._stack = AsyncExitStack()
-        self._session: Session | None = None
+        self._task: asyncio.Task[None] | None = None
+        self._requests: asyncio.Queue[tuple[str, Mapping[str, Any], asyncio.Future[Any]]] | None = (
+            None
+        )
+        self._stop: asyncio.Event | None = None
 
     async def connect(self) -> list[tuple[ToolManifest, McpToolHandler]]:  # pragma: no cover
-        """Spawn the stdio server, initialize the session, and return its wrapped tools.
+        """Start the owner task, initialize the session, and return the wrapped tools.
 
-        Requires a live MCP server subprocess, so it is exercised by the opt-in integration test
-        (M7-5), not unit CI; the pure wrapping logic above is fully unit-tested.
+        Requires a live MCP subprocess, so it is exercised by the opt-in integration test, not unit
+        CI; the pure wrapping logic + handler are fully unit-tested.
         """
-        # Imported here so the module (and its pure helpers) load without a live MCP runtime.
+        loop = asyncio.get_running_loop()
+        self._requests = asyncio.Queue()
+        self._stop = asyncio.Event()
+        ready: asyncio.Future[Sequence[Any]] = loop.create_future()
+        self._task = asyncio.create_task(self._run(ready))
+        tools = await ready  # raises if the server failed to launch/initialize
+        return build_tools(self._config.name, self, tools)
+
+    async def call(self, name: str, args: Mapping[str, Any]) -> Any:  # pragma: no cover
+        """Run a tool call on the owner task and return the raw MCP result."""
+        if self._requests is None:
+            raise RuntimeError("MCP client is not connected")
+        fut: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        await self._requests.put((name, dict(args), fut))
+        return await fut
+
+    async def aclose(self) -> None:  # pragma: no cover - stops the owner task / live session
+        if self._task is None:
+            return
+        if self._stop is not None:
+            self._stop.set()
+        await self._task
+        self._task = None
+
+    async def _run(self, ready: asyncio.Future[Sequence[Any]]) -> None:  # pragma: no cover
+        """Owner task: open the session, serve calls until stopped, then close it (same task)."""
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
 
@@ -117,13 +153,28 @@ class McpClient:
             args=list(self._config.args),
             env=dict(self._config.env) if self._config.env is not None else None,
         )
-        read, write = await self._stack.enter_async_context(stdio_client(params))
-        session = await self._stack.enter_async_context(ClientSession(read, write))
-        await session.initialize()
-        self._session = session
-        tools = (await session.list_tools()).tools
-        return build_tools(self._config.name, session, tools)
-
-    async def aclose(self) -> None:  # pragma: no cover - closes the live stdio session (see M7-5)
-        await self._stack.aclose()
-        self._session = None
+        assert self._requests is not None and self._stop is not None
+        try:
+            async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+                await session.initialize()
+                tools = (await session.list_tools()).tools
+                ready.set_result(tools)
+                while not self._stop.is_set():
+                    get = asyncio.ensure_future(self._requests.get())
+                    stop = asyncio.ensure_future(self._stop.wait())
+                    done, pending = await asyncio.wait(
+                        {get, stop}, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    for p in pending:
+                        p.cancel()
+                    if get not in done:
+                        continue
+                    name, args, fut = get.result()
+                    try:
+                        fut.set_result(await session.call_tool(name, dict(args)))
+                    except Exception as exc:  # noqa: BLE001 - report back to the caller
+                        if not fut.done():
+                            fut.set_exception(exc)
+        except Exception as exc:  # noqa: BLE001 - surface launch/init failure to connect()
+            if not ready.done():
+                ready.set_exception(exc)

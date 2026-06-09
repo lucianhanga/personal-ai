@@ -26,6 +26,10 @@ class Registry[T]:
         self._items[name] = item
         return item
 
+    def unregister(self, name: str) -> None:
+        """Remove ``name`` if present (no-op otherwise). Used for live teardown, e.g. MCP tools."""
+        self._items.pop(name, None)
+
     def get(self, name: str) -> T:
         """Return the adapter registered as ``name`` (fail-closed if missing)."""
         try:

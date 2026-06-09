@@ -1,49 +1,88 @@
-"""GET /api/v1/mcp (no DB / no MCP servers configured)."""
+"""MCP management API: list / upsert (live) / delete (no subprocess; fake client factory)."""
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from personalai_backend import create_app
 from personalai_backend.composition import bootstrap
+from personalai_backend.mcp_manager import McpManager
+from personalai_contracts.ports import ToolCall, ToolResult
+from personalai_contracts.schemas.tools import Provenance, RiskLevel, ToolManifest
 from personalai_core import CoreConfig
 
 TOKEN = "test-secret-token"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 
-def _client() -> TestClient:
-    return TestClient(create_app(bootstrap(config=CoreConfig(auth_token=TOKEN))))
+class _FakeHandler:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    async def invoke(self, call: ToolCall) -> ToolResult:
+        return ToolResult(ok=True)
 
 
-def test_mcp_list_empty_without_config() -> None:
-    with _client() as client:  # lifespan runs connect_mcp_servers (no config -> none)
+class _FakeClient:
+    def __init__(self, server: object) -> None:
+        self.server = server
+
+    async def connect(self) -> list[tuple[ToolManifest, _FakeHandler]]:
+        name = f"{self.server.name}.do"  # type: ignore[attr-defined]
+        m = ToolManifest(
+            name=name, version="mcp-1", provenance=Provenance(maintainer="x"), risk=RiskLevel.HIGH
+        )
+        return [(m, _FakeHandler(name))]
+
+    async def aclose(self) -> None:
+        pass
+
+
+def _client(tmp_path: Path) -> TestClient:
+    cfg = tmp_path / "mcp.json"
+    boot = bootstrap(config=CoreConfig(auth_token=TOKEN, mcp_config_path=str(cfg)))
+    app = create_app(boot)
+    # Use the fake client factory so no real subprocess is spawned during the lifespan/upsert.
+    app.state.mcp_manager = McpManager(boot.registries, cfg, client_factory=_FakeClient)
+    return TestClient(app)
+
+
+def test_list_empty_without_config(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
         body = client.get("/api/v1/mcp", headers=AUTH).json()
-    assert body["ok"] is True
-    assert body["data"]["servers"] == []
+    assert body["ok"] is True and body["data"]["servers"] == []
 
 
-def test_mcp_list_requires_token() -> None:
-    with _client() as client:
+def test_list_requires_token(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
         assert client.get("/api/v1/mcp").status_code == 401
 
 
-def test_connected_mcp_servers_listed_and_closed_on_shutdown(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """A connected server appears in /api/v1/mcp and is closed when the app shuts down."""
-    from personalai_backend import app as app_module
+def test_upsert_connects_and_lists(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        r = client.put(
+            "/api/v1/mcp/servers/pw",
+            headers=AUTH,
+            json={"command": "npx", "args": ["x"], "env": {"K": "v"}, "enabled": True},
+        )
+        server = r.json()["data"]["server"]
+        assert server["connected"] and server["tools"] == ["pw.do"] and server["env"] == {"K": "v"}
+        listed = client.get("/api/v1/mcp", headers=AUTH).json()["data"]["servers"]
+        assert [s["name"] for s in listed] == ["pw"]
 
-    closed = {"v": False}
 
-    class _FakeClient:
-        async def aclose(self) -> None:
-            closed["v"] = True
+def test_upsert_requires_command(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        bad = client.put("/api/v1/mcp/servers/x", headers=AUTH, json={"command": " "})
+        assert bad.status_code == 400
 
-    async def _fake_connect(config, registries):  # type: ignore[no-untyped-def]
-        status = [{"name": "pw", "connected": True, "tools": ["pw.go"], "error": None}]
-        return [_FakeClient()], status
 
-    monkeypatch.setattr(app_module, "connect_mcp_servers", _fake_connect)
-    with _client() as client:
-        servers = client.get("/api/v1/mcp", headers=AUTH).json()["data"]["servers"]
-        assert servers == [{"name": "pw", "connected": True, "tools": ["pw.go"], "error": None}]
-    assert closed["v"] is True  # aclose called on shutdown
+def test_delete_removes(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        client.put("/api/v1/mcp/servers/pw", headers=AUTH, json={"command": "npx"})
+        deleted = client.delete("/api/v1/mcp/servers/pw", headers=AUTH).json()["data"]["deleted"]
+        assert deleted == "pw"
+        assert client.get("/api/v1/mcp", headers=AUTH).json()["data"]["servers"] == []
+        assert client.delete("/api/v1/mcp/servers/pw", headers=AUTH).status_code == 404

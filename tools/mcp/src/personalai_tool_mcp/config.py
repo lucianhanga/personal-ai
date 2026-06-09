@@ -16,8 +16,24 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from personalai_tool_mcp.client import McpServerConfig
+
+
+def read_servers(path: Path) -> dict[str, dict[str, Any]]:
+    """Return the full ``mcpServers`` map (every entry, including disabled), ``{}`` if missing."""
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    servers = data.get("mcpServers") or data.get("servers") or {}
+    return {name: dict(entry) for name, entry in servers.items() if isinstance(entry, dict)}
+
+
+def write_servers(path: Path, servers: dict[str, dict[str, Any]]) -> None:
+    """Persist the ``mcpServers`` map to ``path`` (creating parent dirs), pretty-printed."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"mcpServers": servers}, indent=2) + "\n", encoding="utf-8")
 
 
 def load_server_configs(path: Path) -> list[McpServerConfig]:

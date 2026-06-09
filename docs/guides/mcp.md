@@ -6,10 +6,22 @@ them — all through the same **gateway** (permissions, egress allowlist, schema
 approval, audit) as built‑in tools. Third‑party MCP servers are treated as **untrusted**: their
 tools default to **HIGH risk**, so the agent needs your approval to run them.
 
-## Configure a server
+## Configure servers in the UI (no restart)
 
-Create an `mcp.json` using the standard `mcpServers` map (the same shape Claude Desktop uses) and
-point PersonalAI at it:
+The simplest way: open **Settings → MCP** in the app and use **+ Add** to enter a server's
+name / command / args / env, then **Save**. PersonalAI connects it immediately (no backend
+restart), registers its tools behind the gateway, and shows status (connected / tools / errors).
+**Connect/Disconnect**, **Edit**, and **✕** (remove) act live. Changes are saved to the same
+`mcp.json` file (see below), so the UI and the file stay in sync.
+
+> Adding a server means specifying a **program to run on your machine**, so the UI asks you to
+> confirm before connecting. The API is bearer-token-gated and MCP tools stay HIGH-risk
+> (approve-high-risk in chat) — see Security.
+
+## Configure a server (file)
+
+You can also edit the config file directly. PersonalAI uses the standard `mcpServers` map (the same
+shape Claude Desktop uses), at `PERSONALAI_MCP_CONFIG` or, if unset, `~/.personalai/mcp.json`:
 
 ```json
 {
@@ -57,6 +69,27 @@ Two useful servers — browser automation and document→Markdown conversion:
   `ollama pull qwen2.5vl:7b` (~6 GB; `qwen2.5vl:32b` for higher quality — both fit alongside the
   chat model on 48 GB). Configure the endpoint/model via `MARKITDOWN_OLLAMA_BASE_URL` /
   `MARKITDOWN_OLLAMA_MODEL` (defaults: `http://localhost:11434/v1`, `qwen2.5vl:7b`).
+
+### Tavily (web search/extract/crawl for agents)
+
+[Tavily](https://github.com/tavily-ai/tavily-mcp) exposes `search`, `extract`, `map`, and `crawl` —
+built for agent discovery workflows (search → pick URLs → extract → optionally crawl/map → answer
+with sources). Add it like:
+
+```json
+"tavily": {
+  "command": "npx",
+  "args": ["-y", "tavily-mcp@latest"],
+  "env": {
+    "TAVILY_API_KEY": "<your-tavily-api-key>",
+    "DEFAULT_PARAMETERS": "{\"search_depth\":\"advanced\",\"max_results\":8,\"include_raw_content\":false,\"include_images\":false}"
+  }
+}
+```
+
+> **Not private/local.** The MCP server runs locally but Tavily performs **outbound API calls** to
+> Tavily's service (and needs a `TAVILY_API_KEY`). For web *discovery* that's expected; if you need
+> privacy over discovery quality, a self-hosted **SearXNG** MCP is the alternative.
 
 ## Use it
 

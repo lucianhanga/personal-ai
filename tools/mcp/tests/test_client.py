@@ -1,8 +1,9 @@
-"""MCP adapter: tool->manifest mapping + handler proxying (fake session, no subprocess)."""
+"""MCP adapter: tool->manifest mapping + handler proxying (fake caller, no subprocess)."""
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -37,13 +38,15 @@ class _FakeResult:
     structuredContent: dict[str, Any] | None = None
 
 
-class _FakeSession:
+class _FakeCaller:
+    """Stands in for McpClient: records calls, returns/raises a scripted result."""
+
     def __init__(self, result: Any) -> None:
         self._result = result
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
-        self.calls.append((name, arguments))
+    async def call(self, name: str, args: Mapping[str, Any]) -> Any:
+        self.calls.append((name, dict(args)))
         if isinstance(self._result, Exception):
             raise self._result
         return self._result
@@ -62,18 +65,18 @@ def test_manifest_namespaces_and_marks_untrusted() -> None:
 
 
 def test_handler_proxies_call_and_maps_result() -> None:
-    session = _FakeSession(_FakeResult(content=[_Block("text", "ok!")], structuredContent={"n": 1}))
-    handler = McpToolHandler("srv", "do", session)
+    caller = _FakeCaller(_FakeResult(content=[_Block("text", "ok!")], structuredContent={"n": 1}))
+    handler = McpToolHandler("srv", "do", caller)
     assert handler.name == "srv.do"
     result = asyncio.run(handler.invoke(ToolCall("srv.do", "mcp-1", {"x": 2})))
     assert result.ok
     assert result.output == {"content": "ok!", "structured": {"n": 1}}
-    assert session.calls == [("do", {"x": 2})]  # MCP gets the un-namespaced name
+    assert caller.calls == [("do", {"x": 2})]  # MCP gets the un-namespaced name
 
 
 def test_handler_success_without_structured_content() -> None:
-    session = _FakeSession(_FakeResult(content=[_Block("text", "plain")]))
-    result = asyncio.run(McpToolHandler("s", "t", session).invoke(ToolCall("s.t", "mcp-1", {})))
+    caller = _FakeCaller(_FakeResult(content=[_Block("text", "plain")]))
+    result = asyncio.run(McpToolHandler("s", "t", caller).invoke(ToolCall("s.t", "mcp-1", {})))
     assert result.ok and result.output == {"content": "plain"}  # no "structured" key
 
 
@@ -83,20 +86,20 @@ def test_client_constructs_from_config() -> None:
 
 
 def test_handler_maps_error_result_fail_closed() -> None:
-    session = _FakeSession(_FakeResult(content=[_Block("text", "boom")], isError=True))
-    result = asyncio.run(McpToolHandler("s", "t", session).invoke(ToolCall("s.t", "mcp-1", {})))
+    caller = _FakeCaller(_FakeResult(content=[_Block("text", "boom")], isError=True))
+    result = asyncio.run(McpToolHandler("s", "t", caller).invoke(ToolCall("s.t", "mcp-1", {})))
     assert not result.ok and result.error == "boom"
 
 
 def test_handler_catches_exceptions() -> None:
-    session = _FakeSession(RuntimeError("transport down"))
-    result = asyncio.run(McpToolHandler("s", "t", session).invoke(ToolCall("s.t", "mcp-1", {})))
+    caller = _FakeCaller(RuntimeError("transport down"))
+    result = asyncio.run(McpToolHandler("s", "t", caller).invoke(ToolCall("s.t", "mcp-1", {})))
     assert not result.ok and "MCP call failed" in (result.error or "")
 
 
 def test_build_tools_wraps_each() -> None:
-    session = _FakeSession(_FakeResult(content=[]))
+    caller = _FakeCaller(_FakeResult(content=[]))
     tools = [_FakeTool(name="a"), _FakeTool(name="b")]
-    built = build_tools("srv", session, tools)
+    built = build_tools("srv", caller, tools)
     assert [m.name for m, _ in built] == ["srv.a", "srv.b"]
     assert all(isinstance(h, McpToolHandler) for _, h in built)
