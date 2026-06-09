@@ -192,6 +192,7 @@ test("shows conversations and lazily creates one on first send", async () => {
       expect.any(Function),
       expect.any(Function),
       expect.any(Function),
+      expect.any(Function),
     ),
   );
 });
@@ -238,14 +239,14 @@ test("renders tool steps when the agent uses tools", async () => {
       "qwen3.6:35b-a3b",
     ),
   );
-  fireEvent.click(screen.getByTestId("tools-toggle"));
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "search rust" } });
   fireEvent.click(screen.getByTestId("send"));
 
-  await waitFor(() => expect(screen.getByTestId("tool-steps")).toHaveTextContent("web_search"));
   await waitFor(() =>
     expect(screen.getByTestId("msg-assistant")).toHaveTextContent("Here's what I found."),
   );
+  // Tool calls live in a "Details" section, auto-opened while the latest answer streams.
+  await waitFor(() => expect(screen.getByTestId("details-body")).toHaveTextContent("web_search"));
 });
 
 

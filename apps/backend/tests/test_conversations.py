@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 import pytest
@@ -13,7 +13,14 @@ from fastapi.testclient import TestClient
 
 from personalai_backend import create_app
 from personalai_backend.composition import bootstrap
-from personalai_contracts.ports import EmbeddingResult, GenerationRequest, GenerationResult
+from personalai_contracts.ports import (
+    EmbeddingResult,
+    GenerationChunk,
+    GenerationRequest,
+    GenerationResult,
+    Role,
+    ToolCallRequest,
+)
 from personalai_contracts.testing import FakeModelProvider
 from personalai_core import CoreConfig
 from personalai_storage_postgres import VECTOR_DIM, apply_migrations, create_pool
@@ -408,3 +415,72 @@ def test_stm_empty_summary_adds_no_system_message() -> None:
         ) as resp:
             assert resp.status_code == 200
             "".join(resp.iter_text())
+
+
+class _ThinkingFake(FakeModelProvider):
+    """Streams a reasoning chunk then the answer (to exercise thinking-meta persistence)."""
+
+    async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+        yield GenerationChunk(thinking="pondering the question", delta="")
+        yield GenerationChunk(delta="the answer")
+        yield GenerationChunk(done=True, finish_reason="stop")
+
+
+class _ToolFake(FakeModelProvider):
+    """Calls the calculator once, then answers (to exercise tool-step meta persistence)."""
+
+    def __init__(self) -> None:
+        super().__init__(name="toolfake")
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        if any(m.role == Role.TOOL for m in request.messages):
+            return GenerationResult(text="It is 4.", model=request.model)
+        return GenerationResult(
+            text="",
+            model=request.model,
+            tool_calls=[ToolCallRequest(name="calculator", arguments={"expression": "2+2"})],
+        )
+
+
+def _client_with(name: str, provider: FakeModelProvider) -> TestClient:
+    config = CoreConfig(auth_token=TOKEN, model_provider=name, database_url=DB_URL)
+    boot = bootstrap(config=config)
+    boot.registries.model_providers.register(name, provider, overwrite=True)
+    return TestClient(create_app(boot))
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_assistant_message_persists_thinking_meta() -> None:
+    with _client_with("thinkfake", _ThinkingFake(name="thinkfake")) as client:
+        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/chat",
+            headers=AUTH,
+            json={"messages": [{"role": "user", "content": "why?"}], "conversation_id": cid},
+        ) as resp:
+            "".join(resp.iter_text())
+        msgs = client.get(f"/api/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        assistant = next(m for m in msgs if m["role"] == "assistant")
+        assert assistant["meta"]["thinking"] == "pondering the question"
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_assistant_message_persists_tool_steps_meta() -> None:
+    with _client_with("toolfake", _ToolFake()) as client:
+        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/chat",
+            headers=AUTH,
+            json={
+                "messages": [{"role": "user", "content": "2+2?"}],
+                "conversation_id": cid,
+                "use_tools": True,
+            },
+        ) as resp:
+            "".join(resp.iter_text())
+        msgs = client.get(f"/api/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        assistant = next(m for m in msgs if m["role"] == "assistant")
+        steps = assistant["meta"]["tool_steps"]
+        assert any(s["tool"] == "calculator" for s in steps)

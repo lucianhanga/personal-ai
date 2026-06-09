@@ -18,9 +18,16 @@ export interface ModelInfo {
   capabilities: ModelCapabilities;
 }
 
+export interface MessageMeta {
+  tool_steps?: ToolStep[];
+  thinking?: string;
+}
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
+  // Persisted per-assistant-message detail (tool calls + reasoning), shown collapsed in the UI.
+  meta?: MessageMeta | null;
 }
 
 export interface DocumentInfo {
@@ -359,6 +366,7 @@ export async function streamChat(
   onCitations?: (citations: Citation[]) => void,
   onToolStep?: (step: ToolStep) => void,
   onUsage?: (usage: UsageInfo) => void,
+  onThinking?: (delta: string) => void,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
@@ -403,7 +411,8 @@ export async function streamChat(
         onUsage?.(JSON.parse(data) as UsageInfo);
         continue;
       }
-      const payload = JSON.parse(data) as { delta?: string };
+      const payload = JSON.parse(data) as { delta?: string; thinking?: string | null };
+      if (payload.thinking) onThinking?.(payload.thinking);
       if (payload.delta) onDelta(payload.delta);
     }
   }
