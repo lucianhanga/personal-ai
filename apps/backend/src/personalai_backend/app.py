@@ -32,6 +32,7 @@ from personalai_backend.composition import Bootstrap, bootstrap
 from personalai_backend.ingestion import chunk_ids, ingest_file
 from personalai_backend.logbuffer import LOG_BUFFER
 from personalai_backend.logbuffer import install as install_log_buffer
+from personalai_backend.mcp_startup import connect_mcp_servers
 from personalai_contracts.ports import (
     ChatMessage,
     GenerationRequest,
@@ -205,9 +206,15 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         except Exception as exc:  # noqa: BLE001 - storage is optional; degrade gracefully
             logger.warning("storage unavailable (file/RAG features disabled): %s", exc)
             app.state.storage = None
+        # Connect configured MCP servers and register their tools behind the gateway (best-effort).
+        app.state.mcp_clients, app.state.mcp_status = await connect_mcp_servers(
+            boot.config, boot.registries
+        )
         try:
             yield
         finally:
+            for client in app.state.mcp_clients:
+                await client.aclose()
             storage = app.state.storage
             if storage is not None:
                 await storage.pool.close()
@@ -229,6 +236,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     app.state.bootstrap = boot
     app.state.config = boot.config
     app.state.storage = None  # set on startup if a database is reachable
+    app.state.mcp_clients = []  # connected MCP servers (set on startup)
+    app.state.mcp_status = []  # per-server connect status for /api/v1/mcp
 
     # CORS restricted to the configured (loopback) origins: enables the browser SPA while still
     # acting as an origin allowlist. The bearer token remains the real auth control; credentials
@@ -897,5 +906,10 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             if conversation_id is None or r.get("conversation") == conversation_id
         ]
         return StructuredResult(ok=True, data={"logs": list(reversed(logs))})
+
+    @app.get("/api/v1/mcp", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    def list_mcp() -> StructuredResult:
+        # Configured MCP servers + connect status + the tools each exposed (behind the gateway).
+        return StructuredResult(ok=True, data={"servers": app.state.mcp_status})
 
     return app
