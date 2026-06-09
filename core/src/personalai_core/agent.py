@@ -39,6 +39,7 @@ class AgentEvent:
     error: str | None = None
     answer: str | None = None
     usage: Mapping[str, int] | None = None
+    thinking: str | None = None
 
 
 async def run_agent(
@@ -51,6 +52,7 @@ async def run_agent(
     grants: Sequence[Permission] = (),
     approved: bool = False,
     max_iterations: int = 4,
+    think: bool | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Drive the model<->gateway tool-calling loop, yielding events as they happen."""
     convo = list(messages)
@@ -66,14 +68,19 @@ async def run_agent(
 
     text = ""
     usage: Mapping[str, int] = {}
+    reasoning = ""
     for _ in range(max_iterations):
         result = await provider.generate(
-            GenerationRequest(messages=convo, model=model, tools=specs or None)
+            GenerationRequest(messages=convo, model=model, tools=specs or None, think=think)
         )
         text = result.text
         usage = result.usage
+        if result.thinking:
+            reasoning += result.thinking
         if not result.tool_calls:
-            yield AgentEvent(type="final", answer=text, usage=dict(usage))
+            yield AgentEvent(
+                type="final", answer=text, usage=dict(usage), thinking=reasoning or None
+            )
             return
 
         # Echo the assistant's (possibly empty) turn, then each tool result as a TOOL-role message
@@ -105,4 +112,5 @@ async def run_agent(
         type="final",
         answer=text or "I couldn't complete that within the tool-step limit.",
         usage=dict(usage),
+        thinking=reasoning or None,
     )

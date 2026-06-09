@@ -412,8 +412,10 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
 
     async def _agent_stream(
         req: ChatRequest, provider: ModelProvider, generation: GenerationRequest
-    ) -> AsyncIterator[tuple[bytes, str | None, Mapping[str, int] | None, dict[str, Any] | None]]:
-        """Yield (SSE frame, final-answer-or-None, usage-or-None, tool-step-or-None) tuples."""
+    ) -> AsyncIterator[
+        tuple[bytes, str | None, Mapping[str, int] | None, dict[str, Any] | None, str | None]
+    ]:
+        """Yield (SSE frame, answer?, usage?, tool-step?, thinking?) tuples."""
         registries: Registries = app.state.bootstrap.registries
         gateway = app.state.bootstrap.gateway
         tool_list = [registries.tools.get(name) for name in registries.tools.names()]
@@ -428,16 +430,26 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             tools=tool_list,
             grants=grants,
             approved=req.approve_tools,
+            think=generation.think,
         ):
             if ev.type == "final":
                 done = {"delta": "", "done": True, "finish_reason": "stop"}
+                if ev.thinking:
+                    yield (
+                        f"data: {json.dumps({'thinking': ev.thinking})}\n\n".encode(),
+                        None,
+                        None,
+                        None,
+                        ev.thinking,
+                    )
                 yield (
                     f"data: {json.dumps({'delta': ev.answer or '', 'done': False})}\n\n".encode(),
                     ev.answer or "",
                     ev.usage,
                     None,
+                    None,
                 )
-                yield (f"data: {json.dumps(done)}\n\n".encode(), None, None, None)
+                yield (f"data: {json.dumps(done)}\n\n".encode(), None, None, None, None)
             else:
                 payload = {
                     "phase": "call" if ev.type == "tool_call" else "result",
@@ -452,6 +464,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     None,
                     None,
                     payload,
+                    None,
                 )
 
     @app.post("/api/chat", dependencies=[Depends(_require_token)])
@@ -500,7 +513,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 thinking = ""
                 try:
                     if req.use_tools:
-                        async for frame, text, used, step in _agent_stream(
+                        async for frame, text, used, step, think_delta in _agent_stream(
                             req, provider, generation
                         ):
                             if text is not None:
@@ -509,6 +522,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                                 usage = used
                             if step is not None:
                                 tool_steps.append(step)
+                            if think_delta:
+                                thinking += think_delta
                             yield frame
                     else:
                         async for chunk in provider.stream(generation):

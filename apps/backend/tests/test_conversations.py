@@ -465,6 +465,35 @@ def test_assistant_message_persists_thinking_meta() -> None:
         assert assistant["meta"]["thinking"] == "pondering the question"
 
 
+class _ToolThinkFake(FakeModelProvider):
+    """Agent path: reasons (thinking) and answers without a tool call."""
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        return GenerationResult(text="answer", model=request.model, thinking="reasoning trace")
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_agent_path_persists_reasoning_meta() -> None:
+    with _client_with("toolthink", _ToolThinkFake(name="toolthink")) as client:
+        cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/chat",
+            headers=AUTH,
+            json={
+                "messages": [{"role": "user", "content": "why?"}],
+                "conversation_id": cid,
+                "use_tools": True,
+                "think": True,
+            },
+        ) as resp:
+            body = "".join(resp.iter_text())
+        assert "reasoning trace" in body  # streamed live too
+        msgs = client.get(f"/api/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        assistant = next(m for m in msgs if m["role"] == "assistant")
+        assert assistant["meta"]["thinking"] == "reasoning trace"
+
+
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_assistant_message_persists_tool_steps_meta() -> None:
     with _client_with("toolfake", _ToolFake()) as client:
