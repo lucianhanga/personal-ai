@@ -103,6 +103,7 @@ class GenerationChunk:
     done: bool = False
     finish_reason: str | None = None
     tool_calls: Sequence[ToolCallRequest] = field(default_factory=tuple)
+    usage: Mapping[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

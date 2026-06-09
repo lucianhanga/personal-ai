@@ -18,8 +18,10 @@ import {
   type DocumentInfo,
   type ModelInfo,
   type ToolStep,
+  type UsageInfo,
 } from "./api";
 import { AppLogs } from "./AppLogs";
+import { ContextMeter } from "./ContextMeter";
 import { Markdown } from "./Markdown";
 import { Memory } from "./Memory";
 import { ToolLog } from "./ToolLog";
@@ -47,6 +49,7 @@ export function Chat({ token }: { token: string }): React.ReactElement {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [citations, setCitations] = useState<Record<number, Citation[]>>({});
   const [toolSteps, setToolSteps] = useState<Record<number, ToolStep[]>>({});
+  const [usage, setUsage] = useState<UsageInfo | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -222,6 +225,7 @@ export function Chat({ token }: { token: string }): React.ReactElement {
             ...prev,
             [assistantIndex]: [...(prev[assistantIndex] ?? []), step],
           })),
+        (u) => setUsage(u),
       );
       if (persistence) setConversations(await fetchConversations(token));
     } catch (e: unknown) {
@@ -478,6 +482,8 @@ export function Chat({ token }: { token: string }): React.ReactElement {
           {error}
         </p>
       )}
+
+      {usage && <ContextMeter usage={usage} />}
 
       <div style={{ display: "flex", gap: "0.5rem" }}>
         <input

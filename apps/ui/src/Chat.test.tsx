@@ -191,7 +191,35 @@ test("shows conversations and lazily creates one on first send", async () => {
       expect.any(Function),
       expect.any(Function),
       expect.any(Function),
+      expect.any(Function),
     ),
+  );
+});
+
+test("shows the context meter after a turn reports usage", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "streamChat").mockImplementation(
+    async (_p, onDelta, _onCit, _onTool, onUsage) => {
+      onDelta("hi");
+      onUsage?.({
+        prompt_tokens: 4096,
+        completion_tokens: 50,
+        total_tokens: 4146,
+        context_limit: 32768,
+      });
+    },
+  );
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "hi" } });
+  fireEvent.click(screen.getByTestId("send"));
+
+  await waitFor(() =>
+    expect(screen.getByTestId("context-meter-label")).toHaveTextContent("4,096 / 32,768"),
   );
 });
 
