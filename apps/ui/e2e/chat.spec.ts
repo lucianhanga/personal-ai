@@ -56,7 +56,7 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
     r.fulfill({
       status: 200,
       contentType: "application/json",
-      body: '{"ok":true,"data":{"servers":[{"name":"playwright","connected":true,"tools":["playwright.navigate"],"error":null}]}}',
+      body: '{"ok":true,"data":{"servers":[{"name":"playwright","command":"npx","args":["-y","@playwright/mcp@latest"],"env":{},"enabled":true,"connected":true,"tools":["playwright.navigate"],"error":null}]}}',
     }),
   );
   await page.route("**/api/v1/logs*", (r) =>

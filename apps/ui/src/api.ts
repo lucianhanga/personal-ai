@@ -132,9 +132,20 @@ export interface UsageInfo {
 
 export interface McpServer {
   name: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  enabled: boolean;
   connected: boolean;
   tools: string[];
   error: string | null;
+}
+
+export interface McpServerInput {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  enabled: boolean;
 }
 
 function authHeaders(token: string): Record<string, string> {
@@ -297,6 +308,31 @@ export async function fetchMcp(token: string): Promise<McpServer[]> {
   if (!res.ok) throw new Error(`mcp request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { servers?: McpServer[] } };
   return body.data?.servers ?? [];
+}
+
+/** Create or update an MCP server (persisted + applied live: connects if enabled). */
+export async function upsertMcpServer(
+  token: string,
+  name: string,
+  input: McpServerInput,
+): Promise<McpServer> {
+  const res = await fetch(`${API_BASE}/api/v1/mcp/servers/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(`save MCP server failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { server?: McpServer } };
+  return body.data!.server!;
+}
+
+/** Disconnect (if connected) and remove an MCP server from the config. */
+export async function deleteMcpServer(token: string, name: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/mcp/servers/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error(`delete MCP server failed: ${res.status}`);
 }
 
 /** The tool-call audit log (most recent first), optionally scoped to a conversation. */

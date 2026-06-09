@@ -21,6 +21,7 @@ import uuid
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile, status
@@ -33,7 +34,7 @@ from personalai_backend.composition import Bootstrap, bootstrap
 from personalai_backend.ingestion import chunk_ids, ingest_file
 from personalai_backend.logbuffer import LOG_BUFFER
 from personalai_backend.logbuffer import install as install_log_buffer
-from personalai_backend.mcp_startup import connect_mcp_servers
+from personalai_backend.mcp_manager import McpManager
 from personalai_contracts.ports import (
     ChatMessage,
     GenerationRequest,
@@ -124,6 +125,15 @@ class ChatRequest(BaseModel):
     approve_tools: bool = False  # approve high-risk tools for this turn
 
 
+class McpServerIn(BaseModel):
+    """Request body for creating/updating an MCP server (stdio)."""
+
+    command: str
+    args: list[str] = []
+    env: dict[str, str] = {}
+    enabled: bool = True
+
+
 class ConversationCreate(BaseModel):
     """Request body for creating a conversation."""
 
@@ -180,6 +190,15 @@ def _require_token(request: Request, authorization: str | None = Header(default=
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
+def _mcp_config_path(config: CoreConfig) -> Path:
+    """Where the MCP server config lives: ``PERSONALAI_MCP_CONFIG`` or ~/.personalai/mcp.json."""
+    return (
+        Path(config.mcp_config_path)
+        if config.mcp_config_path
+        else Path.home() / ".personalai" / "mcp.json"
+    )
+
+
 def create_app(boot: Bootstrap | None = None) -> FastAPI:
     """Build the FastAPI app from the assembled wiring."""
     boot = boot or bootstrap()
@@ -211,17 +230,14 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             logger.warning("storage unavailable (file/RAG features disabled): %s", exc)
             app.state.storage = None
         # Connect configured MCP servers and register their tools behind the gateway (best-effort).
-        app.state.mcp_clients, app.state.mcp_status = await connect_mcp_servers(
-            boot.config, boot.registries
-        )
+        await app.state.mcp_manager.start()
         try:
             yield
         finally:
             # Let in-flight background work (e.g. memory extraction) finish before tearing down.
             if app.state.bg_tasks:
                 await asyncio.gather(*app.state.bg_tasks, return_exceptions=True)
-            for client in app.state.mcp_clients:
-                await client.aclose()
+            await app.state.mcp_manager.aclose()
             storage = app.state.storage
             if storage is not None:
                 await storage.pool.close()
@@ -243,8 +259,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     app.state.bootstrap = boot
     app.state.config = boot.config
     app.state.storage = None  # set on startup if a database is reachable
-    app.state.mcp_clients = []  # connected MCP servers (set on startup)
-    app.state.mcp_status = []  # per-server connect status for /api/v1/mcp
+    app.state.mcp_manager = McpManager(boot.registries, _mcp_config_path(boot.config))
     app.state.bg_tasks = set()  # fire-and-forget background tasks (e.g. memory extraction)
 
     # CORS restricted to the configured (loopback) origins: enables the browser SPA while still
@@ -963,6 +978,35 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.get("/api/v1/mcp", response_model=StructuredResult, dependencies=[Depends(_require_token)])
     def list_mcp() -> StructuredResult:
         # Configured MCP servers + connect status + the tools each exposed (behind the gateway).
-        return StructuredResult(ok=True, data={"servers": app.state.mcp_status})
+        return StructuredResult(ok=True, data={"servers": app.state.mcp_manager.list()})
+
+    @app.put(
+        "/api/v1/mcp/servers/{name}",
+        response_model=StructuredResult,
+        dependencies=[Depends(_require_token)],
+    )
+    async def upsert_mcp(name: str, body: McpServerIn) -> StructuredResult:
+        # Create/update a server, persist to mcp.json, and apply live (connect if enabled).
+        if not body.command.strip():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="command required")
+        spec: dict[str, Any] = {
+            "command": body.command,
+            "args": body.args,
+            "env": body.env,
+            "enabled": body.enabled,
+        }
+        server = await app.state.mcp_manager.upsert(name, spec)
+        return StructuredResult(ok=True, data={"server": server})
+
+    @app.delete(
+        "/api/v1/mcp/servers/{name}",
+        response_model=StructuredResult,
+        dependencies=[Depends(_require_token)],
+    )
+    async def delete_mcp(name: str) -> StructuredResult:
+        removed = await app.state.mcp_manager.delete(name)
+        if not removed:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="server")
+        return StructuredResult(ok=True, data={"deleted": name})
 
     return app
