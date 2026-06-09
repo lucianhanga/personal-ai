@@ -130,6 +130,13 @@ export interface UsageInfo {
   context_limit: number | null;
 }
 
+export interface McpServer {
+  name: string;
+  connected: boolean;
+  tools: string[];
+  error: string | null;
+}
+
 function authHeaders(token: string): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -282,6 +289,14 @@ export async function fetchLogs(token: string, conversationId?: string | null): 
   if (!res.ok) throw new Error(`logs request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { logs?: LogEntry[] } };
   return body.data?.logs ?? [];
+}
+
+/** Configured MCP servers + connect status + the tools each exposed. */
+export async function fetchMcp(token: string): Promise<McpServer[]> {
+  const res = await fetch(`${API_BASE}/api/v1/mcp`, { headers: authHeaders(token) });
+  if (!res.ok) throw new Error(`mcp request failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { servers?: McpServer[] } };
+  return body.data?.servers ?? [];
 }
 
 /** The tool-call audit log (most recent first), optionally scoped to a conversation. */

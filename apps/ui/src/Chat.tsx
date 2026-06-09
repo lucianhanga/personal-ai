@@ -24,6 +24,7 @@ import {
 import { AppLogs } from "./AppLogs";
 import { ContextMeter } from "./ContextMeter";
 import { Markdown } from "./Markdown";
+import { McpPanel } from "./McpPanel";
 import { Memory } from "./Memory";
 import { MessageDetails } from "./MessageDetails";
 import { ToolLog } from "./ToolLog";
@@ -90,6 +91,7 @@ export function Chat({
   const [showTools, setShowTools] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const [showAppLogs, setShowAppLogs] = useState(false);
+  const [showMcp, setShowMcp] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chatsCollapsed, setChatsCollapsed] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -805,6 +807,9 @@ export function Chat({
                 <button data-testid="applogs-show" onClick={() => setShowAppLogs((v) => !v)}>
                   {showAppLogs ? "Hide app logs" : "App logs"}
                 </button>
+                <button data-testid="mcp-show" onClick={() => setShowMcp((v) => !v)}>
+                  {showMcp ? "Hide MCP" : "MCP"}
+                </button>
                 <button
                   data-testid="side-toggle"
                   onClick={() => setSidebarCollapsed(true)}
@@ -819,10 +824,11 @@ export function Chat({
 
               {showLog && <ToolLog token={token} conversationId={activeId} />}
               {showAppLogs && <AppLogs token={token} conversationId={activeId} />}
+              {showMcp && <McpPanel token={token} />}
 
-              {!showLog && !showAppLogs && !usage && (
+              {!showLog && !showAppLogs && !showMcp && !usage && (
                 <p data-testid="side-hint" style={{ color: "#888", fontSize: "0.8rem" }}>
-                  Open a panel above to view logs or context usage.
+                  Open a panel above to view logs, MCP servers, or context usage.
                 </p>
               )}
             </aside>
