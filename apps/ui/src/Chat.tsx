@@ -346,6 +346,14 @@ export function Chat({
               }),
             },
           })),
+        (message) => {
+          // Surface backend errors in the assistant bubble instead of silently ending the turn.
+          acc = (acc ? acc + "\n\n" : "") + `⚠️ ${message}`;
+          patchChat(key, (s) => ({
+            ...s,
+            messages: [...history, { role: "assistant", content: acc }],
+          }));
+        },
       );
       if (persistence) setConversations(await fetchConversations(token));
     } catch (e: unknown) {

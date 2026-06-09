@@ -193,6 +193,7 @@ test("shows conversations and lazily creates one on first send", async () => {
       expect.any(Function),
       expect.any(Function),
       expect.any(Function),
+      expect.any(Function),
     ),
   );
 });
@@ -362,7 +363,30 @@ test("the Reasoning toggle is sent to the chat request", async () => {
       expect.any(Function),
       expect.any(Function),
       expect.any(Function),
+      expect.any(Function),
     ),
+  );
+});
+
+
+test("surfaces a backend stream error in the assistant bubble", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "streamChat").mockImplementation(
+    async (_p, _onDelta, _onCit, _onTool, _onUsage, _onThink, onError) => {
+      onError?.("egress not allowed for host: evil.example");
+    },
+  );
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "go" } });
+  fireEvent.click(screen.getByTestId("send"));
+
+  await waitFor(() =>
+    expect(screen.getByTestId("msg-assistant")).toHaveTextContent("egress not allowed"),
   );
 });
 
