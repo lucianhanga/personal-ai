@@ -351,6 +351,16 @@ export async function fetchConversation(
 }
 
 /** Delete a conversation. */
+/** Rename a conversation. */
+export async function renameConversation(token: string, id: string, title: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/conversations/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ title }),
+  });
+  if (!res.ok) throw new Error(`rename conversation failed: ${res.status}`);
+}
+
 export async function deleteConversation(token: string, id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/conversations/${id}`, {
     method: "DELETE",

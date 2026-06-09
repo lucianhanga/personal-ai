@@ -114,6 +114,32 @@ def test_conversation_crud() -> None:
 
 
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_conversation_rename() -> None:
+    with _client() as client:
+        cid = client.post("/api/conversations", headers=AUTH, json={"title": "Old"}).json()["data"][
+            "id"
+        ]
+        renamed = client.patch(
+            f"/api/conversations/{cid}", headers=AUTH, json={"title": "New name"}
+        )
+        assert renamed.status_code == 200
+        assert renamed.json()["data"]["title"] == "New name"
+        listed = client.get("/api/conversations", headers=AUTH).json()["data"]["conversations"]
+        assert any(c["id"] == cid and c["title"] == "New name" for c in listed)
+
+        assert (
+            client.patch(
+                f"/api/conversations/{cid}", headers=AUTH, json={"title": "  "}
+            ).status_code
+            == 400
+        )
+        assert (
+            client.patch("/api/conversations/nope", headers=AUTH, json={"title": "x"}).status_code
+            == 404
+        )
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_chat_persists_turns() -> None:
     with _client() as client:
         cid = client.post("/api/conversations", headers=AUTH, json={}).json()["data"]["id"]
