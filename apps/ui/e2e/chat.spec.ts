@@ -52,6 +52,13 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   await page.route("**/api/v1/files", (r) =>
     r.fulfill({ status: 200, contentType: "application/json", body: FILES_BODY }),
   );
+  await page.route("**/api/v1/mcp", (r) =>
+    r.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: '{"ok":true,"data":{"servers":[{"name":"playwright","connected":true,"tools":["playwright.navigate"],"error":null}]}}',
+    }),
+  );
   await page.route("**/api/v1/logs*", (r) =>
     r.fulfill({
       status: 200,
@@ -127,6 +134,10 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   // App logs panel opens and shows a log line.
   await page.getByTestId("applogs-show").click();
   await expect(page.getByTestId("applogs-panel")).toContainText("started");
+
+  // MCP panel lists the connected server.
+  await page.getByTestId("mcp-show").click();
+  await expect(page.getByTestId("mcp-panel")).toContainText("playwright");
 
   // The panel sidebar collapses and re-expands.
   await page.getByTestId("side-toggle").click();

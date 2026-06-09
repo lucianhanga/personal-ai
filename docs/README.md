@@ -20,6 +20,8 @@ Start here:
   schema-validated I/O, risk approval, audit; built-in calculator + http_fetch.
 - **[The agent loop (M6)](./guides/agent.md)** — autonomous tool use (calculator, web search) with
   streamed reasoning + answer, ordered per-message details, all through the gateway.
+- **[Using MCP servers (M7)](./guides/mcp.md)** — connect published MCP servers (e.g. Playwright)
+  via an `mcp.json`; their tools run through the gateway and the agent can use them.
 
 Reference & development:
 

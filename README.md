@@ -27,7 +27,8 @@ tools, files, prompts, model outputs, and MCP servers).
 > [architecture report](./docs/architecture/PersonalAI-Architecture-Research.md), the
 > [local chat guide](./docs/guides/local-chat.md), [remote providers](./docs/guides/remote-providers.md),
 > [files + RAG](./docs/guides/files-and-rag.md), [memory](./docs/guides/memory.md),
-> [tools](./docs/guides/tools.md), and [the agent loop](./docs/guides/agent.md).
+> [tools](./docs/guides/tools.md), [the agent loop](./docs/guides/agent.md), and
+> [MCP servers](./docs/guides/mcp.md).
 
 ## Quickstart (local chat)
 
