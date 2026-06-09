@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/lucianhanga/personal-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/lucianhanga/personal-ai/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![Status: M5 — tools](https://img.shields.io/badge/status-M5%20%E2%80%94%20tool%20gateway-brightgreen.svg)](./docs/guides/tools.md)
+[![Status: M6 — agent](https://img.shields.io/badge/status-M6%20%E2%80%94%20agent%20loop-brightgreen.svg)](./docs/guides/agent.md)
 [![Local-first](https://img.shields.io/badge/local--first-yes-brightgreen.svg)](#principles)
 [![Structured-output-first](https://img.shields.io/badge/structured--output--first-yes-brightgreen.svg)](#principles)
 [![Security-first](https://img.shields.io/badge/security--first-yes-brightgreen.svg)](./SECURITY.md)
@@ -16,15 +16,17 @@ PersonalAI is **extensible** (tools + MCP), **structured-output-first** (schemas
 **open-source-first** (verified provenance only), and **security-first** (zero-trust toward
 tools, files, prompts, model outputs, and MCP servers).
 
-> **Current state:** **M0–M5 complete** — streaming chat in a React UI over **local Ollama models**
+> **Current state:** **M0–M6 complete** — streaming chat in a React UI over **local Ollama models**
 > or **remote OpenAI-compatible providers**, **chat-with-your-documents** (file ingestion → pgvector
 > RAG with citations), **persistent conversation history**, **memory** (per-chat short-term summary
-> + cross-chat long-term memory you can view/edit/erase), and a security-first **Tool gateway**
-> (permissions, egress allowlist, schema-validated I/O, risk approval, audit). See the
+> + cross-chat long-term memory you can view/edit/erase), a security-first **Tool gateway**
+> (permissions, egress allowlist, schema-validated I/O, risk approval, audit), and a **single-agent
+> loop** that autonomously calls tools (calculator, web search) and **streams reasoning + answer**
+> token-by-token. See the
 > [architecture report](./docs/architecture/PersonalAI-Architecture-Research.md), the
 > [local chat guide](./docs/guides/local-chat.md), [remote providers](./docs/guides/remote-providers.md),
-> [files + RAG](./docs/guides/files-and-rag.md), [memory](./docs/guides/memory.md), and
-> [tools](./docs/guides/tools.md).
+> [files + RAG](./docs/guides/files-and-rag.md), [memory](./docs/guides/memory.md),
+> [tools](./docs/guides/tools.md), and [the agent loop](./docs/guides/agent.md).
 
 ## Quickstart (local chat)
 
