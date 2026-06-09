@@ -57,7 +57,10 @@ The M0-10 primitives are a foundation; these gaps are deliberate and tracked:
 - **Egress guard is a string/host check only.** `assert_egress_allowed` fails closed by default
   and enforces a host allowlist, but does not defend against IP-literal hosts, loopback/SSRF
   tricks, DNS rebinding, or redirect-following. Robust egress enforcement belongs to the
-  **Tool/MCP gateway (M4, T3 boundary)**.
+  **Tool/MCP gateway (M5, T3 boundary)**. **Empty allowlist = deny all:** enabling egress
+  (`PERSONALAI_EGRESS_ENABLED=true`) with no `PERSONALAI_ALLOWED_EGRESS_HOSTS` denies every
+  non-loopback host; opening egress to any host is an explicit opt-in
+  (`PERSONALAI_EGRESS_ALLOW_ANY=true`).
 - **Redaction is key-name based.** Secrets embedded in free-text values or URLs under innocuous
   keys are not yet masked; value-level masking (JWT/AWS/bearer/basic-auth patterns) is deferred to
   **M1**. Callers must not place raw secrets into free-text payload fields.
@@ -83,15 +86,20 @@ agents must treat it as data, not instructions (same guardrail as RAG/memory con
 
 Realized this milestone:
 
-- **Egress for tools is enforced at the gateway and per-tool.** `http_fetch` checks the target host
-  against the allowlist on every call and **disables redirects** (so a response cannot bounce to a
-  disallowed host). The string/host limitations noted above (IP-literals, SSRF, DNS rebinding) still
-  apply and are tightened with the subprocess/container tiers in M6.
+- **Egress for tools is enforced at the gateway and per-tool.** `http_fetch` (and `web_search`,
+  which is pinned to `html.duckduckgo.com`) check the target host against the allowlist on every
+  call and **disable redirects** (so a response cannot bounce to a disallowed host). The
+  string/host limitations noted above (IP-literals, SSRF, DNS rebinding) still apply and are
+  tightened with the subprocess/container tiers in M7. Enabling egress with an empty allowlist
+  denies everything (fail-closed); see the egress note in §6.1.
+- **The single-agent loop (M6) calls tools only through this gateway.** Autonomous tool use does
+  not bypass any gate: risk approval, permissions, egress, schema validation, timeout, and audit
+  all still apply on every call, and tool output is fed back to the model as untrusted data.
 
 Deliberate gaps (tracked):
 
 - **Tier-0 execution is in-process (no OS isolation)**, so only *trusted first-party* tools run
   there. Untrusted/third-party **MCP servers** must run under tier-1 (subprocess) / tier-2
-  (container) isolation, which lands with MCP in **M6** (ADR-0007); the executor seam is in place.
+  (container) isolation, which lands with MCP in **M7** (ADR-0007); the executor seam is in place.
 - **Permission grants are per-request.** Remembered per-scope grants and a human-approval UI flow
   for high-risk actions are a follow-up.

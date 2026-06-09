@@ -41,7 +41,9 @@ mode and point `PERSONALAI_OPENAI_BASE_URL` at the local server (loopback needs 
 ## How it stays safe
 
 - **Egress allowlist:** every remote call runs the egress guard first; with egress off or the host
-  not allow-listed, it fails closed with an `egress is disabled` error (no silent off-machine calls).
+  not allow-listed, it fails closed (no silent off-machine calls). Enabling egress with an **empty
+  allowlist denies all hosts** — you must list the provider in `PERSONALAI_ALLOWED_EGRESS_HOSTS`
+  (or set `PERSONALAI_EGRESS_ALLOW_ANY=true` to opt into open egress).
 - **API key:** injected from config/env, never hard-coded, never logged (redaction).
 - **Audit:** remote calls are recorded (redacted) in the audit log.
 - **Local-first default:** `PERSONALAI_MODEL_PROVIDER` defaults to `ollama`; remote is per-request

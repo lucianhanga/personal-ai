@@ -9,6 +9,9 @@ risk approval, timeouts, and audit are enforced; nothing runs until every gate p
 - **calculator** — safe arithmetic (AST-evaluated, *no code execution*); LOW risk, no permissions.
 - **http_fetch** — HTTP GET; requires the **NETWORK** permission and the target host must pass the
   **egress allowlist**; redirects disabled; size/time-limited; HIGH risk (needs approval).
+- **web_search** — DuckDuckGo search (pinned to `html.duckduckgo.com`, no API key); requires the
+  **NETWORK** permission and passes the **egress allowlist**; MEDIUM risk. Used by the agent loop
+  (see [the agent loop guide](./agent.md)).
 
 ## Try it (UI)
 
@@ -21,8 +24,8 @@ Open the **Tools** panel:
 ## API
 
 ```bash
-curl -H "Authorization: Bearer demo" http://127.0.0.1:8765/api/tools          # list manifests
-curl -X POST http://127.0.0.1:8765/api/tools/invoke -H "Authorization: Bearer demo" \
+curl -H "Authorization: Bearer demo" http://127.0.0.1:8765/api/v1/tools          # list manifests
+curl -X POST http://127.0.0.1:8765/api/v1/tools/invoke -H "Authorization: Bearer demo" \
   -H "Content-Type: application/json" \
   -d '{"tool":"calculator","version":"1.0.0","args":{"expression":"2+3*4"}}'
 # http_fetch needs the grant + approval (then the egress allowlist applies):
@@ -37,6 +40,9 @@ curl -X POST http://127.0.0.1:8765/api/tools/invoke -H "Authorization: Bearer de
    scope, or scope `*`); least-privilege, deny-by-default.
 4. **Input** validated against the manifest's JSON Schema.
 5. **Egress** — any declared network host must pass the egress allowlist (`assert_egress_allowed`).
+   Egress is off by default; enabling it with an **empty allowlist denies all hosts** (fail-closed).
+   Set `PERSONALAI_ALLOWED_EGRESS_HOSTS`, or opt into open egress with
+   `PERSONALAI_EGRESS_ALLOW_ANY=true`.
 6. **Execute** via the executor with a **timeout**.
 7. **Output** validated against the manifest's JSON Schema.
 8. **Audit** — every outcome (allowed/denied) is recorded (redacted).
@@ -52,8 +58,8 @@ Each tool declares a `ToolManifest`: provenance, version, capabilities, least-pr
 Tools run behind a `ToolExecutor` seam:
 
 - **Tier 0 — in-process (now):** trusted first-party tools, time-bounded, fail-closed.
-- **Tier 1 — subprocess (M6):** the default for spawning MCP servers over stdio.
-- **Tier 2 — container/microVM (M6+):** untrusted/heavy MCP servers (e.g. Playwright) and
+- **Tier 1 — subprocess (M7):** the default for spawning MCP servers over stdio.
+- **Tier 2 — container/microVM (M7+):** untrusted/heavy MCP servers (e.g. Playwright) and
   multi-user worker pools.
 
 Adding a tier is a new adapter behind the port — the gateway and tools are unchanged.
@@ -65,5 +71,5 @@ Adding a tier is a new adapter behind the port — the gateway and tools are unc
 2. Declare a `ToolManifest` (permissions, JSON-Schema I/O, egress, risk).
 3. Register `RegisteredTool(manifest, handler)` in the composition root.
 
-That's it — the gateway enforces everything else. Third-party **MCP servers** (M6) plug into the
+That's it — the gateway enforces everything else. Third-party **MCP servers** (M7) plug into the
 same gateway as tool sources, sandboxed via tier 1/2.

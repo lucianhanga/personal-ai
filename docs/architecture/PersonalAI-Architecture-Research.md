@@ -541,21 +541,24 @@ The dependency arrow always points **inward to `/contracts`**. Adapters never im
 
 Each milestone is shippable, builds on the previous, and **exercises a seam** so the next milestone slots in without rework. "Owner agent" = which Claude Code specialist naturally owns that slice.
 
-| M | Milestone | What ships | Seam established | Additive guarantee | Owner agent |
-|---|---|---|---|---|---|
-| **M0** | **Skeleton + contracts** | Monorepo, `/contracts` (ports, base schemas, message envelope), DI wiring, CI with SBOM/scan/signing skeleton, loopback FastAPI + empty SPA | All ports defined as interfaces | Everything later is an adapter behind these | backend-api-architect, architecture |
-| **M1** | **Local chat (1 provider)** | Streaming chat over **Ollama**; provider registry with one adapter; structured-output validation core; provider badge in UI | Model-provider seam, schema seam, UI-renderer seam | Add providers later = new adapter, no core change | ollama-llm-agent, ui-developer |
-| **M2** | **Provider portability** | Add **llama.cpp / vLLM / remote (LiteLLM)** adapters; capability detection + router | Proves the model seam works (≥2 adapters) | Switching/adding models never touches core | ollama-llm-agent |
-| **M3** | **Files & vector RAG** | Ingestion pipeline (Tika/Docling) → **pgvector**; `Retriever` + `Storage` ports with one adapter each; sandboxed parsing; file jails | Retrieval seam, storage seam, modality seam | Add Qdrant/graph later = new adapter | database-architect, backend-api-architect |
-| **M4** | **Memory (short-term + long-term)** | **STM** (isolated per chat): token-budgeted context assembly + rolling per-conversation summary; incognito chats. **LTM** (cross-chat, semantic): `MemoryStore` on Postgres+pgvector; background fact extraction (structured output + salience, provenance + temporal validity); recency/importance/relevance retrieval injected as "What I remember" (untrusted data); **Memory UI** to view/edit/delete facts + "Forget everything" + "Use my memory" toggle | Memory seam (reuses Retriever/Storage); STM vs LTM isolation | Graph (KAG) upgrade is M11; RAG/chat untouched | agentic-ai-architect, database-architect, ui-developer |
-| **M5** | **Tool/MCP gateway** | Registry + manifests + permission model + tiered sandbox + egress allowlist + audit log; 1–2 built-in tools | Tool seam (the side-effect chokepoint) | New tools = drop-in manifest+handler, verified & sandboxed | agentic-ai-architect, backend-api-architect |
-| **M6** | **MCP plug-in/out + verification** | Local MCP servers via gateway; third-party MCP verification workflow; per-scope enable/disable | Tool seam hardened for external code | Plug/unplug tools without redeploy | agentic-ai-architect |
-| **M7** | **Single-agent + tools** | Planner/executor over LangGraph; typed agent messages; HITL approval gate; retry/repair/fallback | Agent seam, message-contract seam | Add roles later = new graph node | agentic-ai-architect |
-| **M8** | **Multi-agent + selective verification** | Role-specialized agents (researcher/critic); **tiered verification** (schema-always → conditional LLM-judge → ground-truth → human); `accuracy mode` toggle | Agent seam at scale | New roles/critics are additive nodes | agentic-ai-architect |
-| **M9** | **Multimodal** | Vision routing; **faster-whisper** STT; **Piper** TTS; optional image gen | Modality seam at scale | Each modality = a handler, no core change | ollama-llm-agent, ui-developer |
-| **M10** | **Browser extension** | MV3, minimal perms, explicit capture, authenticated localhost messaging | New client behind existing gateway contract | Extension is just another authenticated client | chrome-extension-architect/developer |
-| **M11** | **KAG / graph memory (graph upgrade of M4)** | Hybrid graph+vector retrieval (Postgres + Apache AGE), entity/relationship extraction + resolution, multi-hop; upgrades the long-term memory to a knowledge graph | Reuses retrieval + storage + memory seams | Pure add-on; vector RAG + semantic memory untouched | database-architect, agentic-ai-architect |
-| **M12** | **Hardening & packaging** | Signed releases, reproducible builds, SBOM/scan in CI, desktop + Compose packaging, docs/ADRs | Cross-cutting | Ongoing, per-release | github-repository-manager, documentation |
+> **Status (v0.6.0):** **M0–M6 are complete and shipped.** M7 is next. The rows below mark each
+> milestone's state; the swap of M6/M7 is recorded in the roadmap notes after the table.
+
+| M | Milestone | What ships | Seam established | Additive guarantee | Owner agent | Status |
+|---|---|---|---|---|---|---|
+| **M0** | **Skeleton + contracts** | Monorepo, `/contracts` (ports, base schemas, message envelope), DI wiring, CI with SBOM/scan/signing skeleton, loopback FastAPI + empty SPA | All ports defined as interfaces | Everything later is an adapter behind these | backend-api-architect, architecture | done |
+| **M1** | **Local chat (1 provider)** | Streaming chat over **Ollama**; provider registry with one adapter; structured-output validation core; provider badge in UI | Model-provider seam, schema seam, UI-renderer seam | Add providers later = new adapter, no core change | ollama-llm-agent, ui-developer | done |
+| **M2** | **Provider portability** | Add **remote OpenAI-compatible** provider (OpenAI/Azure/vLLM/llama.cpp in OpenAI mode); capability detection + per-request routing | Proves the model seam works (≥2 adapters) | Switching/adding models never touches core | ollama-llm-agent | done |
+| **M3** | **Files & vector RAG** | Ingestion pipeline (txt/md/pdf/docx) → **pgvector**; `Retriever` + `Storage` ports with one adapter each; sandboxed parsing; file jails | Retrieval seam, storage seam, modality seam | Add Qdrant/graph later = new adapter | database-architect, backend-api-architect | done |
+| **M4** | **Memory (short-term + long-term)** | **STM** (isolated per chat): token-budgeted context assembly + rolling per-conversation summary; incognito chats. **LTM** (cross-chat, semantic): `MemoryStore` on Postgres+pgvector; background fact extraction (structured output + salience, provenance + temporal validity); recency/importance/relevance retrieval injected as "What I remember" (untrusted data); **Memory UI** to view/edit/delete facts + "Forget everything" + "Use my memory" toggle | Memory seam (reuses Retriever/Storage); STM vs LTM isolation | Graph (KAG) upgrade is M11; RAG/chat untouched | agentic-ai-architect, database-architect, ui-developer | done |
+| **M5** | **Tool/MCP gateway** | Registry + manifests + permission model + tiered sandbox + egress allowlist + audit log; built-in tools (calculator, http_fetch) | Tool seam (the side-effect chokepoint) | New tools = drop-in manifest+handler, verified & sandboxed | agentic-ai-architect, backend-api-architect | done |
+| **M6** | **Single-agent loop + tools** | Hand-rolled streaming agent loop (ADR-0008): autonomous tool calling through the gateway, **streamed reasoning + answer**, tool calls parsed from the provider stream (Ollama + OpenAI); per-message **Details** (`meta.trace`); built-in **web_search** (DuckDuckGo); per-chat Activity + App logs; context-usage meter; rename chats | Agent seam, message-contract seam | Add MCP sources / roles later behind the same gateway | agentic-ai-architect | done |
+| **M7** | **MCP plug-in/out + verification** | Local/third-party MCP servers via the gateway; MCP verification workflow; per-scope enable/disable; sandbox tiers (ADR-0007), incl. the Microsoft Playwright MCP goal | Tool seam hardened for external code | Plug/unplug tools without redeploy | agentic-ai-architect | next |
+| **M8** | **Multi-agent + selective verification** | Role-specialized agents (researcher/critic); **tiered verification** (schema-always → conditional LLM-judge → ground-truth → human) for factuality/anti-hallucination; `accuracy mode` toggle; **LangGraph** adopted here (ADR-0008) above the same gateway/provider seams | Agent seam at scale | New roles/critics are additive nodes | agentic-ai-architect | planned |
+| **M9** | **Multimodal** | Vision routing; **faster-whisper** STT; **Piper** TTS; optional image gen | Modality seam at scale | Each modality = a handler, no core change | ollama-llm-agent, ui-developer | planned |
+| **M10** | **Browser extension** | MV3, minimal perms, explicit capture, authenticated localhost messaging | New client behind existing gateway contract | Extension is just another authenticated client | chrome-extension-architect/developer | planned |
+| **M11** | **KAG / graph memory (graph upgrade of M4)** | Hybrid graph+vector retrieval (Postgres + Apache AGE), entity/relationship extraction + resolution, multi-hop; upgrades the long-term memory to a knowledge graph | Reuses retrieval + storage + memory seams | Pure add-on; vector RAG + semantic memory untouched | database-architect, agentic-ai-architect | planned |
+| **M12** | **Hardening & packaging** | Signed releases, reproducible builds, SBOM/scan in CI, desktop + Compose packaging, docs/ADRs | Cross-cutting | Ongoing, per-release | github-repository-manager, documentation | planned |
 
 > **Roadmap note (2026-06-07):** Memory was pulled forward to **M4** (the opportune moment — it
 > reuses the M3 pgvector storage seam, delivers user-facing visualize/erase of memory, and gives
@@ -577,8 +580,8 @@ timeline
     Talk       : M1 Local chat (Ollama) : M2 Provider portability (llama.cpp / vLLM / remote)
     Know       : M3 Files + vector RAG (pgvector)
     Remember   : M4 Memory (short-term + long-term, semantic)
-    Act        : M5 Tool/MCP gateway + sandbox : M6 MCP plug-in/out + verification
-    Reason     : M7 Single-agent + tools : M8 Multi-agent + selective verification
+    Act        : M5 Tool/MCP gateway + sandbox : M6 Single-agent loop + tools
+    Reason     : M7 MCP plug-in/out + verification : M8 Multi-agent + selective verification
     Sense      : M9 Multimodal (vision / STT / TTS)
     Reach      : M10 Browser extension
     Connect    : M11 KAG / graph memory (graph upgrade of M4)

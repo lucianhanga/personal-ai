@@ -16,13 +16,14 @@ PersonalAI is **extensible** (tools + MCP), **structured-output-first** (schemas
 **open-source-first** (verified provenance only), and **security-first** (zero-trust toward
 tools, files, prompts, model outputs, and MCP servers).
 
-> **Current state:** **M0–M6 complete** — streaming chat in a React UI over **local Ollama models**
-> or **remote OpenAI-compatible providers**, **chat-with-your-documents** (file ingestion → pgvector
-> RAG with citations), **persistent conversation history**, **memory** (per-chat short-term summary
-> + cross-chat long-term memory you can view/edit/erase), a security-first **Tool gateway**
+> **Current state (v0.6.0):** **M0–M6 complete** — streaming chat in a React UI over **local Ollama
+> models** or **remote OpenAI-compatible providers**, **chat-with-your-documents** (file ingestion →
+> pgvector RAG with citations), **persistent conversation history**, **memory** (per-chat short-term
+> summary + cross-chat long-term memory you can view/edit/erase), a security-first **Tool gateway**
 > (permissions, egress allowlist, schema-validated I/O, risk approval, audit), and a **single-agent
 > loop** that autonomously calls tools (calculator, web search) and **streams reasoning + answer**
-> token-by-token. See the
+> token-by-token. The HTTP API is versioned under **`/api/v1`** (see [CHANGELOG](./CHANGELOG.md)).
+> See the
 > [architecture report](./docs/architecture/PersonalAI-Architecture-Research.md), the
 > [local chat guide](./docs/guides/local-chat.md), [remote providers](./docs/guides/remote-providers.md),
 > [files + RAG](./docs/guides/files-and-rag.md), [memory](./docs/guides/memory.md),
@@ -68,7 +69,7 @@ Clients (Tauri UI + MV3 extension, loopback)
         │
    API Gateway ── Auth/Settings
         │
-   Conversation ── Agent Orchestration (LangGraph) ── Structured-Output Validation
+   Conversation ── Agent Orchestration (M6: hand-rolled loop; LangGraph at M8) ── Structured-Output Validation
         │                    │
    File Ingestion       Tool/MCP Gateway ── Security Engine ── Sandbox (container/gVisor/WASM)
         │                    │
@@ -105,17 +106,20 @@ reason, alternatives) lives in
 
 `Foundation → Talk → Know → Act → Reason → Sense → Reach → (Connect) → Harden`
 
-| Milestone | Delivers |
-|---|---|
-| **M0** | Skeleton + contracts (all ports defined, CI/SBOM/signing skeleton) |
-| **M1–M2** | Local chat (Ollama) → provider portability |
-| **M3** | Files + vector RAG (pgvector) |
-| **M4–M5** | Tool/MCP gateway + sandbox → MCP plug-in/out + verification |
-| **M6–M7** | Single-agent → multi-agent + selective verification |
-| **M8** | Multimodal (vision / STT / TTS) |
-| **M9** | Browser extension (MV3) |
-| **M10** | Optional KAG / graph memory |
-| **M11** | Hardening, signing, packaging, docs |
+| Milestone | Delivers | Status |
+|---|---|---|
+| **M0** | Skeleton + contracts (all ports defined, CI/SBOM/signing skeleton) | done |
+| **M1–M2** | Local chat (Ollama) → provider portability | done |
+| **M3** | Files + vector RAG (pgvector) | done |
+| **M4** | Memory (short-term summary + long-term, semantic) | done |
+| **M5** | Tool/MCP gateway + sandbox | done |
+| **M6** | Single-agent loop + tools (streamed reasoning + answer) | done |
+| **M7** | MCP plug-in/out + verification (next) | planned |
+| **M8** | Multi-agent + selective verification | planned |
+| **M9** | Multimodal (vision / STT / TTS) | planned |
+| **M10** | Browser extension (MV3) | planned |
+| **M11** | KAG / graph memory (graph upgrade of M4) | planned |
+| **M12** | Hardening, signing, packaging, docs | planned |
 
 Details: [§22 Modular Implementation Roadmap](./docs/architecture/PersonalAI-Architecture-Research.md#22-modular-implementation-roadmap).
 
@@ -133,6 +137,7 @@ Details: [§22 Modular Implementation Roadmap](./docs/architecture/PersonalAI-Ar
 | [Supply-chain register](./docs/supply-chain/SUPPLY-CHAIN.md) | Living inventory of every dependency + creator. |
 | [Onboarding / dev guide](./docs/ONBOARDING.md) | How to work in this repo. |
 | [Contributing](./CONTRIBUTING.md) | GitHub flow, branching, commits, PRs. |
+| [Changelog](./CHANGELOG.md) | Versioning policy (semver in `VERSION`) and per-release history. |
 
 ---
 
