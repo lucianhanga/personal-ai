@@ -31,7 +31,7 @@ def test_env_overrides() -> None:
         {
             "MARKITDOWN_OLLAMA_BASE_URL": "http://gpu.local:11434/v1",
             "MARKITDOWN_OLLAMA_MODEL": "qwen2.5vl:32b",
-            "OPENAI_API_KEY": "xyz",
+            "OPENAI_API_KEY": "xyz",  # pragma: allowlist secret  (test placeholder, not a secret)
         }
     )
     assert s.base_url == "http://gpu.local:11434/v1"
