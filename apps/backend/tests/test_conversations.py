@@ -421,7 +421,9 @@ class _ThinkingFake(FakeModelProvider):
     """Streams a reasoning chunk then the answer (to exercise thinking-meta persistence)."""
 
     async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
-        yield GenerationChunk(thinking="pondering the question", delta="")
+        # Two reasoning chunks -> exercises the consecutive-reasoning merge into one trace item.
+        yield GenerationChunk(thinking="pondering ", delta="")
+        yield GenerationChunk(thinking="the question", delta="")
         yield GenerationChunk(delta="the answer")
         yield GenerationChunk(done=True, finish_reason="stop")
 
@@ -462,7 +464,10 @@ def test_assistant_message_persists_thinking_meta() -> None:
             "".join(resp.iter_text())
         msgs = client.get(f"/api/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
         assistant = next(m for m in msgs if m["role"] == "assistant")
-        assert assistant["meta"]["thinking"] == "pondering the question"
+        trace = assistant["meta"]["trace"]
+        assert any(
+            t["kind"] == "reasoning" and t["text"] == "pondering the question" for t in trace
+        )
 
 
 class _ToolThinkFake(FakeModelProvider):
@@ -491,7 +496,8 @@ def test_agent_path_persists_reasoning_meta() -> None:
         assert "reasoning trace" in body  # streamed live too
         msgs = client.get(f"/api/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
         assistant = next(m for m in msgs if m["role"] == "assistant")
-        assert assistant["meta"]["thinking"] == "reasoning trace"
+        trace = assistant["meta"]["trace"]
+        assert any(t["kind"] == "reasoning" and t["text"] == "reasoning trace" for t in trace)
 
 
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
@@ -511,5 +517,5 @@ def test_assistant_message_persists_tool_steps_meta() -> None:
             "".join(resp.iter_text())
         msgs = client.get(f"/api/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
         assistant = next(m for m in msgs if m["role"] == "assistant")
-        steps = assistant["meta"]["tool_steps"]
-        assert any(s["tool"] == "calculator" for s in steps)
+        trace = assistant["meta"]["trace"]
+        assert any(t["kind"] == "tool_call" and t["tool"] == "calculator" for t in trace)

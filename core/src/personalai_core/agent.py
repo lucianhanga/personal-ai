@@ -31,7 +31,7 @@ from personalai_core.gateway import RegisteredTool, ToolGateway
 class AgentEvent:
     """A step in the agent loop: a tool call, its result, or the final answer."""
 
-    type: Literal["tool_call", "tool_result", "final"]
+    type: Literal["reasoning", "tool_call", "tool_result", "final"]
     tool: str | None = None
     args: Mapping[str, Any] | None = None
     ok: bool | None = None
@@ -68,19 +68,18 @@ async def run_agent(
 
     text = ""
     usage: Mapping[str, int] = {}
-    reasoning = ""
     for _ in range(max_iterations):
         result = await provider.generate(
             GenerationRequest(messages=convo, model=model, tools=specs or None, think=think)
         )
         text = result.text
         usage = result.usage
+        # Emit reasoning in order — before this iteration's tool calls — so the UI can interleave
+        # reasoning and tool steps as they actually happened.
         if result.thinking:
-            reasoning += result.thinking
+            yield AgentEvent(type="reasoning", thinking=result.thinking)
         if not result.tool_calls:
-            yield AgentEvent(
-                type="final", answer=text, usage=dict(usage), thinking=reasoning or None
-            )
+            yield AgentEvent(type="final", answer=text, usage=dict(usage))
             return
 
         # Echo the assistant's (possibly empty) turn, then each tool result as a TOOL-role message
@@ -112,5 +111,4 @@ async def run_agent(
         type="final",
         answer=text or "I couldn't complete that within the tool-step limit.",
         usage=dict(usage),
-        thinking=reasoning or None,
     )

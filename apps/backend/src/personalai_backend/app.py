@@ -432,16 +432,16 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             approved=req.approve_tools,
             think=generation.think,
         ):
-            if ev.type == "final":
+            if ev.type == "reasoning":
+                yield (
+                    f"data: {json.dumps({'thinking': ev.thinking})}\n\n".encode(),
+                    None,
+                    None,
+                    None,
+                    ev.thinking,
+                )
+            elif ev.type == "final":
                 done = {"delta": "", "done": True, "finish_reason": "stop"}
-                if ev.thinking:
-                    yield (
-                        f"data: {json.dumps({'thinking': ev.thinking})}\n\n".encode(),
-                        None,
-                        None,
-                        None,
-                        ev.thinking,
-                    )
                 yield (
                     f"data: {json.dumps({'delta': ev.answer or '', 'done': False})}\n\n".encode(),
                     ev.answer or "",
@@ -509,8 +509,16 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     yield f"event: citations\ndata: {json.dumps(citations)}\n\n".encode()
                 answer = ""
                 usage: Mapping[str, int] = {}
-                tool_steps: list[dict[str, Any]] = []
-                thinking = ""
+                # Ordered timeline of reasoning + tool steps, exactly as they happen.
+                trace: list[dict[str, Any]] = []
+
+                def _add_reasoning(text: str) -> None:
+                    # Merge consecutive reasoning deltas into one item; keep order otherwise.
+                    if trace and trace[-1]["kind"] == "reasoning":
+                        trace[-1]["text"] += text
+                    else:
+                        trace.append({"kind": "reasoning", "text": text})
+
                 try:
                     if req.use_tools:
                         async for frame, text, used, step, think_delta in _agent_stream(
@@ -521,15 +529,22 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                             if used:
                                 usage = used
                             if step is not None:
-                                tool_steps.append(step)
+                                trace.append(
+                                    {
+                                        "kind": "tool_call"
+                                        if step["phase"] == "call"
+                                        else "tool_result",
+                                        **{k: v for k, v in step.items() if k != "phase"},
+                                    }
+                                )
                             if think_delta:
-                                thinking += think_delta
+                                _add_reasoning(think_delta)
                             yield frame
                     else:
                         async for chunk in provider.stream(generation):
                             answer += chunk.delta
                             if chunk.thinking:
-                                thinking += chunk.thinking
+                                _add_reasoning(chunk.thinking)
                             if chunk.usage:
                                 usage = dict(chunk.usage)
                             payload = {
@@ -551,16 +566,11 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     yield usage_frame
                 # Persist the assistant turn (with tool/reasoning meta) after a successful stream.
                 if persist_id is not None and storage is not None and answer:
-                    meta: dict[str, Any] = {}
-                    if tool_steps:
-                        meta["tool_steps"] = tool_steps
-                    if thinking:
-                        meta["thinking"] = thinking
                     await storage.conversations.add_message(
                         conversation_id=persist_id,
                         role="assistant",
                         content=answer,
-                        meta=meta or None,
+                        meta={"trace": trace} if trace else None,
                     )
                     # Long-term memory: extract durable facts from this exchange (skip incognito).
                     if config.memory_enabled and not incognito:
