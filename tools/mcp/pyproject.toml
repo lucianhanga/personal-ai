@@ -1,0 +1,19 @@
+[project]
+name = "personalai-tool-mcp"
+version = "0.6.0"
+description = "PersonalAI MCP client adapter: exposes MCP-server tools through the gateway (M7)."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [{ name = "Lucian Hanga" }]
+dependencies = ["personalai-contracts", "mcp>=1.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/personalai_tool_mcp"]
+
+[tool.uv.sources]
+personalai-contracts = { workspace = true }

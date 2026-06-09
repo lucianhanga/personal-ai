@@ -14,6 +14,7 @@ root_packages =
     personalai_storage_postgres
     personalai_modality_files
     personalai_tool_builtin
+    personalai_tool_mcp
 
 [importlinter:contract:hexagonal-layers]
 name = Hexagonal layering (dependencies point inward to contracts)
@@ -32,6 +33,7 @@ source_modules =
     personalai_storage_postgres
     personalai_modality_files
     personalai_tool_builtin
+    personalai_tool_mcp
 forbidden_modules =
     personalai_core
     personalai_backend

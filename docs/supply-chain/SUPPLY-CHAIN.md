@@ -9,7 +9,7 @@
 > [Dependency Policy](../policies/DEPENDENCY-POLICY.md). A generated SBOM (CycloneDX) is the
 > machine-readable companion to this human-readable register.
 
-- **Last reviewed:** 2026-06-09 (versioning 0.6.0 + API `/api/v1`: a manifest version bump only — **no new third-party dependencies**; M6 agent loop + web_search reused stdlib + httpx)
+- **Last reviewed:** 2026-06-09 (M7-1: added the official **`mcp`** Python SDK for the MCP client adapter — see the runtime table; transitive deps anyio/httpx-sse/pydantic-settings already vetted or pulled by the SDK)
 - **Status legend:** `planned` (vetted, not yet in code) · `adopted` (in the build) · `evaluating` · `rejected`
 - **Provenance note:** Licenses below are grounded in public sources cited in the architecture
   report. They MUST be re-verified against each project's `LICENSE` file at pin time (Phase 0).
@@ -42,6 +42,7 @@
 | **Starlette** | Encode | BSD-3-Clause | Mature | **adopted** (M0-5, via FastAPI) | ASGI toolkit underlying FastAPI | — | — |
 | **python-multipart** | Andrew Dunham / Encode | Apache-2.0 | Mature | **adopted** (M3-2) | Multipart file uploads for FastAPI | Size-limited uploads | — |
 | **jsonschema** | Julian Berman | MIT | Very mature | **adopted** (M5-1) | Validate tool/MCP I/O against manifest JSON Schemas at the gateway | Core trust boundary for tool args/results | fastjsonschema |
+| **mcp** (Python SDK) | Model Context Protocol (Anthropic) | MIT | Maturing | **adopted** (M7-1) | MCP client: connect to MCP servers (stdio/HTTP), list + call tools, wrapped behind the gateway | Third-party MCP servers are untrusted (manifest risk HIGH, sandboxed via executor tiers); the SDK itself only speaks the protocol | hand-rolled JSON-RPC client |
 | **httpx** | Encode | BSD-3-Clause | Mature | **adopted** (M0-5 test; M1 runtime) | FastAPI TestClient transport; runtime HTTP client for the Ollama provider | — | — |
 
 ## 3. Storage & retrieval
