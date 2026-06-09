@@ -86,6 +86,16 @@ export interface ToolStep {
   error?: string | null;
 }
 
+export interface ToolLogEntry {
+  index: number;
+  type: string; // "tool.invoke" | "tool.denied"
+  timestamp: string;
+  tool: string | null;
+  ok?: boolean | null;
+  error?: string | null;
+  args?: Record<string, unknown> | null;
+}
+
 function authHeaders(token: string): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -225,6 +235,14 @@ export async function fetchTools(token: string): Promise<ToolInfo[]> {
   if (!res.ok) throw new Error(`tools request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { tools?: ToolInfo[] } };
   return body.data?.tools ?? [];
+}
+
+/** The tool-call audit log (most recent first). */
+export async function fetchToolLog(token: string): Promise<ToolLogEntry[]> {
+  const res = await fetch(`${API_BASE}/api/tools/log`, { headers: authHeaders(token) });
+  if (!res.ok) throw new Error(`tool log request failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { entries?: ToolLogEntry[] } };
+  return body.data?.entries ?? [];
 }
 
 /** Invoke a tool through the gateway. */

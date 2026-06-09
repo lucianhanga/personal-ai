@@ -21,6 +21,7 @@ import {
 } from "./api";
 import { Markdown } from "./Markdown";
 import { Memory } from "./Memory";
+import { ToolLog } from "./ToolLog";
 import { Tools } from "./Tools";
 
 export function Chat({ token }: { token: string }): React.ReactElement {
@@ -37,6 +38,7 @@ export function Chat({ token }: { token: string }): React.ReactElement {
   const [incognito, setIncognito] = useState(false);
   const [showMemory, setShowMemory] = useState(false);
   const [showTools, setShowTools] = useState(false);
+  const [showLog, setShowLog] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [persistence, setPersistence] = useState(false);
@@ -386,10 +388,14 @@ export function Chat({ token }: { token: string }): React.ReactElement {
         <button data-testid="tools-show" onClick={() => setShowTools((v) => !v)}>
           {showTools ? "Hide tools" : "Tools"}
         </button>
+        <button data-testid="toollog-show" onClick={() => setShowLog((v) => !v)}>
+          {showLog ? "Hide log" : "Log"}
+        </button>
       </div>
 
       {showMemory && <Memory token={token} />}
       {showTools && <Tools token={token} />}
+      {showLog && <ToolLog token={token} />}
 
       {files.length > 0 && (
         <ul data-testid="file-list" style={{ margin: 0, paddingLeft: "1rem", fontSize: "0.8rem" }}>
