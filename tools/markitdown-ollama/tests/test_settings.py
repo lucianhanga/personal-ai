@@ -23,7 +23,7 @@ def test_defaults_point_at_local_ollama() -> None:
     s = server.settings_from_env({})
     assert s.base_url == "http://localhost:11434/v1"
     assert s.model == "qwen2.5vl:7b"
-    assert s.api_key == "ollama"  # non-empty placeholder for the OpenAI client
+    assert s.api_key == "ollama"  # pragma: allowlist secret  (placeholder, not a secret)
 
 
 def test_env_overrides() -> None:
