@@ -30,6 +30,8 @@ from starlette.responses import StreamingResponse
 from personalai_backend import __version__
 from personalai_backend.composition import Bootstrap, bootstrap
 from personalai_backend.ingestion import chunk_ids, ingest_file
+from personalai_backend.logbuffer import LOG_BUFFER
+from personalai_backend.logbuffer import install as install_log_buffer
 from personalai_contracts.ports import (
     ChatMessage,
     GenerationRequest,
@@ -169,6 +171,7 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 def create_app(boot: Bootstrap | None = None) -> FastAPI:
     """Build the FastAPI app from the assembled wiring."""
     boot = boot or bootstrap()
+    install_log_buffer()  # capture recent application logs for the /api/logs view
     # Refuse to expose a non-loopback bind without an auth token (THREAT-MODEL: fail-closed).
     if boot.config.bind_host not in _LOOPBACK_HOSTS and not boot.config.auth_token:
         raise RuntimeError(
@@ -752,5 +755,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             if e.type.startswith("tool.")
         ]
         return StructuredResult(ok=True, data={"entries": list(reversed(entries))})
+
+    @app.get("/api/logs", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    def app_logs() -> StructuredResult:
+        return StructuredResult(ok=True, data={"logs": list(reversed(LOG_BUFFER.records))})
 
     return app
