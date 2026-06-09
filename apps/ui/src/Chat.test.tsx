@@ -190,9 +190,36 @@ test("shows conversations and lazily creates one on first send", async () => {
       expect.objectContaining({ conversationId: "c2" }),
       expect.any(Function),
       expect.any(Function),
+      expect.any(Function),
     ),
   );
 });
+
+test("renders tool steps when the agent uses tools", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta, _onCit, onToolStep) => {
+    onToolStep?.({ phase: "call", tool: "web_search", args: { query: "rust" } });
+    onToolStep?.({ phase: "result", tool: "web_search", ok: true, output: { results: [] } });
+    onDelta("Here's what I found.");
+  });
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe(
+      "qwen3.6:35b-a3b",
+    ),
+  );
+  fireEvent.click(screen.getByTestId("tools-toggle"));
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "search rust" } });
+  fireEvent.click(screen.getByTestId("send"));
+
+  await waitFor(() => expect(screen.getByTestId("tool-steps")).toHaveTextContent("web_search"));
+  await waitFor(() =>
+    expect(screen.getByTestId("msg-assistant")).toHaveTextContent("Here's what I found."),
+  );
+});
+
 
 test("opens a past conversation and loads its messages", async () => {
   mockProviders();

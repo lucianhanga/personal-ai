@@ -17,6 +17,7 @@ import {
   type ConversationSummary,
   type DocumentInfo,
   type ModelInfo,
+  type ToolStep,
 } from "./api";
 import { Markdown } from "./Markdown";
 import { Memory } from "./Memory";
@@ -31,6 +32,8 @@ export function Chat({ token }: { token: string }): React.ReactElement {
   const [useRag, setUseRag] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [useMemory, setUseMemory] = useState(false);
+  const [useTools, setUseTools] = useState(false);
+  const [approveTools, setApproveTools] = useState(false);
   const [incognito, setIncognito] = useState(false);
   const [showMemory, setShowMemory] = useState(false);
   const [showTools, setShowTools] = useState(false);
@@ -39,6 +42,7 @@ export function Chat({ token }: { token: string }): React.ReactElement {
   const [persistence, setPersistence] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [citations, setCitations] = useState<Record<number, Citation[]>>({});
+  const [toolSteps, setToolSteps] = useState<Record<number, ToolStep[]>>({});
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -199,6 +203,8 @@ export function Chat({ token }: { token: string }): React.ReactElement {
           provider,
           useRag,
           useMemory,
+          useTools,
+          approveTools,
           conversationId: convId ?? undefined,
           token,
         },
@@ -207,6 +213,11 @@ export function Chat({ token }: { token: string }): React.ReactElement {
           setMessages([...history, { role: "assistant", content: acc }]);
         },
         (cites) => setCitations((prev) => ({ ...prev, [assistantIndex]: cites })),
+        (step) =>
+          setToolSteps((prev) => ({
+            ...prev,
+            [assistantIndex]: [...(prev[assistantIndex] ?? []), step],
+          })),
       );
       if (persistence) setConversations(await fetchConversations(token));
     } catch (e: unknown) {
@@ -349,6 +360,26 @@ export function Chat({ token }: { token: string }): React.ReactElement {
           />{" "}
           Use my memory
         </label>
+        <label>
+          <input
+            data-testid="tools-toggle"
+            type="checkbox"
+            checked={useTools}
+            onChange={(e) => setUseTools(e.target.checked)}
+          />{" "}
+          Use tools
+        </label>
+        {useTools && (
+          <label title="Allow high-risk tools (e.g. http_fetch) to run this session">
+            <input
+              data-testid="approve-tools-toggle"
+              type="checkbox"
+              checked={approveTools}
+              onChange={(e) => setApproveTools(e.target.checked)}
+            />{" "}
+            approve high-risk
+          </label>
+        )}
         <button data-testid="memory-show" onClick={() => setShowMemory((v) => !v)}>
           {showMemory ? "Hide memory" : "Memory"}
         </button>
@@ -394,6 +425,19 @@ export function Chat({ token }: { token: string }): React.ReactElement {
             // Assistant replies render as Markdown (block elements, so not inside a <p>).
             <div key={i} data-testid="msg-assistant" style={{ margin: "0.4rem 0" }}>
               <strong>AI:</strong>
+              {toolSteps[i]?.length ? (
+                <div data-testid="tool-steps" style={{ fontSize: "0.75rem", color: "#555" }}>
+                  {toolSteps[i].map((s, k) =>
+                    s.phase === "call" ? (
+                      <div key={k}>🔧 {s.tool}({JSON.stringify(s.args ?? {})})</div>
+                    ) : (
+                      <div key={k} style={{ color: s.ok ? "#2a7" : "#b00" }}>
+                        ↳ {s.tool}: {s.ok ? "ok" : `error: ${s.error}`}
+                      </div>
+                    ),
+                  )}
+                </div>
+              ) : null}
               <Markdown content={m.content} />
               {citations[i]?.length ? (
                 <div data-testid="citations" style={{ fontSize: "0.75rem", color: "#555" }}>

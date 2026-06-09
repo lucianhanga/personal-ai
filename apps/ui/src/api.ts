@@ -77,6 +77,15 @@ export interface ToolInvokeResult {
   error?: string;
 }
 
+export interface ToolStep {
+  phase: "call" | "result";
+  tool: string;
+  args?: Record<string, unknown> | null;
+  ok?: boolean | null;
+  output?: Record<string, unknown> | null;
+  error?: string | null;
+}
+
 function authHeaders(token: string): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -291,11 +300,14 @@ export async function streamChat(
     provider?: string;
     useRag?: boolean;
     useMemory?: boolean;
+    useTools?: boolean;
+    approveTools?: boolean;
     conversationId?: string;
     token: string;
   },
   onDelta: (delta: string) => void,
   onCitations?: (citations: Citation[]) => void,
+  onToolStep?: (step: ToolStep) => void,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
@@ -306,6 +318,8 @@ export async function streamChat(
       provider: params.provider,
       use_rag: params.useRag ?? false,
       use_memory: params.useMemory ?? false,
+      use_tools: params.useTools ?? false,
+      approve_tools: params.approveTools ?? false,
       conversation_id: params.conversationId,
     }),
   });
@@ -328,6 +342,10 @@ export async function streamChat(
       const data = dataLine.slice("data: ".length);
       if (event === "citations") {
         onCitations?.(JSON.parse(data) as Citation[]);
+        continue;
+      }
+      if (event === "tool") {
+        onToolStep?.(JSON.parse(data) as ToolStep);
         continue;
       }
       const payload = JSON.parse(data) as { delta?: string };
