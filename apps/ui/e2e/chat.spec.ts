@@ -24,6 +24,8 @@ const MODELS_BODY = JSON.stringify({
 
 const CHAT_SSE =
   'event: citations\ndata: [{"n":1,"source_id":"d1","locator":"chunk 0","score":0.9,"name":"geo.txt"}]\n\n' +
+  'event: tool\ndata: {"phase":"call","tool":"web_search","args":{"query":"x"}}\n\n' +
+  'event: tool\ndata: {"phase":"result","tool":"web_search","ok":true,"output":{"results":[]}}\n\n' +
   'data: {"delta":"Hello","done":false}\n\n' +
   'data: {"delta":" world","done":false}\n\n' +
   'data: {"delta":"","done":true,"finish_reason":"stop"}\n\n';
@@ -91,6 +93,7 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   await expect(page.getByTestId("msg-user")).toContainText("hi there");
   await expect(page.getByTestId("msg-assistant")).toContainText("Hello world");
   await expect(page.getByTestId("citations")).toContainText("geo.txt");
+  await expect(page.getByTestId("tool-steps")).toContainText("web_search");
 
   // Memory panel opens and shows the empty state.
   await page.getByTestId("memory-show").click();
