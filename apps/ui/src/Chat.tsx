@@ -84,7 +84,7 @@ export function Chat({
   const [useMemory, setUseMemory] = useState(true);
   const [useTools, setUseTools] = useState(true);
   const [approveTools, setApproveTools] = useState(true);
-  const [useThink, setUseThink] = useState(true);
+  const [reasoning, setReasoning] = useState<"off" | "brief" | "full">("full");
   const [incognito, setIncognito] = useState(false);
   const [showSettings, setShowSettings] = useState(true);
   const [showMemory, setShowMemory] = useState(false);
@@ -332,7 +332,8 @@ export function Chat({
           useMemory,
           useTools,
           approveTools,
-          think: useThink,
+          think: reasoning !== "off",
+          reasoning,
           conversationId: targetId ?? undefined,
           token,
         },
@@ -584,15 +585,17 @@ export function Chat({
               <span style={{ color: "#555" }}>Reasoning</span>
               <label
                 style={{ marginLeft: "auto" }}
-                title="Ask the model to think before answering (slower). The reasoning is saved and shown under each message's Details."
+                title="How much the model thinks before answering. Off = no reasoning; Brief = think but stay concise; Full = think freely (slower). Shown under each message's Details."
               >
-                <input
-                  data-testid="think-toggle"
-                  type="checkbox"
-                  checked={useThink}
-                  onChange={(e) => setUseThink(e.target.checked)}
-                />{" "}
-                Enable reasoning
+                <select
+                  data-testid="reasoning-select"
+                  value={reasoning}
+                  onChange={(e) => setReasoning(e.target.value as "off" | "brief" | "full")}
+                >
+                  <option value="off">Off</option>
+                  <option value="brief">Brief</option>
+                  <option value="full">Full</option>
+                </select>
               </label>
             </div>
 

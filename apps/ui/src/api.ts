@@ -398,6 +398,7 @@ export async function streamChat(
     useTools?: boolean;
     approveTools?: boolean;
     think?: boolean;
+    reasoning?: "off" | "brief" | "full";
     conversationId?: string;
     token: string;
   },
@@ -420,6 +421,7 @@ export async function streamChat(
       use_tools: params.useTools ?? false,
       approve_tools: params.approveTools ?? false,
       think: params.think ?? false,
+      reasoning: params.reasoning,
       conversation_id: params.conversationId,
     }),
   });

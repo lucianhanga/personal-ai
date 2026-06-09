@@ -108,6 +108,9 @@ class ChatRequest(BaseModel):
     provider: str | None = None
     # Default reasoning off for clean chat; clients can opt into a model's thinking trace.
     think: bool | None = False
+    # Reasoning amount: "off" (no thinking), "brief" (think + concise hint), "full" (think). When
+    # set it takes precedence over `think`. None falls back to `think` for backward compatibility.
+    reasoning: Literal["off", "brief", "full"] | None = None
     # Retrieval-augmented generation over ingested documents (M3-3).
     use_rag: bool = False
     rag_top_k: int = 4
@@ -518,10 +521,22 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         context_messages, citations = await _retrieve_context(req)
         memory_messages = await _memory_context(req, incognito)
         stm_messages = await _assemble_stm(req, provider, conv)
+        # Reasoning amount: `reasoning` (off/brief/full) overrides `think`; "brief" also nudges the
+        # model to keep its reasoning short (no hard length dial exists for local models).
+        think_effective = req.think if req.reasoning is None else req.reasoning != "off"
+        brief_messages = (
+            [
+                ChatMessage(
+                    Role.SYSTEM, "Keep your reasoning brief and focused; do not over-deliberate."
+                )
+            ]
+            if req.reasoning == "brief"
+            else []
+        )
         generation = GenerationRequest(
-            messages=[*context_messages, *memory_messages, *stm_messages],
+            messages=[*brief_messages, *context_messages, *memory_messages, *stm_messages],
             model=req.model or config.default_model,
-            think=req.think,
+            think=think_effective,
         )
 
         # Persist the user turn now (if a conversation is targeted and storage is available).
