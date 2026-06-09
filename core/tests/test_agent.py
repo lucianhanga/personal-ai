@@ -130,13 +130,23 @@ def test_agent_surfaces_reasoning() -> None:
     assert events[-1].type == "final"
 
 
-def test_agent_stops_at_iteration_cap() -> None:
-    class _Loopy(FakeModelProvider):
+def test_agent_forces_answer_after_cap() -> None:
+    """At the tool-step cap, a final tools-disabled turn must still produce a streamed answer."""
+
+    class _AlwaysTool(FakeModelProvider):
         async def generate(self, request: GenerationRequest) -> GenerationResult:
+            if request.tools:  # budget remains -> keep calling the tool (with some chatter)
+                return GenerationResult(
+                    text="ok",
+                    model=request.model,
+                    tool_calls=[ToolCallRequest(name="calculator", arguments={})],
+                )
+            # forced-final turn (tools disabled) -> synthesize an answer (with reasoning + usage)
             return GenerationResult(
-                text="thinking",
+                text="Best answer from what I found.",
                 model=request.model,
-                tool_calls=[ToolCallRequest(name="calculator", arguments={})],
+                thinking="wrapping up",
+                usage={"total_tokens": 5},
             )
 
     async def _run() -> list[AgentEvent]:
@@ -144,7 +154,7 @@ def test_agent_stops_at_iteration_cap() -> None:
             ev
             async for ev in run_agent(
                 messages=[ChatMessage(Role.USER, "go")],
-                provider=_Loopy(),
+                provider=_AlwaysTool(),
                 model="m",
                 gateway=_gateway(),
                 tools=[RegisteredTool(CALC, _Calc())],
@@ -153,5 +163,16 @@ def test_agent_stops_at_iteration_cap() -> None:
         ]
 
     events = asyncio.run(_run())
-    assert events[-1].type == "final"  # bailed out with the last text after the cap
-    assert events[-1].answer == "thinking"
+    assert sum(e.type == "tool_call" for e in events) == 2  # used the whole budget
+    answer = "".join(e.answer or "" for e in events if e.type == "answer")
+    assert "Best answer from what I found." in answer  # forced-final streamed a real answer
+    assert events[-1].type == "final" and events[-1].answer == "Best answer from what I found."
+    assert events[-1].usage == {"total_tokens": 5}  # usage from the forced-final turn
+
+
+def test_large_tool_output_is_truncated() -> None:
+    from personalai_core.agent import _tool_payload
+
+    payload = _tool_payload(True, {"content": "x" * 50_000}, None)
+    assert len(payload) < 50_000 and "truncated" in payload
+    assert len(_tool_payload(True, {"content": "small"}, None)) < 100  # short output untouched

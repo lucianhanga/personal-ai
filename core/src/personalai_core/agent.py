@@ -27,6 +27,26 @@ from personalai_contracts.ports import (
 from personalai_contracts.schemas.tools import Permission
 from personalai_core.gateway import RegisteredTool, ToolGateway
 
+# Cap how much of each tool result is fed back into the prompt. Tools like web search/extract can
+# return tens of KB each; across several calls that overflows the context window and the model ends
+# up unable to produce a final answer. Truncating keeps the conversation within budget.
+MAX_TOOL_RESULT_CHARS = 4000
+
+# Used to force a final answer once the tool budget is exhausted (see run_agent).
+_FORCE_ANSWER = (
+    "You have reached the tool-use limit. Answer the user now using the information already "
+    "gathered above; do not call any more tools. If it is insufficient, say what you found and "
+    "what is still missing."
+)
+
+
+def _tool_payload(result_ok: bool, output: Mapping[str, Any], error: str | None) -> str:
+    """Render a tool result for the model, truncating very large outputs to protect the context."""
+    payload = json.dumps(dict(output)) if result_ok else f"error: {error}"
+    if len(payload) > MAX_TOOL_RESULT_CHARS:
+        payload = payload[:MAX_TOOL_RESULT_CHARS] + f"\n...[truncated {len(payload)} chars]"
+    return payload
+
 
 @dataclass(frozen=True)
 class AgentEvent:
@@ -109,15 +129,24 @@ async def run_agent(
                 output=dict(tool_result.output),
                 error=tool_result.error,
             )
-            payload = (
-                json.dumps(dict(tool_result.output))
-                if tool_result.ok
-                else f"error: {tool_result.error}"
-            )
+            payload = _tool_payload(tool_result.ok, tool_result.output, tool_result.error)
             convo.append(ChatMessage(Role.TOOL, f"{call.name}: {payload}"))
 
+    # Tool budget exhausted: do one final turn with tools disabled so the model MUST answer from
+    # what it gathered (streamed, so it reaches the UI and is persisted) instead of looping forever.
+    convo.append(ChatMessage(Role.SYSTEM, _FORCE_ANSWER))
+    final_text = ""
+    async for chunk in provider.stream(GenerationRequest(messages=convo, model=model, think=think)):
+        if chunk.thinking:
+            yield AgentEvent(type="reasoning", thinking=chunk.thinking)
+        if chunk.delta:
+            final_text += chunk.delta
+            yield AgentEvent(type="answer", answer=chunk.delta)
+        if chunk.usage:
+            usage = chunk.usage
     yield AgentEvent(
         type="final",
-        answer=text or "I couldn't complete that within the tool-step limit.",
+        answer=final_text
+        or "I couldn't find enough information to answer within the tool-step limit.",
         usage=dict(usage),
     )
