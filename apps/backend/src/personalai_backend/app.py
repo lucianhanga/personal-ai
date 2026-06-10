@@ -56,7 +56,7 @@ from personalai_core import (
     summarize,
 )
 from personalai_core.registries import Registries
-from personalai_core.security import current_conversation
+from personalai_core.security import assert_egress_allowed, current_conversation
 from personalai_modality_files import UnsupportedFileTypeError
 from personalai_storage_postgres import (
     Conversation,
@@ -126,18 +126,41 @@ class ChatRequest(BaseModel):
 
 
 class McpServerIn(BaseModel):
-    """Request body for creating/updating an MCP server (stdio)."""
+    """Request body for creating/updating an MCP server (stdio command, or a remote HTTP url)."""
 
-    command: str
+    command: str = ""
     args: list[str] = []
     env: dict[str, str] = {}
+    url: str | None = None
+    headers: dict[str, str] = {}
     enabled: bool = True
+
+    def to_spec(self) -> dict[str, Any]:
+        spec: dict[str, Any] = {
+            "command": self.command,
+            "args": self.args,
+            "env": self.env,
+            "enabled": self.enabled,
+        }
+        if self.url:
+            spec["url"] = self.url
+            spec["headers"] = self.headers
+        return spec
 
 
 class McpImport(BaseModel):
     """Bulk import: a standard ``mcpServers`` map (Claude Desktop shape)."""
 
     mcpServers: dict[str, McpServerIn] = {}
+
+    def require_command_or_url(self) -> None:
+        """Reject entries that specify neither a stdio command nor a remote url (fail-closed)."""
+        for name, server in self.mcpServers.items():
+            if not server.command.strip() and not server.url:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"{name}: command or url required",
+                )
 
 
 class ConversationCreate(BaseModel):
@@ -275,7 +298,11 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     app.state.bootstrap = boot
     app.state.config = boot.config
     app.state.storage = None  # set on startup if a database is reachable
-    app.state.mcp_manager = McpManager(boot.registries, _mcp_config_path(boot.config))
+    app.state.mcp_manager = McpManager(
+        boot.registries,
+        _mcp_config_path(boot.config),
+        egress_guard=lambda host: assert_egress_allowed(boot.config, host),
+    )
     app.state.bg_tasks = set()  # fire-and-forget background tasks (e.g. memory extraction)
 
     # CORS restricted to the configured (loopback) origins: enables the browser SPA while still
@@ -1044,15 +1071,11 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     )
     async def upsert_mcp(name: str, body: McpServerIn) -> StructuredResult:
         # Create/update a server, persist to mcp.json, and apply live (connect if enabled).
-        if not body.command.strip():
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="command required")
-        spec: dict[str, Any] = {
-            "command": body.command,
-            "args": body.args,
-            "env": body.env,
-            "enabled": body.enabled,
-        }
-        server = await app.state.mcp_manager.upsert(name, spec)
+        if not body.command.strip() and not body.url:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="command or url required"
+            )
+        server = await app.state.mcp_manager.upsert(name, body.to_spec())
         return StructuredResult(ok=True, data={"server": server})
 
     @app.get(
@@ -1071,10 +1094,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     )
     async def put_mcp_config(body: McpImport) -> StructuredResult:
         # Replace the whole config and reconcile live (connect new/changed, drop removed).
-        desired = {
-            name: {"command": s.command, "args": s.args, "env": s.env, "enabled": s.enabled}
-            for name, s in body.mcpServers.items()
-        }
+        body.require_command_or_url()
+        desired = {name: s.to_spec() for name, s in body.mcpServers.items()}
         result = await app.state.mcp_manager.replace_config(desired)
         return StructuredResult(ok=True, data={"servers": result})
 
@@ -1087,10 +1108,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         # Merge a pasted mcpServers map into the config and connect each (live).
         if not body.mcpServers:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no servers")
-        servers = {
-            name: {"command": s.command, "args": s.args, "env": s.env, "enabled": s.enabled}
-            for name, s in body.mcpServers.items()
-        }
+        body.require_command_or_url()
+        servers = {name: s.to_spec() for name, s in body.mcpServers.items()}
         result = await app.state.mcp_manager.import_servers(servers)
         return StructuredResult(ok=True, data={"servers": result})
 
