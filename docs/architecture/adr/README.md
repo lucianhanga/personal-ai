@@ -11,5 +11,8 @@ lightweight [MADR](https://adr.github.io/madr/)-style format.
 | [0004](./0004-tool-mcp-gateway-sandbox.md) | All side effects via a sandboxed Tool/MCP gateway | Accepted |
 | [0005](./0005-postgres-pgvector-storage.md) | PostgreSQL + pgvector as the storage/retrieval spine | Accepted |
 | [0006](./0006-ui-react-tauri.md) | UI: React SPA wrapped by a Tauri desktop shell | Accepted |
+| [0007](./0007-tool-execution-sandbox-tiers.md) | Tool execution behind an Executor seam, in-process tier first | Accepted |
+| [0008](./0008-single-agent-loop.md) | Single-agent tool-calling loop (LangGraph deferred) | Accepted |
+| [0009](./0009-mcp-isolation-posture.md) | MCP isolation: out-of-process servers + gateway envelope; container executor deferred | Accepted |
 
 > New decisions get the next number. Status: Proposed → Accepted → Superseded (link the successor).
