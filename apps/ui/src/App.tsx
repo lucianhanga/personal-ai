@@ -13,11 +13,24 @@ const STATUS_LABEL: Record<Status, string> = {
 
 const TOKEN_KEY = "personalai_token";
 
+// Keep the bearer token in sessionStorage (cleared when the tab closes, not shared across tabs)
+// rather than localStorage, to shrink the window an XSS bug could exfiltrate it. Migrate any token
+// left in localStorage by older builds, then remove the persistent copy.
+export function readToken(): string {
+  const fromSession = sessionStorage.getItem(TOKEN_KEY);
+  if (fromSession) return fromSession;
+  const legacy = localStorage.getItem(TOKEN_KEY);
+  if (legacy) {
+    sessionStorage.setItem(TOKEN_KEY, legacy);
+    localStorage.removeItem(TOKEN_KEY);
+    return legacy;
+  }
+  return import.meta.env.VITE_API_TOKEN ?? "";
+}
+
 export function App(): React.ReactElement {
   const [status, setStatus] = useState<Status>("loading");
-  const [token, setToken] = useState<string>(
-    () => localStorage.getItem(TOKEN_KEY) ?? import.meta.env.VITE_API_TOKEN ?? "",
-  );
+  const [token, setToken] = useState<string>(readToken);
 
   useEffect(() => {
     let active = true;
@@ -31,7 +44,8 @@ export function App(): React.ReactElement {
 
   function updateToken(value: string): void {
     setToken(value);
-    localStorage.setItem(TOKEN_KEY, value);
+    sessionStorage.setItem(TOKEN_KEY, value);
+    localStorage.removeItem(TOKEN_KEY); // never keep a persistent copy
   }
 
   return (

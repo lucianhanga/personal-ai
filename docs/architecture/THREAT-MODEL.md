@@ -71,7 +71,10 @@ The M0-10 primitives are a foundation; these gaps are deliberate and tracked:
   (loopback) allowlist and handles preflight; requests with no `Origin` (curl, tests) are
   unaffected. The bearer token is the real auth control (credentials/cookies are not used). A
   non-loopback bind without an auth token is refused at startup. CSRF protection beyond this is
-  unnecessary while loopback-only.
+  unnecessary while loopback-only. The web UI keeps the token in **`sessionStorage`** (cleared when
+  the tab closes; migrated off `localStorage`) to shrink the XSS exfiltration window. **Rotate**
+  `PERSONALAI_AUTH_TOKEN` periodically and immediately if it may have been exposed (set a new value
+  in the env and re-enter it in the UI; the old token stops working at once).
 - **Release signature verification** uses a repo-scoped identity regexp; tightening to the exact
   release workflow/tag is deferred to the hardening milestone (M11).
 
