@@ -87,6 +87,38 @@ test("toggle disconnect calls upsert with enabled=false", async () => {
   );
 });
 
+test("import parses pasted JSON and calls the API", async () => {
+  vi.spyOn(api, "fetchMcp").mockResolvedValue([]);
+  const imp = vi.spyOn(api, "importMcpServers").mockResolvedValue([srv()]);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+
+  render(<McpPanel token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("mcp-empty")).toBeInTheDocument());
+  fireEvent.click(screen.getByTestId("mcp-import-open"));
+  fireEvent.change(screen.getByTestId("mcp-import-text"), {
+    target: {
+      value: '{"mcpServers":{"time":{"command":"uvx","args":["mcp-server-time"]}}}',
+    },
+  });
+  fireEvent.click(screen.getByTestId("mcp-import-run"));
+
+  await waitFor(() =>
+    expect(imp).toHaveBeenCalledWith("demo", {
+      time: { command: "uvx", args: ["mcp-server-time"] },
+    }),
+  );
+});
+
+test("import shows an error on invalid JSON", async () => {
+  vi.spyOn(api, "fetchMcp").mockResolvedValue([]);
+  render(<McpPanel token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("mcp-empty")).toBeInTheDocument());
+  fireEvent.click(screen.getByTestId("mcp-import-open"));
+  fireEvent.change(screen.getByTestId("mcp-import-text"), { target: { value: "not json" } });
+  fireEvent.click(screen.getByTestId("mcp-import-run"));
+  await waitFor(() => expect(screen.getByTestId("mcp-error")).toHaveTextContent(/invalid JSON/));
+});
+
 test("delete asks for confirmation and calls the API", async () => {
   vi.spyOn(api, "fetchMcp").mockResolvedValue([srv()]);
   const del = vi.spyOn(api, "deleteMcpServer").mockResolvedValue();

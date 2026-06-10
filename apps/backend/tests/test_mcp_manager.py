@@ -104,7 +104,7 @@ def test_start_connects_enabled_from_file_and_aclose(tmp_path: Path) -> None:
     regs = Registries()
     mgr = McpManager(regs, path, client_factory=_FakeClient)
     asyncio.run(mgr.start())
-    listed = {s["name"]: s for s in mgr.list()}
+    listed = {s["name"]: s for s in mgr.list_servers()}
     assert listed["a"]["connected"] and not listed["b"]["connected"]
     assert "a.do" in regs.tools.names()
     asyncio.run(mgr.aclose())

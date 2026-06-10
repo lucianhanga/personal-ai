@@ -50,7 +50,7 @@ class McpManager:
         for name, spec in read_servers(self._path).items():
             await self._apply(name, spec)
 
-    def list(self) -> list[dict[str, Any]]:
+    def list_servers(self) -> list[dict[str, Any]]:
         """Each configured server merged with its live status (config + connected/tools/error)."""
         out: list[dict[str, Any]] = []
         for name, spec in read_servers(self._path).items():
@@ -73,7 +73,16 @@ class McpManager:
         servers[name] = spec
         write_servers(self._path, servers)
         await self._apply(name, spec)
-        return next(s for s in self.list() if s["name"] == name)
+        return next(s for s in self.list_servers() if s["name"] == name)
+
+    async def import_servers(self, servers: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+        """Merge a batch of servers into the config (write once) and apply each live."""
+        current = read_servers(self._path)
+        current.update(servers)
+        write_servers(self._path, current)
+        for name, spec in servers.items():
+            await self._apply(name, spec)
+        return self.list_servers()
 
     async def delete(self, name: str) -> bool:
         """Disconnect (if connected) and remove the server from the config. False if unknown."""
