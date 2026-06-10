@@ -37,11 +37,31 @@ model outputs, tool results, and MCP servers (local and remote) may all be adver
 | T9 | Extension over-reach | Browser extension scraping | MV3 minimal perms; explicit user capture; authenticated localhost; audited |
 | T10 | Model/provider isolation failure | Cross-provider leakage | Provider isolation; egress per provider; local-by-default |
 
-## 5. Out of scope (v1)
+## 5. Out of scope (v1 local) / addressed by §4b (hosted)
 
 - Nation-state physical attacks on the host.
 - Vulnerabilities in the underlying OS/hardware.
-- Multi-tenant cloud hardening (single-user/self-host is the v1 target).
+- Multi-tenant cloud hardening — **no longer out of scope**: see §4b (ADR-0010). The base model
+  (§2) of "operator == user" holds for **local mode**; hosted mode replaces it with authenticated,
+  tenant-isolated access.
+
+## 4b. Hosted multi-tenant threats and controls (ADR-0010)
+
+When deployed as a multi-tenant SaaS, the trust boundary changes: untrusted internet users share one
+instance. The base assumption "operator == user" (§2) is replaced by per-request authentication +
+tenant isolation. Controls:
+
+| # | Threat | Control |
+|---|---|---|
+| H1 | Cross-tenant data access / IDOR (one tenant reads another's chats/memory/docs/embeddings) | Fail-closed request-scoped `SecurityContext{subject_id, tenant_id}`; **two layers** — app-layer tenant filter **and** Postgres RLS (`ENABLE`+`FORCE`, `USING`+`WITH CHECK`), `tenant_id` set per-transaction; no context ⇒ deny |
+| H2 | RLS bypass / forgotten filter | `TenantDb.acquire()` binds the tenant before any repo gets a connection (forgetting is structurally impossible); app role is `NOBYPASSRLS`; only migrations use the `BYPASSRLS` admin role |
+| H3 | Session theft / fixation / CSRF | Opaque **server-side revocable** sessions in a `__Host-` cookie (Secure/HttpOnly/SameSite=Strict) + CSRF tokens; sliding + absolute timeouts; argon2id / WebAuthn passkeys |
+| H4 | Per-tenant secret leakage | Secrets encrypted at rest (envelope, `KeyProvider` port), tenant-scoped, never cross-tenant; existing redaction/masking still applies |
+| H5 | **Tenant code execution on shared host** via stdio MCP | **Hosted = remote-HTTP MCP only**; stdio is local-only; re-enabling stdio in hosting requires the container executor tier (ADR-0009) |
+| H6 | Noisy-neighbor / resource exhaustion | Per-tenant egress allowlist, rate limits, quotas; request body limits (already enforced) |
+
+Deferred hardening (post-MVP): MFA/TOTP, OIDC/SSO, container MCP sandbox tier, DB-per-tenant for
+large customers.
 
 ## 6. Residual risks (tracked)
 
