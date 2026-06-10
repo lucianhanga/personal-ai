@@ -79,6 +79,32 @@ def test_upsert_requires_command(tmp_path: Path) -> None:
         assert bad.status_code == 400
 
 
+def test_import_connects_multiple(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        body = {
+            "mcpServers": {
+                "a": {"command": "npx", "args": ["x"]},
+                "b": {"command": "uvx", "enabled": False},
+            }
+        }
+        servers = client.post("/api/v1/mcp/import", headers=AUTH, json=body).json()["data"][
+            "servers"
+        ]
+        by_name = {s["name"]: s for s in servers}
+        assert by_name["a"]["connected"] is True and by_name["a"]["tools"] == ["a.do"]
+        assert by_name["b"]["connected"] is False  # imported but disabled
+
+
+def test_import_rejects_empty_and_bad_entries(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        assert (
+            client.post("/api/v1/mcp/import", headers=AUTH, json={"mcpServers": {}}).status_code
+            == 400
+        )
+        bad = {"mcpServers": {"x": {"args": ["y"]}}}  # missing command
+        assert client.post("/api/v1/mcp/import", headers=AUTH, json=bad).status_code == 422
+
+
 def test_delete_removes(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         client.put("/api/v1/mcp/servers/pw", headers=AUTH, json={"command": "npx"})

@@ -326,6 +326,21 @@ export async function upsertMcpServer(
   return body.data!.server!;
 }
 
+/** Bulk import a standard `mcpServers` map (merge + connect each live). Returns the updated list. */
+export async function importMcpServers(
+  token: string,
+  mcpServers: Record<string, McpServerInput>,
+): Promise<McpServer[]> {
+  const res = await fetch(`${API_BASE}/api/v1/mcp/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ mcpServers }),
+  });
+  if (!res.ok) throw new Error(`import MCP servers failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { servers?: McpServer[] } };
+  return body.data?.servers ?? [];
+}
+
 /** Disconnect (if connected) and remove an MCP server from the config. */
 export async function deleteMcpServer(token: string, name: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/mcp/servers/${encodeURIComponent(name)}`, {

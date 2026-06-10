@@ -134,6 +134,12 @@ class McpServerIn(BaseModel):
     enabled: bool = True
 
 
+class McpImport(BaseModel):
+    """Bulk import: a standard ``mcpServers`` map (Claude Desktop shape)."""
+
+    mcpServers: dict[str, McpServerIn] = {}
+
+
 class ConversationCreate(BaseModel):
     """Request body for creating a conversation."""
 
@@ -978,7 +984,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.get("/api/v1/mcp", response_model=StructuredResult, dependencies=[Depends(_require_token)])
     def list_mcp() -> StructuredResult:
         # Configured MCP servers + connect status + the tools each exposed (behind the gateway).
-        return StructuredResult(ok=True, data={"servers": app.state.mcp_manager.list()})
+        return StructuredResult(ok=True, data={"servers": app.state.mcp_manager.list_servers()})
 
     @app.put(
         "/api/v1/mcp/servers/{name}",
@@ -997,6 +1003,22 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         }
         server = await app.state.mcp_manager.upsert(name, spec)
         return StructuredResult(ok=True, data={"server": server})
+
+    @app.post(
+        "/api/v1/mcp/import",
+        response_model=StructuredResult,
+        dependencies=[Depends(_require_token)],
+    )
+    async def import_mcp(body: McpImport) -> StructuredResult:
+        # Merge a pasted mcpServers map into the config and connect each (live).
+        if not body.mcpServers:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no servers")
+        servers = {
+            name: {"command": s.command, "args": s.args, "env": s.env, "enabled": s.enabled}
+            for name, s in body.mcpServers.items()
+        }
+        result = await app.state.mcp_manager.import_servers(servers)
+        return StructuredResult(ok=True, data={"servers": result})
 
     @app.delete(
         "/api/v1/mcp/servers/{name}",

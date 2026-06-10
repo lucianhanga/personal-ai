@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 
-import { deleteMcpServer, fetchMcp, upsertMcpServer, type McpServer } from "./api";
+import {
+  deleteMcpServer,
+  fetchMcp,
+  importMcpServers,
+  upsertMcpServer,
+  type McpServer,
+  type McpServerInput,
+} from "./api";
 
 /** Parse "KEY=value" lines into an object (blank/comment lines ignored). */
 function parseEnv(text: string): Record<string, string> {
@@ -36,6 +43,7 @@ export function McpPanel({ token }: { token: string }): React.ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState<FormState | null>(null); // open editor (add or edit)
+  const [importText, setImportText] = useState<string | null>(null); // open import box
 
   function reload(): void {
     fetchMcp(token)
@@ -94,6 +102,33 @@ export function McpPanel({ token }: { token: string }): React.ReactElement {
     }
   }
 
+  async function runImport(): Promise<void> {
+    if (importText === null) return;
+    let map: Record<string, McpServerInput>;
+    try {
+      const parsed = JSON.parse(importText);
+      // Accept either {"mcpServers": {...}} or the bare map.
+      map = (parsed.mcpServers ?? parsed.servers ?? parsed) as Record<string, McpServerInput>;
+      if (typeof map !== "object" || Array.isArray(map) || Object.keys(map).length === 0) {
+        throw new Error("expected an mcpServers object");
+      }
+    } catch (e: unknown) {
+      setError(`invalid JSON: ${e}`);
+      return;
+    }
+    if (!window.confirm("Import & connect these servers? They run programs on your machine.")) return;
+    setBusy(true);
+    try {
+      await importMcpServers(token, map);
+      setImportText(null);
+      reload();
+    } catch (e: unknown) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function remove(name: string): Promise<void> {
     if (!window.confirm(`Remove MCP server "${name}"?`)) return;
     setBusy(true);
@@ -125,10 +160,40 @@ export function McpPanel({ token }: { token: string }): React.ReactElement {
     >
       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
         <strong style={{ flex: 1 }}>MCP servers</strong>
+        <button data-testid="mcp-import-open" onClick={() => setImportText("")} disabled={busy}>
+          Import
+        </button>
         <button data-testid="mcp-add" onClick={() => setForm({ ...EMPTY })} disabled={busy}>
           + Add
         </button>
       </div>
+
+      {importText !== null && (
+        <div
+          data-testid="mcp-import"
+          style={{ borderTop: "1px solid #ddd", marginTop: "0.5rem", paddingTop: "0.5rem" }}
+        >
+          <div style={{ color: "#888", marginBottom: 4 }}>
+            Paste an <code>mcpServers</code> JSON block (Claude Desktop format):
+          </div>
+          <textarea
+            data-testid="mcp-import-text"
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+            rows={8}
+            placeholder={'{\n  "mcpServers": {\n    "time": { "command": "uvx", "args": ["mcp-server-time"] }\n  }\n}'}
+            style={{ width: "100%", marginBottom: 4, fontFamily: "monospace" }}
+          />
+          <div style={{ display: "flex", gap: "0.4rem" }}>
+            <button data-testid="mcp-import-run" onClick={() => void runImport()} disabled={busy}>
+              Import &amp; connect
+            </button>
+            <button data-testid="mcp-import-cancel" onClick={() => setImportText(null)} disabled={busy}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {error && (
         <p data-testid="mcp-error" style={{ color: "#b00" }}>
