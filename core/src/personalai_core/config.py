@@ -45,6 +45,7 @@ _ENV_FIELDS = {
     "MEMORY_ENABLED": "memory_enabled",
     "MEMORY_TOP_K": "memory_top_k",
     "GROUNDING_ENABLED": "grounding_enabled",
+    "AUDIT_LOG_PATH": "audit_log_path",
 }
 
 _INT_FIELDS = {
@@ -105,6 +106,8 @@ class CoreConfig(StrictModel):
     memory_top_k: int = 5
     # Inject a grounding/anti-hallucination system prompt (ground in context/tools; admit doubt).
     grounding_enabled: bool = True
+    # Append-only JSONL audit sink path (survives restart); empty = in-memory only.
+    audit_log_path: str = ""
     bind_host: str = Field(default="127.0.0.1", description="Loopback by default.")
     bind_port: int = Field(default=8765, ge=1, le=65535)
     egress_enabled: bool = Field(default=False, description="Network egress off by default.")

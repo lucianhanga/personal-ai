@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 from personalai_core import CoreConfig, InProcessExecutor, Registries, ToolGateway
 from personalai_core.security import AuditLog, EgressBlockedError, assert_egress_allowed
@@ -100,7 +101,9 @@ def bootstrap(
     registries = Registries()
     register_adapters(registries, resolved_config)
 
-    audit = AuditLog()
+    # Durable audit: append events to a JSONL sink (survives restart) when a path is configured.
+    audit_path = Path(resolved_config.audit_log_path) if resolved_config.audit_log_path else None
+    audit = AuditLog(sink_path=audit_path)
 
     def _egress_check(host: str) -> None:
         assert_egress_allowed(resolved_config, host)
