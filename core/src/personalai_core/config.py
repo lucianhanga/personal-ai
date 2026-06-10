@@ -40,6 +40,7 @@ _ENV_FIELDS = {
     "EMBED_PROVIDER": "embed_provider",
     "EMBED_MODEL": "embed_model",
     "MAX_UPLOAD_BYTES": "max_upload_bytes",
+    "MAX_REQUEST_BYTES": "max_request_bytes",
     "STM_KEEP_RECENT": "stm_keep_recent",
     "STM_SUMMARIZE": "stm_summarize",
     "MEMORY_ENABLED": "memory_enabled",
@@ -51,6 +52,7 @@ _ENV_FIELDS = {
 _INT_FIELDS = {
     "bind_port",
     "max_upload_bytes",
+    "max_request_bytes",
     "stm_keep_recent",
     "memory_top_k",
     "ollama_num_ctx",
@@ -98,6 +100,8 @@ class CoreConfig(StrictModel):
     embed_provider: str = "ollama"
     embed_model: str = "mxbai-embed-large"
     max_upload_bytes: int = 10_000_000
+    # Hard ceiling on any request body (DoS guard); exceeds max_upload_bytes + multipart overhead.
+    max_request_bytes: int = 12_000_000
     # Short-term memory: keep the last N messages verbatim; fold older turns into a rolling summary.
     stm_keep_recent: int = 10
     stm_summarize: bool = True

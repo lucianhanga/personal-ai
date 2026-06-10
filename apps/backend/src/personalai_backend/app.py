@@ -27,7 +27,7 @@ from typing import Any, Literal
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from starlette.responses import StreamingResponse
+from starlette.responses import JSONResponse, StreamingResponse
 
 from personalai_backend import __version__
 from personalai_backend.composition import Bootstrap, bootstrap
@@ -288,6 +288,20 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def _limit_body_size(request: Request, call_next: Any) -> Any:
+        # Reject oversized request bodies up front (DoS guard) by the declared Content-Length.
+        cl = request.headers.get("content-length")
+        if cl and cl.isdigit() and int(cl) > app.state.config.max_request_bytes:
+            return JSONResponse(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                content=StructuredResult(
+                    ok=False,
+                    error=ErrorInfo(code="E_TOO_LARGE", message="request body too large"),
+                ).model_dump(),
+            )
+        return await call_next(request)
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
@@ -732,7 +746,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     async def upload_file(file: UploadFile = File(...)) -> StructuredResult:
         config: CoreConfig = app.state.config
         storage = _require_storage()
-        content = await file.read()
+        # Read at most max_upload_bytes + 1 so an oversized file is rejected without buffering it.
+        content = await file.read(config.max_upload_bytes + 1)
         if len(content) > config.max_upload_bytes:
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,

@@ -67,6 +67,20 @@ def client() -> TestClient:
     return TestClient(create_app(bootstrap(config=config)))
 
 
+def test_oversized_request_body_is_rejected() -> None:
+    config = CoreConfig(auth_token=TOKEN, max_request_bytes=100)
+    client = TestClient(create_app(bootstrap(config=config)))
+    # Body exceeds the configured ceiling -> 413 from the middleware (before routing/auth).
+    resp = client.post("/api/v1/chat", content=b"x" * 500)
+    assert resp.status_code == 413
+    assert resp.json()["error"]["code"] == "E_TOO_LARGE"
+
+
+def test_normal_request_body_passes_the_limit(client: TestClient) -> None:
+    # A small body is under the default ceiling and proceeds to normal handling (401 without auth).
+    assert client.post("/api/v1/chat", json={"messages": []}).status_code == 401
+
+
 def test_health_is_public(client: TestClient) -> None:
     resp = client.get("/health")
     assert resp.status_code == 200
