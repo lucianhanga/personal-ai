@@ -77,6 +77,13 @@ The M0-10 primitives are a foundation; these gaps are deliberate and tracked:
   in the env and re-enter it in the UI; the old token stops working at once).
 - **Release signature verification** uses a repo-scoped identity regexp; tightening to the exact
   release workflow/tag is deferred to the hardening milestone (M11).
+- **Audit durability:** the append-only audit log is in-memory by default; set
+  `PERSONALAI_AUDIT_LOG_PATH` to also append each redacted event to an owner-only (`0o600`) JSONL
+  sink that survives restart.
+- **Error messages:** PersonalAI is loopback-only and single-user (the operator *is* the user), so
+  domain errors (egress blocked, provider not found, a model/tool failure) are surfaced in the UI to
+  be actionable, and full detail is logged server-side. Mapping client-facing errors to opaque
+  generic strings is deferred to a future multi-user / network-exposed mode.
 
 ## Tool/MCP gateway (M5)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from personalai_backend.composition import bootstrap
 from personalai_contracts.ports import ToolCall, ToolResult
@@ -85,3 +86,16 @@ def test_gateway_enforces_static_egress_for_a_tool() -> None:
     boot.registries.tools.register("pinger", RegisteredTool(manifest, _Pinger()))
     result = asyncio.run(boot.gateway.invoke(ToolCall("pinger", "1.0.0")))
     assert not result.ok and "egress blocked" in (result.error or "")
+
+
+def test_bootstrap_wires_durable_audit_sink(tmp_path: Path) -> None:
+    sink = tmp_path / "audit.jsonl"
+    boot = bootstrap(config=CoreConfig(audit_log_path=str(sink)))
+    boot.audit.append("tool.test", {"x": 1})
+    assert sink.exists() and "tool.test" in sink.read_text(encoding="utf-8")
+
+
+def test_bootstrap_audit_in_memory_without_path() -> None:
+    boot = bootstrap(config=CoreConfig())  # no audit_log_path -> in-memory only
+    boot.audit.append("tool.test", {})
+    assert boot.audit.entries()[-1].type == "tool.test"
