@@ -38,13 +38,22 @@ def test_http_fetch_needs_grant_and_approval() -> None:
     assert not blocked.ok and "egress not allowed" in (blocked.error or "")
 
 
-def test_http_fetch_loopback_passes_egress_then_fetches() -> None:
-    # Loopback is always allowed -> egress check passes, the handler attempts the (refused) fetch.
+def test_http_fetch_loopback_blocked_by_ssrf_guard() -> None:
+    # Loopback passes the egress allowlist, but the SSRF guard refuses private/loopback targets
+    # (defense against reaching internal services / the cloud metadata endpoint).
     boot = bootstrap(config=CoreConfig())
     grants = [Permission(type=PermissionType.NETWORK, scope="*")]
     call = ToolCall("http_fetch", "1.0.0", {"url": "http://127.0.0.1:9/"})
     result = asyncio.run(boot.gateway.invoke(call, grants=grants, approved=True))
-    assert not result.ok and "fetch failed" in (result.error or "")  # reached the fetch, not egress
+    assert not result.ok and "non-public" in (result.error or "")
+
+
+def test_ollama_provider_egress_guard_wired_and_allows_loopback() -> None:
+    # The composition wires an egress guard onto the Ollama provider; the default loopback host
+    # passes it (no raise). A remote OLLAMA_HOST with egress off would be blocked.
+    boot = bootstrap(config=CoreConfig())
+    provider = boot.registries.model_providers.get("ollama")
+    provider._check_egress()  # type: ignore[attr-defined]  # loopback -> allowed
 
 
 def test_web_search_blocked_by_egress_when_off() -> None:

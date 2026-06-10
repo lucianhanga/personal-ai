@@ -355,3 +355,24 @@ def test_http_error_propagates() -> None:
     req = GenerationRequest(messages=[ChatMessage(Role.USER, "hi")], model="qwen3:8b")
     with pytest.raises(httpx.HTTPStatusError):
         run(lambda p: p.generate(req))
+
+
+def test_egress_guard_blocks_remote_host() -> None:
+    seen: list[str] = []
+
+    def guard(host: str) -> None:
+        seen.append(host)
+        if host != "127.0.0.1":
+            raise RuntimeError(f"egress blocked: {host}")
+
+    remote = OllamaProvider(base_url="http://remote.example:11434", egress_guard=guard)
+    with pytest.raises(RuntimeError, match="egress blocked"):
+        asyncio.run(remote.list_models())  # _get -> _check_egress -> guard raises
+    assert seen == ["remote.example"]
+
+
+def test_egress_guard_allows_loopback() -> None:
+    seen: list[str] = []
+    local = OllamaProvider(base_url="http://127.0.0.1:11434", egress_guard=seen.append)
+    local._check_egress()  # loopback host passes the guard without raising
+    assert seen == ["127.0.0.1"]
