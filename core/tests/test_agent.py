@@ -170,6 +170,41 @@ def test_agent_forces_answer_after_cap() -> None:
     assert events[-1].usage == {"total_tokens": 5}  # usage from the forced-final turn
 
 
+def test_tool_output_fed_back_as_untrusted_data() -> None:
+    """The model's next turn must see the tool result framed as untrusted DATA (injection guard)."""
+
+    class _Capture(FakeModelProvider):
+        def __init__(self) -> None:
+            super().__init__(name="cap")
+            self._n = 0
+            self.seen: list[str] = []
+
+        async def generate(self, request: GenerationRequest) -> GenerationResult:
+            self._n += 1
+            if self._n == 1:
+                return GenerationResult(
+                    text="", model=request.model, tool_calls=[ToolCallRequest("calculator", {})]
+                )
+            self.seen = [m.content for m in request.messages if m.role == Role.TOOL]
+            return GenerationResult(text="done", model=request.model)
+
+    provider = _Capture()
+
+    async def _run() -> None:
+        async for _ in run_agent(
+            messages=[ChatMessage(Role.USER, "go")],
+            provider=provider,
+            model="m",
+            gateway=_gateway(),
+            tools=[RegisteredTool(CALC, _Calc())],
+        ):
+            pass
+
+    asyncio.run(_run())
+    assert provider.seen and "untrusted DATA" in provider.seen[0]
+    assert "<tool_output>" in provider.seen[0]
+
+
 def test_large_tool_output_is_truncated() -> None:
     from personalai_core.agent import _tool_payload
 
