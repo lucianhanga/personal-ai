@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from types import TracebackType
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -26,6 +27,11 @@ from personalai_contracts.ports.model_provider import (
 )
 
 DEFAULT_HOST = "http://127.0.0.1:11434"
+
+# Egress guard: called with the target host before each request; may raise to block (wired by the
+# backend to the core egress allowlist, since adapters cannot import the core — ADR-0001). Loopback
+# (the default local Ollama) passes; a remote OLLAMA_HOST is blocked unless egress is allowed.
+EgressGuard = Callable[[str], None]
 
 logger = logging.getLogger(__name__)
 
@@ -125,8 +131,11 @@ class OllamaProvider:
         base_url: str = DEFAULT_HOST,
         client: httpx.AsyncClient | None = None,
         num_ctx: int | None = None,
+        egress_guard: EgressGuard | None = None,
     ) -> None:
         self._base = base_url.rstrip("/")
+        self._host = urlparse(self._base).hostname or self._base
+        self._egress_guard = egress_guard
         self._client = client or httpx.AsyncClient(timeout=httpx.Timeout(120.0))
         self._owns_client = client is None
         # Bound the context window (KV cache) to control memory; None leaves Ollama's default.
@@ -150,7 +159,12 @@ class OllamaProvider:
     ) -> None:
         await self.aclose()
 
+    def _check_egress(self) -> None:
+        if self._egress_guard is not None:
+            self._egress_guard(self._host)
+
     async def _post(self, path: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+        self._check_egress()
         response = await self._client.post(f"{self._base}{path}", json=dict(payload))
         response.raise_for_status()
         result: dict[str, Any] = response.json()
@@ -186,6 +200,7 @@ class OllamaProvider:
         )
 
     async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+        self._check_egress()
         self._warn_if_remote(request.model)
         async with self._client.stream(
             "POST",
@@ -208,6 +223,7 @@ class OllamaProvider:
                 )
 
     async def _get(self, path: str) -> dict[str, Any]:
+        self._check_egress()
         response = await self._client.get(f"{self._base}{path}")
         response.raise_for_status()
         result: dict[str, Any] = response.json()

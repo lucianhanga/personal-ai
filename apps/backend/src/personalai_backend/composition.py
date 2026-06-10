@@ -33,8 +33,18 @@ def register_adapters(registries: Registries, config: CoreConfig) -> None:
     """
     from personalai_provider_ollama import OllamaProvider
 
+    # Egress-guard the Ollama host too: loopback (the local default) passes; a remote OLLAMA_HOST is
+    # blocked unless egress is enabled + allowlisted (the provider cannot import the core).
+    def _ollama_egress(host: str) -> None:
+        assert_egress_allowed(config, host)
+
     registries.model_providers.register(
-        "ollama", OllamaProvider(base_url=config.ollama_host, num_ctx=config.ollama_num_ctx)
+        "ollama",
+        OllamaProvider(
+            base_url=config.ollama_host,
+            num_ctx=config.ollama_num_ctx,
+            egress_guard=_ollama_egress,
+        ),
     )
 
     # Remote OpenAI-compatible provider, only when an API key is configured. Its egress guard is

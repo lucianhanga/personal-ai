@@ -7,6 +7,9 @@ are disabled so a response cannot bounce to a disallowed host. HIGH risk.
 
 from __future__ import annotations
 
+import asyncio
+import ipaddress
+import socket
 from collections.abc import Callable
 from urllib.parse import urlparse
 
@@ -23,6 +26,34 @@ from personalai_contracts.schemas.tools import (
 
 # Returns True if egress to the given host is permitted (no exception coupling to the core).
 EgressAllowed = Callable[[str], bool]
+# Returns an error string if the host is not a safe public target, else None (SSRF guard).
+PublicHostCheck = Callable[[str], str | None]
+
+
+def _default_public_host_check(host: str) -> str | None:
+    """Resolve ``host`` and reject loopback/private/link-local/reserved IPs (SSRF defense).
+
+    Blocks fetches to internal services and the cloud metadata endpoint (169.254.169.254), and
+    catches hostnames that resolve into private space (a basic DNS-rebinding guard). Stdlib only,
+    so the adapter stays free of core imports (ADR-0001).
+    """
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return f"cannot resolve host: {host}"
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            return f"blocked non-public address for {host}: {ip}"
+    return None
+
 
 HTTP_FETCH_MANIFEST = ToolManifest(
     name="http_fetch",
@@ -62,11 +93,13 @@ class HttpFetch:
         client: httpx.AsyncClient | None = None,
         timeout: float = 10.0,
         max_chars: int = 20_000,
+        public_host_check: PublicHostCheck | None = None,
     ) -> None:
         self._egress_allowed = egress_allowed
         self._client = client
         self._timeout = timeout
         self._max_chars = max_chars
+        self._public_host_check = public_host_check or _default_public_host_check
 
     async def invoke(self, call: ToolCall) -> ToolResult:
         url = str(call.args.get("url", ""))
@@ -75,6 +108,10 @@ class HttpFetch:
             return ToolResult(ok=False, error="invalid url (http/https only)")
         if not self._egress_allowed(parsed.hostname):
             return ToolResult(ok=False, error=f"egress not allowed for host: {parsed.hostname}")
+        # SSRF guard: refuse private/loopback/link-local/reserved targets (run off the event loop).
+        blocked = await asyncio.to_thread(self._public_host_check, parsed.hostname)
+        if blocked:
+            return ToolResult(ok=False, error=blocked)
 
         client = self._client or httpx.AsyncClient(timeout=self._timeout, follow_redirects=False)
         try:
