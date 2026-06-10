@@ -44,6 +44,7 @@ _ENV_FIELDS = {
     "STM_SUMMARIZE": "stm_summarize",
     "MEMORY_ENABLED": "memory_enabled",
     "MEMORY_TOP_K": "memory_top_k",
+    "GROUNDING_ENABLED": "grounding_enabled",
 }
 
 _INT_FIELDS = {
@@ -54,7 +55,13 @@ _INT_FIELDS = {
     "ollama_num_ctx",
     "agent_max_iterations",
 }
-_BOOL_FIELDS = {"egress_enabled", "stm_summarize", "memory_enabled", "egress_allow_any"}
+_BOOL_FIELDS = {
+    "egress_enabled",
+    "stm_summarize",
+    "memory_enabled",
+    "egress_allow_any",
+    "grounding_enabled",
+}
 
 _CSV_FIELDS = {"allowed_origins", "allowed_egress_hosts"}
 
@@ -96,6 +103,8 @@ class CoreConfig(StrictModel):
     # Long-term memory: extract durable facts after a turn (skipped for incognito conversations).
     memory_enabled: bool = True
     memory_top_k: int = 5
+    # Inject a grounding/anti-hallucination system prompt (ground in context/tools; admit doubt).
+    grounding_enabled: bool = True
     bind_host: str = Field(default="127.0.0.1", description="Loopback by default.")
     bind_port: int = Field(default=8765, ge=1, le=65535)
     egress_enabled: bool = Field(default=False, description="Network egress off by default.")

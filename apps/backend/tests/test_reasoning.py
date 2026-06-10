@@ -60,3 +60,34 @@ def test_reasoning_brief_thinks_and_injects_hint() -> None:
     gen = _send("brief")
     assert gen.think is True
     assert any(m.role == Role.SYSTEM and "brief" in m.content.lower() for m in gen.messages)
+
+
+def _send_grounding(*, enabled: bool) -> GenerationRequest:
+    rec = _Recorder()
+    boot = bootstrap(
+        config=CoreConfig(auth_token=TOKEN, model_provider="rec", grounding_enabled=enabled)
+    )
+    boot.registries.model_providers.register("rec", rec, overwrite=True)
+    with (
+        TestClient(create_app(boot)) as client,
+        client.stream(
+            "POST",
+            "/api/v1/chat",
+            headers=AUTH,
+            json={"messages": [{"role": "user", "content": "hi"}]},
+        ) as resp,
+    ):
+        assert resp.status_code == 200
+        "".join(resp.iter_text())
+    assert rec.last is not None
+    return rec.last
+
+
+def test_grounding_prompt_injected_by_default() -> None:
+    gen = _send_grounding(enabled=True)
+    assert any(m.role == Role.SYSTEM and "fabricate" in m.content.lower() for m in gen.messages)
+
+
+def test_grounding_prompt_absent_when_disabled() -> None:
+    gen = _send_grounding(enabled=False)
+    assert not any(m.role == Role.SYSTEM and "fabricate" in m.content.lower() for m in gen.messages)
