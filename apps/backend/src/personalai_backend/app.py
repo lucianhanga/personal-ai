@@ -517,66 +517,6 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         }
         return f"event: usage\ndata: {json.dumps(payload)}\n\n".encode()
 
-    async def _agent_stream(
-        req: ChatRequest, provider: ModelProvider, generation: GenerationRequest
-    ) -> AsyncIterator[
-        tuple[bytes, str | None, Mapping[str, int] | None, dict[str, Any] | None, str | None]
-    ]:
-        """Yield (SSE frame, answer?, usage?, tool-step?, thinking?) tuples."""
-        registries: Registries = app.state.bootstrap.registries
-        gateway = app.state.bootstrap.gateway
-        tool_list = [registries.tools.get(name) for name in registries.tools.names()]
-        # Enabling tools grants the registered tools their declared permissions; high-risk tools
-        # still need approve_tools, and egress is still enforced by the gateway.
-        grants = [p for rt in tool_list for p in rt.manifest.permissions]
-        async for ev in run_agent(
-            messages=generation.messages,
-            provider=provider,
-            model=generation.model,
-            gateway=gateway,
-            tools=tool_list,
-            grants=grants,
-            approved=req.approve_tools,
-            think=generation.think,
-            max_iterations=app.state.config.agent_max_iterations,
-        ):
-            if ev.type == "reasoning":
-                yield (
-                    f"data: {json.dumps({'thinking': ev.thinking})}\n\n".encode(),
-                    None,
-                    None,
-                    None,
-                    ev.thinking,
-                )
-            elif ev.type == "answer":
-                # Stream the answer token-by-token (ev.answer is a delta here).
-                yield (
-                    f"data: {json.dumps({'delta': ev.answer or '', 'done': False})}\n\n".encode(),
-                    ev.answer or "",
-                    None,
-                    None,
-                    None,
-                )
-            elif ev.type == "final":
-                done = {"delta": "", "done": True, "finish_reason": "stop"}
-                yield (f"data: {json.dumps(done)}\n\n".encode(), None, ev.usage, None, None)
-            else:
-                payload = {
-                    "phase": "call" if ev.type == "tool_call" else "result",
-                    "tool": ev.tool,
-                    "args": ev.args,
-                    "ok": ev.ok,
-                    "output": ev.output,
-                    "error": ev.error,
-                }
-                yield (
-                    f"event: tool\ndata: {json.dumps(payload)}\n\n".encode(),
-                    None,
-                    None,
-                    payload,
-                    None,
-                )
-
     @app.post("/api/v1/chat", dependencies=[Depends(_require_token)])
     async def chat(req: ChatRequest) -> StreamingResponse:
         config: CoreConfig = app.state.config
@@ -654,25 +594,56 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
 
                 try:
                     if req.use_tools:
-                        async for frame, delta, used, step, think_delta in _agent_stream(
-                            req, provider, generation
+                        # Drive the agent loop, turning its typed events straight into SSE frames +
+                        # the ordered trace (no intermediate tuple channel).
+                        registries: Registries = app.state.bootstrap.registries
+                        tool_list = [registries.tools.get(n) for n in registries.tools.names()]
+                        # Tools get their declared permissions; high-risk still needs approve_tools
+                        # and egress is enforced by the gateway.
+                        grants = [p for rt in tool_list for p in rt.manifest.permissions]
+                        async for ev in run_agent(
+                            messages=generation.messages,
+                            provider=provider,
+                            model=generation.model,
+                            gateway=app.state.bootstrap.gateway,
+                            tools=tool_list,
+                            grants=grants,
+                            approved=req.approve_tools,
+                            think=generation.think,
+                            max_iterations=config.agent_max_iterations,
                         ):
-                            if delta:
-                                answer += delta
-                            if used:
-                                usage = used
-                            if step is not None:
+                            if ev.type == "reasoning":
+                                _add_reasoning(ev.thinking or "")
+                                yield f"data: {json.dumps({'thinking': ev.thinking})}\n\n".encode()
+                            elif ev.type == "answer":
+                                answer += ev.answer or ""
+                                frame = {"delta": ev.answer or "", "done": False}
+                                yield f"data: {json.dumps(frame)}\n\n".encode()
+                            elif ev.type == "final":
+                                if ev.usage:
+                                    usage = ev.usage
+                                done = {"delta": "", "done": True, "finish_reason": "stop"}
+                                yield f"data: {json.dumps(done)}\n\n".encode()
+                            else:  # tool_call / tool_result
                                 trace.append(
                                     {
-                                        "kind": "tool_call"
-                                        if step["phase"] == "call"
-                                        else "tool_result",
-                                        **{k: v for k, v in step.items() if k != "phase"},
+                                        "kind": ev.type,
+                                        "tool": ev.tool,
+                                        "args": ev.args,
+                                        "ok": ev.ok,
+                                        "output": ev.output,
+                                        "error": ev.error,
                                     }
                                 )
-                            if think_delta:
-                                _add_reasoning(think_delta)
-                            yield frame
+                                payload = {
+                                    "phase": "call" if ev.type == "tool_call" else "result",
+                                    "tool": ev.tool,
+                                    "args": ev.args,
+                                    "ok": ev.ok,
+                                    "output": ev.output,
+                                    "error": ev.error,
+                                }
+                                yield f"event: tool\ndata: {json.dumps(payload)}\n\n".encode()
                     else:
                         async for chunk in provider.stream(generation):
                             answer += chunk.delta
