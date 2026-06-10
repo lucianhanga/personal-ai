@@ -14,8 +14,7 @@ concrete adapter; it only depends on the ports in `personalai_contracts`.
 | `Registry[T]` | `personalai_core.registry` | A name -> adapter map for one port; fail-closed `get`. |
 | `Registries` | `personalai_core.registries` | One registry per backend seam (providers, retrievers, vector/object/graph stores, modality handlers, agent roles, tools). |
 | `CoreConfig` | `personalai_core.config` | Config-driven selection of the active singleton adapters + local-first defaults (`bind_host=127.0.0.1`, `egress_enabled=False`). Reads `PERSONALAI_*` env. |
-| `Services` / `build_services` | `personalai_core.services` | Resolves the configured singleton adapters from the registries (fail-closed). |
-| `bootstrap` | `personalai_backend.composition` | The composition root: build config + registries, register adapters, return wiring. |
+| `bootstrap` | `personalai_backend.composition` | The composition root: build config + registries, register adapters, return wiring. Resolves the active adapter for each seam by name via `registries.<seam>.get(config.<name>)` (fail-closed). |
 
 UI renderers are a frontend seam and are registered in the SPA (M0-6), not in the Python registries.
 
@@ -36,20 +35,18 @@ UI renderers are a frontend seam and are registered in the SPA (M0-6), not in th
 
 ```python
 from personalai_backend import bootstrap
-from personalai_core import build_services
 
-boot = bootstrap()                      # config from PERSONALAI_* env + empty registries
-# ... register_adapters has populated boot.registries ...
-services = build_services(boot.registries, boot.config)
-services.model_provider                 # the configured active provider
+boot = bootstrap()                      # config from PERSONALAI_* env + populated registries
+# The composition root / endpoints resolve the active adapter by name, fail-closed:
+provider = boot.registries.model_providers.get(boot.config.model_provider)
 ```
 
-If a configured adapter name is not registered, `build_services` raises
+If a configured adapter name is not registered, `Registry.get` raises
 `RegistryError` (fail-closed) rather than silently degrading.
 
 ## Singletons vs collections
 
 - **Singletons** (config selects one active): model provider, retriever, vector repository,
-  object store. Resolved into `Services`.
+  object store. Resolved by name from their registry at the composition root / per request.
 - **Collections** (many enabled at once): tools, agent roles, modality handlers. Used directly
   from the registries per request (selection happens at call time, e.g. by the Tool/MCP gateway).
