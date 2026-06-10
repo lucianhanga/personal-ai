@@ -1004,6 +1004,29 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         server = await app.state.mcp_manager.upsert(name, spec)
         return StructuredResult(ok=True, data={"server": server})
 
+    @app.get(
+        "/api/v1/mcp/config",
+        response_model=StructuredResult,
+        dependencies=[Depends(_require_token)],
+    )
+    def get_mcp_config() -> StructuredResult:
+        # The whole mcpServers map (env secrets masked) for the JSON editor / export.
+        return StructuredResult(ok=True, data={"mcpServers": app.state.mcp_manager.config_json()})
+
+    @app.put(
+        "/api/v1/mcp/config",
+        response_model=StructuredResult,
+        dependencies=[Depends(_require_token)],
+    )
+    async def put_mcp_config(body: McpImport) -> StructuredResult:
+        # Replace the whole config and reconcile live (connect new/changed, drop removed).
+        desired = {
+            name: {"command": s.command, "args": s.args, "env": s.env, "enabled": s.enabled}
+            for name, s in body.mcpServers.items()
+        }
+        result = await app.state.mcp_manager.replace_config(desired)
+        return StructuredResult(ok=True, data={"servers": result})
+
     @app.post(
         "/api/v1/mcp/import",
         response_model=StructuredResult,

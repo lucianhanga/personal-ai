@@ -89,6 +89,22 @@ def test_delete_disconnects_and_removes(tmp_path: Path) -> None:
     assert asyncio.run(mgr.delete("missing")) is False
 
 
+def test_replace_config_skips_unchanged_and_drops_unknown_masked(tmp_path: Path) -> None:
+    mgr, regs, path = _mgr(tmp_path)
+    asyncio.run(mgr.upsert("a", {"command": "x", "enabled": True}))  # connected
+    desired = {
+        "a": {"command": "x", "enabled": True},  # identical -> skip-unchanged branch
+        # masked value, never stored -> dropped:
+        "b": {"command": "y", "env": {"GHOST": "********"}, "enabled": True},
+    }
+    servers = asyncio.run(mgr.replace_config(desired))
+    assert {s["name"] for s in servers} == {"a", "b"}
+    assert "a.do" in regs.tools.names() and "b.do" in regs.tools.names()
+    # a masked value with no stored secret is dropped (cannot be recovered)
+    stored_b = json.loads(path.read_text())["mcpServers"]["b"]
+    assert stored_b.get("env", {}) == {}
+
+
 def test_start_connects_enabled_from_file_and_aclose(tmp_path: Path) -> None:
     path = tmp_path / "mcp.json"
     path.write_text(

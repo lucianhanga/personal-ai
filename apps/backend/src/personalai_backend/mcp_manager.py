@@ -11,7 +11,7 @@ never breaks startup or the others. Third-party MCP tools remain HIGH-risk (gate
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +23,10 @@ logger = logging.getLogger(__name__)
 
 ClientFactory = Callable[[McpServerConfig], Any]
 
+# Sentinel returned in place of env secret values and accepted on writes to mean "keep the stored
+# value". Never persist this literal; never reveal a real secret in an API response.
+MASKED = "********"
+
 
 def _spec_to_config(name: str, spec: dict[str, Any]) -> McpServerConfig:
     return McpServerConfig(
@@ -31,6 +35,11 @@ def _spec_to_config(name: str, spec: dict[str, Any]) -> McpServerConfig:
         args=tuple(spec.get("args") or ()),
         env=spec.get("env") or None,
     )
+
+
+def _mask_env(env: Mapping[str, str] | None) -> dict[str, str]:
+    """Hide secret values (keys stay visible) for API responses."""
+    return {k: (MASKED if v else "") for k, v in (env or {}).items()}
 
 
 class McpManager:
@@ -50,37 +59,76 @@ class McpManager:
         for name, spec in read_servers(self._path).items():
             await self._apply(name, spec)
 
+    def _public_server(self, name: str, spec: dict[str, Any]) -> dict[str, Any]:
+        """One server's config (env secrets masked) merged with its live status."""
+        status = self._status.get(name, {"connected": False, "tools": [], "error": None})
+        return {
+            "name": name,
+            "command": spec.get("command", ""),
+            "args": list(spec.get("args") or ()),
+            "env": _mask_env(spec.get("env")),
+            "enabled": spec.get("enabled", True),
+            **status,
+        }
+
     def list_servers(self) -> list[dict[str, Any]]:
-        """Each configured server merged with its live status (config + connected/tools/error)."""
-        out: list[dict[str, Any]] = []
-        for name, spec in read_servers(self._path).items():
-            status = self._status.get(name, {"connected": False, "tools": [], "error": None})
-            out.append(
-                {
-                    "name": name,
-                    "command": spec.get("command", ""),
-                    "args": list(spec.get("args") or ()),
-                    "env": dict(spec.get("env") or {}),
-                    "enabled": spec.get("enabled", True),
-                    **status,
-                }
-            )
-        return out
+        """Each configured server (env masked) merged with its live status."""
+        return [self._public_server(n, s) for n, s in read_servers(self._path).items()]
+
+    def config_json(self) -> dict[str, dict[str, Any]]:
+        """The whole mcpServers map (env masked) for the JSON editor / export."""
+        return {
+            name: {
+                "command": spec.get("command", ""),
+                "args": list(spec.get("args") or ()),
+                "env": _mask_env(spec.get("env")),
+                "enabled": spec.get("enabled", True),
+            }
+            for name, spec in read_servers(self._path).items()
+        }
+
+    def _resolve_secrets(self, name: str, spec: dict[str, Any]) -> dict[str, Any]:
+        """Replace masked env values (``********``) with the stored secret for that key."""
+        stored = read_servers(self._path).get(name, {}).get("env", {})
+        env: dict[str, str] = {}
+        for key, value in (spec.get("env") or {}).items():
+            if value == MASKED:
+                if key in stored:
+                    env[key] = stored[key]  # keep the existing secret
+            else:
+                env[key] = value
+        return {**spec, "env": env}
 
     async def upsert(self, name: str, spec: dict[str, Any]) -> dict[str, Any]:
         """Create or update a server, persist it, and apply live (connect if enabled)."""
+        spec = self._resolve_secrets(name, spec)
         servers = read_servers(self._path)
         servers[name] = spec
         write_servers(self._path, servers)
         await self._apply(name, spec)
-        return next(s for s in self.list_servers() if s["name"] == name)
+        return self._public_server(name, spec)
 
     async def import_servers(self, servers: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         """Merge a batch of servers into the config (write once) and apply each live."""
+        resolved = {name: self._resolve_secrets(name, spec) for name, spec in servers.items()}
         current = read_servers(self._path)
-        current.update(servers)
+        current.update(resolved)
         write_servers(self._path, current)
-        for name, spec in servers.items():
+        for name, spec in resolved.items():
+            await self._apply(name, spec)
+        return self.list_servers()
+
+    async def replace_config(self, desired: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+        """Replace the whole config with ``desired`` and reconcile live (best-effort per server)."""
+        resolved = {name: self._resolve_secrets(name, spec) for name, spec in desired.items()}
+        current = read_servers(self._path)
+        write_servers(self._path, resolved)  # single atomic-ish write of the new document
+        for name in set(current) - set(resolved):  # removed -> disconnect + forget
+            await self._disconnect(name)
+            self._status.pop(name, None)
+        for name, spec in resolved.items():
+            if current.get(name) == spec and name in self._active:
+                continue  # unchanged and already connected -> no churn
             await self._apply(name, spec)
         return self.list_servers()
 

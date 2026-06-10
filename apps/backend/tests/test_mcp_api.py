@@ -68,9 +68,48 @@ def test_upsert_connects_and_lists(tmp_path: Path) -> None:
             json={"command": "npx", "args": ["x"], "env": {"K": "v"}, "enabled": True},
         )
         server = r.json()["data"]["server"]
-        assert server["connected"] and server["tools"] == ["pw.do"] and server["env"] == {"K": "v"}
+        # env secret value is masked in the response (key visible, value hidden)
+        assert (
+            server["connected"]
+            and server["tools"] == ["pw.do"]
+            and server["env"] == {"K": "********"}
+        )
         listed = client.get("/api/v1/mcp", headers=AUTH).json()["data"]["servers"]
         assert [s["name"] for s in listed] == ["pw"]
+
+
+def test_secret_is_masked_and_round_trips(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        client.put(
+            "/api/v1/mcp/servers/s", headers=AUTH, json={"command": "x", "env": {"TOKEN": "secret"}}
+        )
+        # GET never reveals the real secret
+        got = client.get("/api/v1/mcp", headers=AUTH).json()["data"]["servers"][0]
+        assert got["env"] == {"TOKEN": "********"}
+        # editing other fields with the masked sentinel keeps the stored secret
+        client.put(
+            "/api/v1/mcp/servers/s",
+            headers=AUTH,
+            json={"command": "y", "env": {"TOKEN": "********"}},
+        )
+        # the on-disk file still has the real secret (sentinel was not persisted)
+        import json
+
+        stored = json.loads((tmp_path / "mcp.json").read_text())["mcpServers"]["s"]
+        assert stored["command"] == "y" and stored["env"]["TOKEN"] == "secret"
+
+
+def test_whole_config_get_and_replace(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        client.put("/api/v1/mcp/servers/a", headers=AUTH, json={"command": "x"})
+        cfg = client.get("/api/v1/mcp/config", headers=AUTH).json()["data"]["mcpServers"]
+        assert "a" in cfg
+        # replace the whole document: drop "a", add "b"
+        body = {"mcpServers": {"b": {"command": "y"}}}
+        servers = client.put("/api/v1/mcp/config", headers=AUTH, json=body).json()["data"][
+            "servers"
+        ]
+        assert [s["name"] for s in servers] == ["b"]  # a removed, b added/connected
 
 
 def test_upsert_requires_command(tmp_path: Path) -> None:
