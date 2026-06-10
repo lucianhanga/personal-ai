@@ -24,6 +24,7 @@ import {
 import { AppLogs } from "./AppLogs";
 import { ContextMeter } from "./ContextMeter";
 import { Markdown } from "./Markdown";
+import { McpActivity } from "./McpActivity";
 import { McpPanel } from "./McpPanel";
 import { Memory } from "./Memory";
 import { MessageDetails } from "./MessageDetails";
@@ -92,6 +93,7 @@ export function Chat({
   const [showLog, setShowLog] = useState(false);
   const [showAppLogs, setShowAppLogs] = useState(false);
   const [showMcp, setShowMcp] = useState(false);
+  const [showMcpActivity, setShowMcpActivity] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chatsCollapsed, setChatsCollapsed] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -605,7 +607,7 @@ export function Chat({
               style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}
             >
               <button data-testid="mcp-show" onClick={() => setShowMcp((v) => !v)}>
-                {showMcp ? "Hide MCP" : "MCP"}
+                {showMcp ? "Hide MCP" : "Manage MCP"}
               </button>
               <span style={{ marginLeft: "auto", color: "#888" }}>MCP servers (tool sources)</span>
             </div>
@@ -864,6 +866,12 @@ export function Chat({
                   {showAppLogs ? "Hide app logs" : "App logs"}
                 </button>
                 <button
+                  data-testid="mcp-activity-show"
+                  onClick={() => setShowMcpActivity((v) => !v)}
+                >
+                  {showMcpActivity ? "Hide MCP" : "MCP"}
+                </button>
+                <button
                   data-testid="side-toggle"
                   onClick={() => setSidebarCollapsed(true)}
                   title="Collapse panel"
@@ -877,10 +885,11 @@ export function Chat({
 
               {showLog && <ToolLog token={token} conversationId={activeId} />}
               {showAppLogs && <AppLogs token={token} conversationId={activeId} />}
+              {showMcpActivity && <McpActivity token={token} />}
 
-              {!showLog && !showAppLogs && !usage && (
+              {!showLog && !showAppLogs && !showMcpActivity && !usage && (
                 <p data-testid="side-hint" style={{ color: "#888", fontSize: "0.8rem" }}>
-                  Open a panel above to view logs or context usage.
+                  Open a panel above to view logs, MCP activity, or context usage.
                 </p>
               )}
             </aside>

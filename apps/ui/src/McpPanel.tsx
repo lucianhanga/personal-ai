@@ -1,15 +1,21 @@
 import { useEffect, useState } from "react";
 
 import {
+  checkMcpHealth,
   deleteMcpServer,
   fetchMcp,
+  fetchMcpConfig,
   importMcpServers,
+  putMcpConfig,
   upsertMcpServer,
+  type McpConfig,
+  type McpHealth,
   type McpServer,
   type McpServerInput,
 } from "./api";
 
-/** Parse "KEY=value" lines into an object (blank/comment lines ignored). */
+const MASK = "********";
+
 function parseEnv(text: string): Record<string, string> {
   const env: Record<string, string> = {};
   for (const line of text.split("\n")) {
@@ -27,23 +33,81 @@ function envToText(env: Record<string, string>): string {
     .join("\n");
 }
 
-interface FormState {
+function serverInput(s: McpServer): McpServerInput {
+  return { command: s.command, args: s.args, env: s.env, enabled: s.enabled };
+}
+
+interface Editor {
   name: string;
+  original: string | null; // the server name being edited (null = new)
+  tab: "form" | "json";
   command: string;
   args: string;
   env: string;
   enabled: boolean;
+  json: string;
 }
 
-const EMPTY: FormState = { name: "", command: "", args: "", env: "", enabled: true };
+function blankEditor(): Editor {
+  return { name: "", original: null, tab: "form", command: "", args: "", env: "", enabled: true, json: "" };
+}
 
-/** Manage MCP servers: list + status, add/edit (name/command/args/env), enable/disable, remove. */
+function editorFor(s: McpServer): Editor {
+  return {
+    name: s.name,
+    original: s.name,
+    tab: "form",
+    command: s.command,
+    args: s.args.join(" "),
+    env: envToText(s.env),
+    enabled: s.enabled,
+    json: "",
+  };
+}
+
+function editorToInput(e: Editor): { name: string; input: McpServerInput } {
+  if (e.tab === "json") {
+    const parsed = JSON.parse(e.json) as McpServerInput;
+    return {
+      name: e.name.trim(),
+      input: {
+        command: String(parsed.command ?? ""),
+        args: parsed.args ?? [],
+        env: parsed.env ?? {},
+        enabled: parsed.enabled ?? true,
+      },
+    };
+  }
+  return {
+    name: e.name.trim(),
+    input: {
+      command: e.command.trim(),
+      args: e.args.split(/\s+/).filter(Boolean),
+      env: parseEnv(e.env),
+      enabled: e.enabled,
+    },
+  };
+}
+
+function copy(text: string): void {
+  void navigator.clipboard?.writeText(text);
+}
+
+function healthBadge(h: McpHealth | undefined): string {
+  if (!h) return "";
+  if (h.status === "healthy") return `healthy · ${h.tool_count} tools · ${h.latency_ms}ms`;
+  return `${h.status}${h.error ? `: ${h.error}` : ""}`;
+}
+
+/** MCP Manager: list + Test/health, per-server Form<->JSON, whole-config JSON, import/export. */
 export function McpPanel({ token }: { token: string }): React.ReactElement {
   const [servers, setServers] = useState<McpServer[]>([]);
+  const [health, setHealth] = useState<Record<string, McpHealth>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState<FormState | null>(null); // open editor (add or edit)
-  const [importText, setImportText] = useState<string | null>(null); // open import box
+  const [editor, setEditor] = useState<Editor | null>(null);
+  const [importText, setImportText] = useState<string | null>(null);
+  const [configText, setConfigText] = useState<string | null>(null); // whole-config editor
 
   function reload(): void {
     fetchMcp(token)
@@ -55,26 +119,10 @@ export function McpPanel({ token }: { token: string }): React.ReactElement {
   }
   useEffect(reload, [token]);
 
-  async function save(): Promise<void> {
-    if (!form) return;
-    const name = form.name.trim();
-    if (!name || !form.command.trim()) {
-      setError("name and command are required");
-      return;
-    }
-    if (form.enabled && !window.confirm(`Connect "${name}"? This runs a program on your machine.`)) {
-      return;
-    }
+  async function withBusy(fn: () => Promise<void>): Promise<void> {
     setBusy(true);
     try {
-      await upsertMcpServer(token, name, {
-        command: form.command.trim(),
-        args: form.args.split(/\s+/).filter(Boolean),
-        env: parseEnv(form.env),
-        enabled: form.enabled,
-      });
-      setForm(null);
-      reload();
+      await fn();
     } catch (e: unknown) {
       setError(String(e));
     } finally {
@@ -82,106 +130,312 @@ export function McpPanel({ token }: { token: string }): React.ReactElement {
     }
   }
 
-  async function toggle(s: McpServer): Promise<void> {
-    if (!s.enabled && !window.confirm(`Connect "${s.name}"? This runs a program on your machine.`)) {
+  function openForm(server?: McpServer): void {
+    setEditor(server ? editorFor(server) : blankEditor());
+  }
+
+  // Switch editor tabs, carrying the data across (invalid JSON blocks the switch).
+  function switchTab(to: "form" | "json"): void {
+    if (!editor) return;
+    if (to === "json") {
+      const { input } = editorToInput({ ...editor, tab: "form" });
+      setEditor({ ...editor, tab: "json", json: JSON.stringify(input, null, 2) });
       return;
     }
-    setBusy(true);
     try {
-      await upsertMcpServer(token, s.name, {
-        command: s.command,
-        args: s.args,
-        env: s.env,
-        enabled: !s.enabled,
+      const parsed = JSON.parse(editor.json) as McpServerInput;
+      setEditor({
+        ...editor,
+        tab: "form",
+        command: String(parsed.command ?? ""),
+        args: (parsed.args ?? []).join(" "),
+        env: envToText(parsed.env ?? {}),
+        enabled: parsed.enabled ?? true,
       });
-      reload();
     } catch (e: unknown) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
+      setError(`invalid JSON, fix it before switching to Form: ${e}`);
     }
+  }
+
+  async function saveEditor(): Promise<void> {
+    if (!editor) return;
+    let name: string;
+    let input: McpServerInput;
+    try {
+      ({ name, input } = editorToInput(editor));
+    } catch (e: unknown) {
+      setError(`invalid JSON: ${e}`);
+      return;
+    }
+    if (!name || !input.command.trim()) {
+      setError("name and command are required");
+      return;
+    }
+    if (input.enabled && !window.confirm(`Connect "${name}"? This runs a program on your machine.`))
+      return;
+    await withBusy(async () => {
+      if (editor.original && editor.original !== name) await deleteMcpServer(token, editor.original);
+      await upsertMcpServer(token, name, input);
+      setEditor(null);
+      reload();
+    });
+  }
+
+  async function toggle(s: McpServer): Promise<void> {
+    if (!s.enabled && !window.confirm(`Connect "${s.name}"? This runs a program on your machine.`))
+      return;
+    await withBusy(async () => {
+      await upsertMcpServer(token, s.name, { ...serverInput(s), enabled: !s.enabled });
+      reload();
+    });
+  }
+
+  async function test(name: string): Promise<void> {
+    await withBusy(async () => {
+      const h = await checkMcpHealth(token, name);
+      setHealth((prev) => ({ ...prev, [name]: h }));
+    });
+  }
+
+  async function remove(name: string): Promise<void> {
+    if (!window.confirm(`Remove MCP server "${name}"?`)) return;
+    await withBusy(async () => {
+      await deleteMcpServer(token, name);
+      reload();
+    });
   }
 
   async function runImport(): Promise<void> {
     if (importText === null) return;
-    let map: Record<string, McpServerInput>;
+    let map: McpConfig;
     try {
       const parsed = JSON.parse(importText);
-      // Accept either {"mcpServers": {...}} or the bare map.
-      map = (parsed.mcpServers ?? parsed.servers ?? parsed) as Record<string, McpServerInput>;
-      if (typeof map !== "object" || Array.isArray(map) || Object.keys(map).length === 0) {
+      map = (parsed.mcpServers ?? parsed) as McpConfig;
+      if (typeof map !== "object" || Array.isArray(map) || Object.keys(map).length === 0)
         throw new Error("expected an mcpServers object");
-      }
     } catch (e: unknown) {
       setError(`invalid JSON: ${e}`);
       return;
     }
     if (!window.confirm("Import & connect these servers? They run programs on your machine.")) return;
-    setBusy(true);
-    try {
+    await withBusy(async () => {
       await importMcpServers(token, map);
       setImportText(null);
       reload();
-    } catch (e: unknown) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function remove(name: string): Promise<void> {
-    if (!window.confirm(`Remove MCP server "${name}"?`)) return;
-    setBusy(true);
-    try {
-      await deleteMcpServer(token, name);
-      reload();
-    } catch (e: unknown) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function edit(s: McpServer): void {
-    setForm({
-      name: s.name,
-      command: s.command,
-      args: s.args.join(" "),
-      env: envToText(s.env),
-      enabled: s.enabled,
     });
+  }
+
+  async function openConfig(): Promise<void> {
+    await withBusy(async () => {
+      const cfg = await fetchMcpConfig(token);
+      setConfigText(JSON.stringify({ mcpServers: cfg }, null, 2));
+    });
+  }
+
+  async function applyConfig(): Promise<void> {
+    if (configText === null) return;
+    let map: McpConfig;
+    try {
+      const parsed = JSON.parse(configText);
+      map = (parsed.mcpServers ?? parsed) as McpConfig;
+    } catch (e: unknown) {
+      setError(`invalid JSON: ${e}`);
+      return;
+    }
+    if (!window.confirm("Apply this config? Removed servers are disconnected; new ones run programs."))
+      return;
+    await withBusy(async () => {
+      await putMcpConfig(token, map);
+      setConfigText(null);
+      reload();
+    });
+  }
+
+  function exportAll(): void {
+    const cfg: McpConfig = Object.fromEntries(servers.map((s) => [s.name, serverInput(s)]));
+    copy(JSON.stringify({ mcpServers: cfg }, null, 2));
+    setError(null);
   }
 
   return (
     <section
-      data-testid="mcp-panel"
+      data-testid="mcp-manager"
       aria-label="MCP servers"
       style={{ border: "1px solid #ddd", borderRadius: 8, padding: "0.75rem", fontSize: "0.8rem" }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
         <strong style={{ flex: 1 }}>MCP servers</strong>
+        <button data-testid="mcp-add" onClick={() => openForm()} disabled={busy}>
+          + Add
+        </button>
         <button data-testid="mcp-import-open" onClick={() => setImportText("")} disabled={busy}>
           Import
         </button>
-        <button data-testid="mcp-add" onClick={() => setForm({ ...EMPTY })} disabled={busy}>
-          + Add
+        <button data-testid="mcp-edit-all" onClick={() => void openConfig()} disabled={busy}>
+          Edit JSON
+        </button>
+        <button data-testid="mcp-export-all" onClick={exportAll} disabled={busy || !servers.length}>
+          Export
         </button>
       </div>
+
+      {error && (
+        <p data-testid="mcp-error" style={{ color: "#b00", whiteSpace: "pre-wrap" }}>
+          {error}
+        </p>
+      )}
+      {servers.length === 0 && !editor && importText === null && configText === null && (
+        <p data-testid="mcp-empty" style={{ color: "#888" }}>
+          No MCP servers yet. “+ Add” one, or “Import” a JSON block (Playwright, MarkItDown, Tavily…).
+        </p>
+      )}
+
+      <ul style={{ listStyle: "none", margin: "0.5rem 0 0", padding: 0 }}>
+        {servers.map((s) => (
+          <li
+            key={s.name}
+            data-testid="mcp-server"
+            style={{ borderTop: "1px solid #eee", padding: "0.4rem 0" }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "0.3rem", flexWrap: "wrap" }}>
+              <span style={{ color: s.connected ? "#2a7" : s.error ? "#b00" : "#888" }}>
+                {s.connected ? "✓" : s.error ? "✗" : "○"}
+              </span>
+              <strong style={{ flex: 1 }}>{s.name}</strong>
+              <button data-testid="mcp-test" onClick={() => void test(s.name)} disabled={busy}>
+                Test
+              </button>
+              <button data-testid="mcp-toggle" onClick={() => void toggle(s)} disabled={busy}>
+                {s.enabled ? "Disconnect" : "Connect"}
+              </button>
+              <button data-testid="mcp-edit" onClick={() => openForm(s)} disabled={busy}>
+                Edit
+              </button>
+              <button
+                data-testid="mcp-export"
+                onClick={() => copy(JSON.stringify({ [s.name]: serverInput(s) }, null, 2))}
+                disabled={busy}
+                title="Copy this server's JSON"
+              >
+                Copy
+              </button>
+              <button data-testid="mcp-delete" onClick={() => void remove(s.name)} disabled={busy}>
+                ✕
+              </button>
+            </div>
+            <div style={{ color: "#888" }}>
+              {s.connected
+                ? `${s.tools.length} tool${s.tools.length === 1 ? "" : "s"}`
+                : s.error
+                  ? `error: ${s.error}`
+                  : "stopped"}
+              {health[s.name] && (
+                <span data-testid="mcp-health" style={{ marginLeft: "0.5rem", color: "#357" }}>
+                  · {healthBadge(health[s.name])}
+                </span>
+              )}
+            </div>
+            {s.tools.length > 0 && (
+              <div style={{ color: "#555", whiteSpace: "pre-wrap" }}>{s.tools.join(", ")}</div>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      {editor && (
+        <div
+          data-testid="mcp-form"
+          style={{ borderTop: "1px solid #ddd", marginTop: "0.5rem", paddingTop: "0.5rem" }}
+        >
+          <div style={{ display: "flex", gap: "0.4rem", marginBottom: 4 }}>
+            <button
+              data-testid="mcp-tab-form"
+              onClick={() => switchTab("form")}
+              style={{ fontWeight: editor.tab === "form" ? "bold" : "normal" }}
+            >
+              Form
+            </button>
+            <button
+              data-testid="mcp-tab-json"
+              onClick={() => switchTab("json")}
+              style={{ fontWeight: editor.tab === "json" ? "bold" : "normal" }}
+            >
+              JSON
+            </button>
+          </div>
+          <input
+            data-testid="mcp-form-name"
+            placeholder="name (e.g. playwright)"
+            value={editor.name}
+            onChange={(e) => setEditor({ ...editor, name: e.target.value })}
+            style={{ width: "100%", marginBottom: 4 }}
+          />
+          {editor.tab === "form" ? (
+            <>
+              <input
+                data-testid="mcp-form-command"
+                placeholder="command (e.g. npx)"
+                value={editor.command}
+                onChange={(e) => setEditor({ ...editor, command: e.target.value })}
+                style={{ width: "100%", marginBottom: 4 }}
+              />
+              <input
+                data-testid="mcp-form-args"
+                placeholder="args (space-separated)"
+                value={editor.args}
+                onChange={(e) => setEditor({ ...editor, args: e.target.value })}
+                style={{ width: "100%", marginBottom: 4 }}
+              />
+              <textarea
+                data-testid="mcp-form-env"
+                placeholder="env, one KEY=value per line (leave ******** to keep a secret)"
+                value={editor.env}
+                onChange={(e) => setEditor({ ...editor, env: e.target.value })}
+                rows={3}
+                style={{ width: "100%", marginBottom: 4 }}
+              />
+              <label style={{ display: "block", marginBottom: 4 }}>
+                <input
+                  data-testid="mcp-form-enabled"
+                  type="checkbox"
+                  checked={editor.enabled}
+                  onChange={(e) => setEditor({ ...editor, enabled: e.target.checked })}
+                />{" "}
+                Connect now (runs the program)
+              </label>
+            </>
+          ) : (
+            <textarea
+              data-testid="mcp-json-text"
+              value={editor.json}
+              onChange={(e) => setEditor({ ...editor, json: e.target.value })}
+              rows={8}
+              style={{ width: "100%", marginBottom: 4, fontFamily: "monospace" }}
+            />
+          )}
+          <div style={{ display: "flex", gap: "0.4rem" }}>
+            <button data-testid="mcp-form-save" onClick={() => void saveEditor()} disabled={busy}>
+              Save
+            </button>
+            <button data-testid="mcp-form-cancel" onClick={() => setEditor(null)} disabled={busy}>
+              Cancel
+            </button>
+          </div>
+          <div style={{ color: "#888", marginTop: 4 }}>Secrets show as {MASK}; leave them to keep.</div>
+        </div>
+      )}
 
       {importText !== null && (
         <div
           data-testid="mcp-import"
           style={{ borderTop: "1px solid #ddd", marginTop: "0.5rem", paddingTop: "0.5rem" }}
         >
-          <div style={{ color: "#888", marginBottom: 4 }}>
-            Paste an <code>mcpServers</code> JSON block (Claude Desktop format):
-          </div>
+          <div style={{ color: "#888", marginBottom: 4 }}>Paste an mcpServers JSON block:</div>
           <textarea
             data-testid="mcp-import-text"
             value={importText}
             onChange={(e) => setImportText(e.target.value)}
-            rows={8}
-            placeholder={'{\n  "mcpServers": {\n    "time": { "command": "uvx", "args": ["mcp-server-time"] }\n  }\n}'}
+            rows={6}
             style={{ width: "100%", marginBottom: 4, fontFamily: "monospace" }}
           />
           <div style={{ display: "flex", gap: "0.4rem" }}>
@@ -195,101 +449,26 @@ export function McpPanel({ token }: { token: string }): React.ReactElement {
         </div>
       )}
 
-      {error && (
-        <p data-testid="mcp-error" style={{ color: "#b00" }}>
-          {error}
-        </p>
-      )}
-      {servers.length === 0 && !form && (
-        <p data-testid="mcp-empty" style={{ color: "#888" }}>
-          No MCP servers yet. Click “+ Add” to configure one (e.g. Playwright, MarkItDown, Tavily).
-        </p>
-      )}
-
-      <ul style={{ listStyle: "none", margin: "0.5rem 0 0", padding: 0 }}>
-        {servers.map((s) => (
-          <li
-            key={s.name}
-            data-testid="mcp-server"
-            style={{ borderTop: "1px solid #eee", padding: "0.4rem 0" }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-              <span style={{ color: s.connected ? "#2a7" : s.error ? "#b00" : "#888" }}>
-                {s.connected ? "✓" : s.error ? "✗" : "○"}
-              </span>
-              <strong style={{ flex: 1 }}>{s.name}</strong>
-              <button data-testid="mcp-toggle" onClick={() => void toggle(s)} disabled={busy}>
-                {s.enabled ? "Disconnect" : "Connect"}
-              </button>
-              <button data-testid="mcp-edit" onClick={() => edit(s)} disabled={busy}>
-                Edit
-              </button>
-              <button data-testid="mcp-delete" onClick={() => void remove(s.name)} disabled={busy}>
-                ✕
-              </button>
-            </div>
-            <div style={{ color: "#888" }}>
-              {s.connected
-                ? `${s.tools.length} tool${s.tools.length === 1 ? "" : "s"}`
-                : s.error
-                  ? `error: ${s.error}`
-                  : "stopped"}
-            </div>
-            {s.tools.length > 0 && (
-              <div style={{ color: "#555", whiteSpace: "pre-wrap" }}>{s.tools.join(", ")}</div>
-            )}
-          </li>
-        ))}
-      </ul>
-
-      {form && (
+      {configText !== null && (
         <div
-          data-testid="mcp-form"
+          data-testid="mcp-config"
           style={{ borderTop: "1px solid #ddd", marginTop: "0.5rem", paddingTop: "0.5rem" }}
         >
-          <input
-            data-testid="mcp-form-name"
-            placeholder="name (e.g. playwright)"
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-            style={{ width: "100%", marginBottom: 4 }}
-          />
-          <input
-            data-testid="mcp-form-command"
-            placeholder="command (e.g. npx)"
-            value={form.command}
-            onChange={(e) => setForm({ ...form, command: e.target.value })}
-            style={{ width: "100%", marginBottom: 4 }}
-          />
-          <input
-            data-testid="mcp-form-args"
-            placeholder="args (space-separated, e.g. -y @playwright/mcp@latest --headless)"
-            value={form.args}
-            onChange={(e) => setForm({ ...form, args: e.target.value })}
-            style={{ width: "100%", marginBottom: 4 }}
-          />
+          <div style={{ color: "#888", marginBottom: 4 }}>
+            Whole config — edit all servers, then Apply (replaces the config; secrets shown as {MASK}):
+          </div>
           <textarea
-            data-testid="mcp-form-env"
-            placeholder="env, one KEY=value per line (e.g. TAVILY_API_KEY=...)"
-            value={form.env}
-            onChange={(e) => setForm({ ...form, env: e.target.value })}
-            rows={3}
-            style={{ width: "100%", marginBottom: 4 }}
+            data-testid="mcp-config-text"
+            value={configText}
+            onChange={(e) => setConfigText(e.target.value)}
+            rows={12}
+            style={{ width: "100%", marginBottom: 4, fontFamily: "monospace" }}
           />
-          <label style={{ display: "block", marginBottom: 4 }}>
-            <input
-              data-testid="mcp-form-enabled"
-              type="checkbox"
-              checked={form.enabled}
-              onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
-            />{" "}
-            Connect now (runs the program)
-          </label>
           <div style={{ display: "flex", gap: "0.4rem" }}>
-            <button data-testid="mcp-form-save" onClick={() => void save()} disabled={busy}>
-              Save
+            <button data-testid="mcp-config-apply" onClick={() => void applyConfig()} disabled={busy}>
+              Apply
             </button>
-            <button data-testid="mcp-form-cancel" onClick={() => setForm(null)} disabled={busy}>
+            <button data-testid="mcp-config-cancel" onClick={() => setConfigText(null)} disabled={busy}>
               Cancel
             </button>
           </div>

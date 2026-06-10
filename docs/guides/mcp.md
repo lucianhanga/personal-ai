@@ -8,11 +8,22 @@ tools default to **HIGH risk**, so the agent needs your approval to run them.
 
 ## Configure servers in the UI (no restart)
 
-The simplest way: open **Settings → MCP** in the app and use **+ Add** to enter a server's
-name / command / args / env, then **Save**. PersonalAI connects it immediately (no backend
-restart), registers its tools behind the gateway, and shows status (connected / tools / errors).
-**Connect/Disconnect**, **Edit**, and **✕** (remove) act live. Changes are saved to the same
-`mcp.json` file (see below), so the UI and the file stay in sync.
+Open **Settings → Manage MCP**. The manager lets you:
+
+- **+ Add** / **Edit** a server with a **Form ⇄ JSON** toggle (edit fields, or that one server's JSON).
+- **Import** — paste an `mcpServers` JSON block to add many at once.
+- **Edit JSON** — view/modify the **whole config** as one document, then **Apply** (replaces the config;
+  removed servers disconnect, new ones connect).
+- **Export** / **Copy** — copy the whole config or a single server's JSON to the clipboard.
+- **Test** — health‑check a server (healthy / unreachable / error, with latency + tool count),
+  separate from connected/enabled.
+- **Connect/Disconnect**, **✕** (remove) — all live, no restart.
+
+Everything is saved to the same `mcp.json` file (see below), so the UI and the file stay in sync.
+The right‑hand **Panels** sidebar has an **MCP** tab showing recent MCP tool‑call activity.
+
+**Secrets:** env values (API keys) are **masked** (`********`) in the UI and API responses and never
+returned in cleartext; leave a masked value untouched to keep the stored secret.
 
 > Adding a server means specifying a **program to run on your machine**, so the UI asks you to
 > confirm before connecting. The API is bearer-token-gated and MCP tools stay HIGH-risk

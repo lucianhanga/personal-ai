@@ -148,6 +148,20 @@ export interface McpServerInput {
   enabled: boolean;
 }
 
+export type McpHealthStatus = "healthy" | "unreachable" | "error" | "disabled";
+
+export interface McpHealth {
+  name: string;
+  status: McpHealthStatus;
+  latency_ms: number | null;
+  tool_count: number | null;
+  error: string | null;
+  checked_at: string;
+}
+
+/** The whole mcpServers map (env masked) for the JSON editor / export. */
+export type McpConfig = Record<string, McpServerInput>;
+
 function authHeaders(token: string): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -339,6 +353,46 @@ export async function importMcpServers(
   if (!res.ok) throw new Error(`import MCP servers failed: ${res.status}`);
   const body = (await res.json()) as { data?: { servers?: McpServer[] } };
   return body.data?.servers ?? [];
+}
+
+/** The whole mcpServers config (env masked) for the JSON editor / export. */
+export async function fetchMcpConfig(token: string): Promise<McpConfig> {
+  const res = await fetch(`${API_BASE}/api/v1/mcp/config`, { headers: authHeaders(token) });
+  if (!res.ok) throw new Error(`mcp config request failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { mcpServers?: McpConfig } };
+  return body.data?.mcpServers ?? {};
+}
+
+/** Replace the whole config and reconcile live. Returns the updated server list. */
+export async function putMcpConfig(token: string, mcpServers: McpConfig): Promise<McpServer[]> {
+  const res = await fetch(`${API_BASE}/api/v1/mcp/config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ mcpServers }),
+  });
+  if (!res.ok) throw new Error(`apply MCP config failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { servers?: McpServer[] } };
+  return body.data?.servers ?? [];
+}
+
+/** Probe one server's health (Test). */
+export async function checkMcpHealth(token: string, name: string): Promise<McpHealth> {
+  const res = await fetch(
+    `${API_BASE}/api/v1/mcp/servers/${encodeURIComponent(name)}/health`,
+    { method: "POST", headers: authHeaders(token) },
+  );
+  if (!res.ok) throw new Error(`health check failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { health?: McpHealth } };
+  return body.data!.health!;
+}
+
+/** MCP tool activity (namespaced server.tool calls) from the audit log, optionally one server. */
+export async function fetchMcpLog(token: string, server?: string): Promise<ToolLogEntry[]> {
+  const q = server ? `?server=${encodeURIComponent(server)}` : "";
+  const res = await fetch(`${API_BASE}/api/v1/mcp/log${q}`, { headers: authHeaders(token) });
+  if (!res.ok) throw new Error(`mcp log request failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { entries?: ToolLogEntry[] } };
+  return body.data?.entries ?? [];
 }
 
 /** Disconnect (if connected) and remove an MCP server from the config. */
