@@ -1,10 +1,29 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
-import { App } from "./App";
+import { App, readToken } from "./App";
+
+const TOKEN_KEY = "personalai_token";
+
+beforeEach(() => {
+  localStorage.clear();
+  sessionStorage.clear();
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+test("readToken prefers sessionStorage", () => {
+  sessionStorage.setItem(TOKEN_KEY, "sess");
+  expect(readToken()).toBe("sess");
+});
+
+test("readToken migrates a legacy localStorage token into sessionStorage and clears it", () => {
+  localStorage.setItem(TOKEN_KEY, "legacy");
+  expect(readToken()).toBe("legacy");
+  expect(sessionStorage.getItem(TOKEN_KEY)).toBe("legacy");
+  expect(localStorage.getItem(TOKEN_KEY)).toBeNull(); // no persistent copy left behind
 });
 
 function mockFetch(impl: () => Promise<Response> | Response): void {
