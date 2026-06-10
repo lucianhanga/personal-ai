@@ -36,6 +36,9 @@ class _FakeClient:
         )
         return [(m, _FakeHandler(name))]
 
+    async def health(self) -> int:
+        return 1
+
     async def aclose(self) -> None:
         pass
 
@@ -142,6 +145,35 @@ def test_import_rejects_empty_and_bad_entries(tmp_path: Path) -> None:
         )
         bad = {"mcpServers": {"x": {"args": ["y"]}}}  # missing command
         assert client.post("/api/v1/mcp/import", headers=AUTH, json=bad).status_code == 422
+
+
+def test_health_endpoints(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        client.put("/api/v1/mcp/servers/pw", headers=AUTH, json={"command": "npx"})
+        one = client.post("/api/v1/mcp/servers/pw/health", headers=AUTH).json()["data"]["health"]
+        assert one["status"] == "healthy" and one["tool_count"] == 1
+        assert client.post("/api/v1/mcp/servers/nope/health", headers=AUTH).status_code == 404
+        allh = client.post("/api/v1/mcp/health", headers=AUTH).json()["data"]["servers"]
+        assert [h["name"] for h in allh] == ["pw"]
+
+
+def test_mcp_log_lists_namespaced_tool_calls(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        client.put("/api/v1/mcp/servers/pw", headers=AUTH, json={"command": "npx"})
+        # invoke the MCP tool through the gateway so it's audited
+        client.post(
+            "/api/v1/tools/invoke",
+            headers=AUTH,
+            json={"tool": "pw.do", "version": "mcp-1", "args": {}, "approved": True},
+        )
+        entries = client.get("/api/v1/mcp/log", headers=AUTH).json()["data"]["entries"]
+        assert any(e["tool"] == "pw.do" for e in entries)
+        # server filter
+        scoped = client.get("/api/v1/mcp/log?server=pw", headers=AUTH).json()["data"]["entries"]
+        assert all(str(e["tool"]).startswith("pw.") for e in scoped)
+        assert (
+            client.get("/api/v1/mcp/log?server=other", headers=AUTH).json()["data"]["entries"] == []
+        )
 
 
 def test_delete_removes(tmp_path: Path) -> None:

@@ -108,9 +108,10 @@ class McpClient:
     def __init__(self, config: McpServerConfig) -> None:
         self._config = config
         self._task: asyncio.Task[None] | None = None
-        self._requests: asyncio.Queue[tuple[str, Mapping[str, Any], asyncio.Future[Any]]] | None = (
-            None
-        )
+        # Queue items are (op, name, args, future); op is "call" or "health".
+        self._requests: (
+            asyncio.Queue[tuple[str, str, Mapping[str, Any], asyncio.Future[Any]]] | None
+        ) = None
         self._stop: asyncio.Event | None = None
 
     async def connect(self) -> list[tuple[ToolManifest, McpToolHandler]]:  # pragma: no cover
@@ -129,10 +130,17 @@ class McpClient:
 
     async def call(self, name: str, args: Mapping[str, Any]) -> Any:  # pragma: no cover
         """Run a tool call on the owner task and return the raw MCP result."""
+        return await self._submit("call", name, dict(args))
+
+    async def health(self) -> int:  # pragma: no cover
+        """Probe the live session (list_tools) on the owner task; return the tool count."""
+        return int(await self._submit("health", "", {}))
+
+    async def _submit(self, op: str, name: str, args: Mapping[str, Any]) -> Any:  # pragma: no cover
         if self._requests is None:
             raise RuntimeError("MCP client is not connected")
         fut: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
-        await self._requests.put((name, dict(args), fut))
+        await self._requests.put((op, name, args, fut))
         return await fut
 
     async def aclose(self) -> None:  # pragma: no cover - stops the owner task / live session
@@ -169,9 +177,13 @@ class McpClient:
                         p.cancel()
                     if get not in done:
                         continue
-                    name, args, fut = get.result()
+                    op, name, args, fut = get.result()
                     try:
-                        fut.set_result(await session.call_tool(name, dict(args)))
+                        if op == "health":
+                            result: Any = len((await session.list_tools()).tools)
+                        else:
+                            result = await session.call_tool(name, dict(args))
+                        fut.set_result(result)
                     except Exception as exc:  # noqa: BLE001 - report back to the caller
                         if not fut.done():
                             fut.set_exception(exc)

@@ -10,9 +10,12 @@ never breaks startup or the others. Third-party MCP tools remain HIGH-risk (gate
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from personalai_core import RegisteredTool
@@ -142,6 +145,46 @@ class McpManager:
         del servers[name]
         write_servers(self._path, servers)
         return True
+
+    async def check_health(self, name: str) -> dict[str, Any] | None:
+        """Probe one server's health (distinct from enabled/connected). None if unknown."""
+        spec = read_servers(self._path).get(name)
+        if spec is None:
+            return None
+        result: dict[str, Any] = {
+            "name": name,
+            "status": "disabled",
+            "latency_ms": None,
+            "tool_count": None,
+            "error": None,
+            "checked_at": datetime.now(UTC).isoformat(),
+        }
+        if not spec.get("enabled", True):
+            return result
+        started = perf_counter()
+        entry = self._active.get(name)
+        try:
+            if entry is not None:  # connected -> lightweight live probe
+                count = await asyncio.wait_for(entry[0].health(), timeout=10)
+            else:  # stopped -> throwaway connect to verify it can launch
+                client = self._factory(_spec_to_config(name, spec))
+                try:
+                    count = len(await asyncio.wait_for(client.connect(), timeout=20))
+                finally:
+                    await client.aclose()
+            result["status"] = "healthy"
+            result["tool_count"] = count
+        except Exception as exc:  # noqa: BLE001 - fail-closed: report, never raise
+            result["status"] = "error" if entry is not None else "unreachable"
+            result["error"] = str(exc)
+        result["latency_ms"] = round((perf_counter() - started) * 1000)
+        return result
+
+    async def check_all(self) -> list[dict[str, Any]]:
+        """Probe every configured server's health."""
+        return [
+            r for n in read_servers(self._path) if (r := await self.check_health(n)) is not None
+        ]
 
     async def aclose(self) -> None:
         for name in list(self._active):
