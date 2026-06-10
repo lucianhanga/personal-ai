@@ -38,6 +38,37 @@ def test_redact_leaves_plain_scalars_and_strings() -> None:
     assert redact(42) == 42
 
 
+def test_redact_masks_secrets_in_free_text() -> None:
+    assert redact("call with Authorization: Bearer abc.def-123") == (
+        "call with Authorization: Bearer ***"
+    )
+    assert redact("https://api.example.com/x?api_key=supersecret123&q=hi") == (
+        "https://api.example.com/x?api_key=***&q=hi"
+    )
+    openai_key = "sk-ABCDEFGHIJKLMNOP1234"  # pragma: allowlist secret
+    tavily_key = "tvly-abc123def456"  # pragma: allowlist secret
+    github_pat = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"  # pragma: allowlist secret
+    jwt = "eyJhbGciOi.eyJzdWIiOi.s1gnatur3"  # pragma: allowlist secret
+    assert redact(f"key {openai_key}") == "key ***"
+    assert redact(tavily_key) == "***"
+    assert redact(github_pat) == "***"
+    assert redact(f"token {jwt}") == "token ***"
+
+
+def test_redact_caps_long_strings() -> None:
+    out = redact("x" * 5000)
+    assert len(out) < 5000 and out.endswith("...<truncated>")
+
+
+def test_redact_leaves_bytes_unchanged() -> None:
+    assert redact(b"raw bytes") == b"raw bytes"
+
+
+def test_redact_masks_secrets_in_nested_values() -> None:
+    out = redact({"note": "use Bearer tok-abc.def for auth"})
+    assert out["note"] == "use Bearer *** for auth"
+
+
 def test_egress_blocked_by_default() -> None:
     with pytest.raises(EgressBlockedError, match="egress is disabled"):
         assert_egress_allowed(CoreConfig(), host="api.example.com")
