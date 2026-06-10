@@ -15,5 +15,6 @@ lightweight [MADR](https://adr.github.io/madr/)-style format.
 | [0008](./0008-single-agent-loop.md) | Single-agent tool-calling loop (LangGraph deferred) | Accepted |
 | [0009](./0009-mcp-isolation-posture.md) | MCP isolation: out-of-process servers + gateway envelope; container executor deferred | Accepted |
 | [0010](./0010-iam-multitenant-security.md) | Identity, authentication & multi-tenancy (always-on, RLS-isolated) | Accepted |
+| [0011](./0011-agent-framework.md) | M8 agent framework: a hand-rolled typed graph over the existing seams | Accepted |
 
-> New decisions get the next number. (ADR-0011 reserved for the M8 agent-framework decision.) Status: Proposed → Accepted → Superseded (link the successor).
+> New decisions get the next number. Status: Proposed → Accepted → Superseded (link the successor).
