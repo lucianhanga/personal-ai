@@ -195,6 +195,16 @@ def _require_token(request: Request, authorization: str | None = Header(default=
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
+# Grounding/anti-hallucination instruction (config.grounding_enabled). Balanced so it curbs
+# fabrication on factual questions without flattening creative/opinion requests.
+_GROUNDING = (
+    "Ground factual answers in the provided context — documents, tool results, and memory — and in "
+    "knowledge you are confident about. If the context and your knowledge do not cover something, "
+    "say so plainly instead of guessing; never fabricate facts, names, dates, numbers, URLs, or "
+    "citations. When you used tools or documents, cite the sources you relied on. For creative or "
+    "opinion requests, respond normally."
+)
+
 
 def _mcp_config_path(config: CoreConfig) -> Path:
     """Where the MCP server config lives: ``PERSONALAI_MCP_CONFIG`` or ~/.personalai/mcp.json."""
@@ -586,8 +596,19 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             if req.reasoning == "brief"
             else []
         )
+        # Grounding/anti-hallucination: ground answers in the provided context/tools; admit
+        # uncertainty rather than fabricating (the #1 cause of "invented" answers).
+        grounding_messages = (
+            [ChatMessage(Role.SYSTEM, _GROUNDING)] if config.grounding_enabled else []
+        )
         generation = GenerationRequest(
-            messages=[*brief_messages, *context_messages, *memory_messages, *stm_messages],
+            messages=[
+                *grounding_messages,
+                *brief_messages,
+                *context_messages,
+                *memory_messages,
+                *stm_messages,
+            ],
             model=req.model or config.default_model,
             think=think_effective,
         )
