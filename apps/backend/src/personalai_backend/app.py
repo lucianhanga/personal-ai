@@ -986,6 +986,50 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         # Configured MCP servers + connect status + the tools each exposed (behind the gateway).
         return StructuredResult(ok=True, data={"servers": app.state.mcp_manager.list_servers()})
 
+    @app.post(
+        "/api/v1/mcp/health",
+        response_model=StructuredResult,
+        dependencies=[Depends(_require_token)],
+    )
+    async def check_all_mcp() -> StructuredResult:
+        return StructuredResult(ok=True, data={"servers": await app.state.mcp_manager.check_all()})
+
+    @app.post(
+        "/api/v1/mcp/servers/{name}/health",
+        response_model=StructuredResult,
+        dependencies=[Depends(_require_token)],
+    )
+    async def check_mcp(name: str) -> StructuredResult:
+        result = await app.state.mcp_manager.check_health(name)
+        if result is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="server")
+        return StructuredResult(ok=True, data={"health": result})
+
+    @app.get(
+        "/api/v1/mcp/log", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+    )
+    def mcp_log(server: str | None = None, conversation_id: str | None = None) -> StructuredResult:
+        # MCP tool activity from the audit log: namespaced tools (server.tool); optionally 1 server.
+        prefix = f"{server}." if server else None
+        entries = [
+            {
+                "index": i,
+                "type": e.type,
+                "timestamp": e.timestamp.isoformat(),
+                "tool": e.payload.get("tool"),
+                "ok": e.payload.get("ok"),
+                "error": e.payload.get("error") or e.payload.get("reason"),
+                "args": e.payload.get("args"),
+                "conversation": e.conversation,
+            }
+            for i, e in enumerate(app.state.bootstrap.audit.entries())
+            if e.type.startswith("tool.")
+            and "." in (e.payload.get("tool") or "")  # namespaced => MCP tool
+            and (prefix is None or str(e.payload.get("tool") or "").startswith(prefix))
+            and (conversation_id is None or e.conversation == conversation_id)
+        ]
+        return StructuredResult(ok=True, data={"entries": list(reversed(entries))})
+
     @app.put(
         "/api/v1/mcp/servers/{name}",
         response_model=StructuredResult,

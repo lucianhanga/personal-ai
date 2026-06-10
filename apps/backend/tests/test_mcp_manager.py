@@ -32,6 +32,9 @@ class _FakeClient:
         )
         return [(m, _FakeHandler(name))]
 
+    async def health(self) -> int:
+        return 1
+
     async def aclose(self) -> None:
         self.closed = True
 
@@ -103,6 +106,36 @@ def test_replace_config_skips_unchanged_and_drops_unknown_masked(tmp_path: Path)
     # a masked value with no stored secret is dropped (cannot be recovered)
     stored_b = json.loads(path.read_text())["mcpServers"]["b"]
     assert stored_b.get("env", {}) == {}
+
+
+def test_health_connected_disabled_and_unreachable(tmp_path: Path) -> None:
+    mgr, _regs, _path = _mgr(tmp_path)
+    asyncio.run(mgr.upsert("up", {"command": "x", "enabled": True}))  # connected
+    asyncio.run(mgr.upsert("off", {"command": "x", "enabled": False}))  # disabled
+    h_up = asyncio.run(mgr.check_health("up"))
+    assert h_up is not None
+    assert h_up["status"] == "healthy" and h_up["tool_count"] == 1 and h_up["latency_ms"] >= 0
+    h_off = asyncio.run(mgr.check_health("off"))
+    assert h_off is not None and h_off["status"] == "disabled"
+    assert asyncio.run(mgr.check_health("missing")) is None
+
+
+def test_health_stopped_server_throwaway_connect_and_failure(tmp_path: Path) -> None:
+    # enabled but not connected -> throwaway connect probe
+    mgr, _regs, path = _mgr(tmp_path)
+    import json as _json
+
+    path.write_text(_json.dumps({"mcpServers": {"s": {"command": "x", "enabled": True}}}))
+    h = asyncio.run(mgr.check_health("s"))  # not in _active -> throwaway connect (fake -> healthy)
+    assert h is not None and h["status"] == "healthy" and h["tool_count"] == 1
+
+    fdir = tmp_path / "f"
+    fdir.mkdir()
+    fail_mgr, _r, fp = _mgr(fdir, factory=_FailClient)
+    fp.write_text(_json.dumps({"mcpServers": {"s": {"command": "x", "enabled": True}}}))
+    hf = asyncio.run(fail_mgr.check_health("s"))
+    assert hf is not None and hf["status"] == "unreachable" and "no binary" in hf["error"]
+    assert asyncio.run(mgr.check_all())  # smoke: returns a list
 
 
 def test_start_connects_enabled_from_file_and_aclose(tmp_path: Path) -> None:
