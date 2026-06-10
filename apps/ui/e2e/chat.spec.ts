@@ -137,7 +137,7 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
 
   // MCP panel lists the connected server.
   await page.getByTestId("mcp-show").click();
-  await expect(page.getByTestId("mcp-panel")).toContainText("playwright");
+  await expect(page.getByTestId("mcp-manager")).toContainText("playwright");
 
   // The panel sidebar collapses and re-expands.
   await page.getByTestId("side-toggle").click();
