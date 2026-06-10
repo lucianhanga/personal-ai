@@ -47,14 +47,17 @@ def load_server_configs(path: Path) -> list[McpServerConfig]:
         if not isinstance(entry, dict) or entry.get("enabled") is False:
             continue
         command = entry.get("command")
-        if not command:
+        url = entry.get("url")
+        if not command and not url:  # need a stdio command or an HTTP url
             continue
         configs.append(
             McpServerConfig(
                 name=name,
-                command=command,
+                command=command or "",
                 args=tuple(entry.get("args") or ()),
                 env=entry.get("env") or None,
+                url=url or None,
+                headers=entry.get("headers") or None,
             )
         )
     return configs

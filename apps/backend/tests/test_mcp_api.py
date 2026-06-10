@@ -118,7 +118,19 @@ def test_whole_config_get_and_replace(tmp_path: Path) -> None:
 def test_upsert_requires_command(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         bad = client.put("/api/v1/mcp/servers/x", headers=AUTH, json={"command": " "})
-        assert bad.status_code == 400
+        assert bad.status_code == 400  # neither command nor url
+
+
+def test_upsert_remote_http_server(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        r = client.put(
+            "/api/v1/mcp/servers/remote",
+            headers=AUTH,
+            json={"url": "http://127.0.0.1:9/mcp", "headers": {"Authorization": "tok"}},
+        )
+        server = r.json()["data"]["server"]
+        assert server["url"] == "http://127.0.0.1:9/mcp"
+        assert server["headers"] == {"Authorization": "********"}  # header secret masked
 
 
 def test_import_connects_multiple(tmp_path: Path) -> None:
@@ -143,8 +155,8 @@ def test_import_rejects_empty_and_bad_entries(tmp_path: Path) -> None:
             client.post("/api/v1/mcp/import", headers=AUTH, json={"mcpServers": {}}).status_code
             == 400
         )
-        bad = {"mcpServers": {"x": {"args": ["y"]}}}  # missing command
-        assert client.post("/api/v1/mcp/import", headers=AUTH, json=bad).status_code == 422
+        bad = {"mcpServers": {"x": {"args": ["y"]}}}  # neither command nor url
+        assert client.post("/api/v1/mcp/import", headers=AUTH, json=bad).status_code == 400
 
 
 def test_health_endpoints(tmp_path: Path) -> None:

@@ -25,12 +25,14 @@ MCP_TOOL_VERSION = "mcp-1"
 
 @dataclass(frozen=True)
 class McpServerConfig:
-    """How to launch/reach an MCP server (stdio)."""
+    """How to reach an MCP server: stdio (``command``) or remote Streamable HTTP (``url``)."""
 
     name: str
-    command: str
+    command: str = ""
     args: Sequence[str] = field(default_factory=tuple)
     env: Mapping[str, str] | None = None
+    url: str | None = None  # if set, connect over Streamable HTTP instead of spawning a subprocess
+    headers: Mapping[str, str] | None = None  # HTTP headers (e.g. auth) for the remote transport
 
 
 def manifest_from_mcp_tool(server_name: str, tool: Any) -> ToolManifest:
@@ -151,9 +153,15 @@ class McpClient:
         await self._task
         self._task = None
 
-    async def _run(self, ready: asyncio.Future[Sequence[Any]]) -> None:  # pragma: no cover
-        """Owner task: open the session, serve calls until stopped, then close it (same task)."""
-        from mcp import ClientSession, StdioServerParameters
+    def _transport(self) -> Any:  # pragma: no cover
+        """Transport context manager: Streamable HTTP if a URL is set, else a stdio subprocess."""
+        if self._config.url:
+            from mcp.client.streamable_http import streamablehttp_client
+
+            return streamablehttp_client(
+                self._config.url, headers=dict(self._config.headers or {}) or None
+            )
+        from mcp import StdioServerParameters
         from mcp.client.stdio import stdio_client
 
         params = StdioServerParameters(
@@ -161,9 +169,19 @@ class McpClient:
             args=list(self._config.args),
             env=dict(self._config.env) if self._config.env is not None else None,
         )
+        return stdio_client(params)
+
+    async def _run(self, ready: asyncio.Future[Sequence[Any]]) -> None:  # pragma: no cover
+        """Owner task: open the session, serve calls until stopped, then close it (same task)."""
+        from mcp import ClientSession
+
         assert self._requests is not None and self._stop is not None
         try:
-            async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+            # stdio yields (read, write); Streamable HTTP yields (read, write, get_session_id).
+            async with (
+                self._transport() as streams,
+                ClientSession(streams[0], streams[1]) as session,
+            ):
                 await session.initialize()
                 tools = (await session.list_tools()).tools
                 ready.set_result(tools)

@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
 from typing import Any
+from urllib.parse import urlparse
 
 from personalai_core import RegisteredTool
 from personalai_core.registries import Registries
@@ -37,6 +38,8 @@ def _spec_to_config(name: str, spec: dict[str, Any]) -> McpServerConfig:
         command=str(spec.get("command") or ""),
         args=tuple(spec.get("args") or ()),
         env=spec.get("env") or None,
+        url=spec.get("url") or None,
+        headers=spec.get("headers") or None,
     )
 
 
@@ -49,11 +52,18 @@ class McpManager:
     """Owns the connected MCP servers and the on-disk config."""
 
     def __init__(
-        self, registries: Registries, path: Path, *, client_factory: ClientFactory = McpClient
+        self,
+        registries: Registries,
+        path: Path,
+        *,
+        client_factory: ClientFactory = McpClient,
+        egress_guard: Callable[[str], None] | None = None,
     ) -> None:
         self._registries = registries
         self._path = path
         self._factory = client_factory
+        # Egress guard for remote (HTTP) MCP servers; loopback passes, others need the allowlist.
+        self._egress_guard = egress_guard
         self._active: dict[str, tuple[Any, list[str]]] = {}  # name -> (client, tool names)
         self._status: dict[str, dict[str, Any]] = {}  # name -> {connected, tools, error}
 
@@ -70,6 +80,8 @@ class McpManager:
             "command": spec.get("command", ""),
             "args": list(spec.get("args") or ()),
             "env": _mask_env(spec.get("env")),
+            "url": spec.get("url"),
+            "headers": _mask_env(spec.get("headers")),  # may carry auth -> mask values
             "enabled": spec.get("enabled", True),
             **status,
         }
@@ -79,28 +91,39 @@ class McpManager:
         return [self._public_server(n, s) for n, s in read_servers(self._path).items()]
 
     def config_json(self) -> dict[str, dict[str, Any]]:
-        """The whole mcpServers map (env masked) for the JSON editor / export."""
-        return {
-            name: {
+        """The whole mcpServers map (env/header secrets masked) for the JSON editor / export."""
+        out: dict[str, dict[str, Any]] = {}
+        for name, spec in read_servers(self._path).items():
+            entry: dict[str, Any] = {
                 "command": spec.get("command", ""),
                 "args": list(spec.get("args") or ()),
                 "env": _mask_env(spec.get("env")),
                 "enabled": spec.get("enabled", True),
             }
-            for name, spec in read_servers(self._path).items()
-        }
+            if spec.get("url"):  # remote (HTTP) server
+                entry["url"] = spec["url"]
+                entry["headers"] = _mask_env(spec.get("headers"))
+            out[name] = entry
+        return out
 
     def _resolve_secrets(self, name: str, spec: dict[str, Any]) -> dict[str, Any]:
-        """Replace masked env values (``********``) with the stored secret for that key."""
-        stored = read_servers(self._path).get(name, {}).get("env", {})
-        env: dict[str, str] = {}
-        for key, value in (spec.get("env") or {}).items():
-            if value == MASKED:
-                if key in stored:
-                    env[key] = stored[key]  # keep the existing secret
-            else:
-                env[key] = value
-        return {**spec, "env": env}
+        """Replace masked values (``********``) in env + headers with the stored secret per key."""
+        existing = read_servers(self._path).get(name, {})
+        resolved = dict(spec)
+        for field_name in ("env", "headers"):
+            incoming = spec.get(field_name)
+            if incoming is None:
+                continue
+            stored = existing.get(field_name, {})
+            out: dict[str, str] = {}
+            for key, value in incoming.items():
+                if value == MASKED:
+                    if key in stored:
+                        out[key] = stored[key]  # keep the existing secret
+                else:
+                    out[key] = value
+            resolved[field_name] = out
+        return resolved
 
     async def upsert(self, name: str, spec: dict[str, Any]) -> dict[str, Any]:
         """Create or update a server, persist it, and apply live (connect if enabled)."""
@@ -167,6 +190,7 @@ class McpManager:
             if entry is not None:  # connected -> lightweight live probe
                 count = await asyncio.wait_for(entry[0].health(), timeout=10)
             else:  # stopped -> throwaway connect to verify it can launch
+                self._check_remote_egress(spec)  # remote URL must pass the egress allowlist
                 client = self._factory(_spec_to_config(name, spec))
                 try:
                     count = len(await asyncio.wait_for(client.connect(), timeout=20))
@@ -190,6 +214,12 @@ class McpManager:
         for name in list(self._active):
             await self._disconnect(name)
 
+    def _check_remote_egress(self, spec: dict[str, Any]) -> None:
+        """For a remote (HTTP) MCP server, enforce the egress allowlist on its URL host."""
+        url = spec.get("url")
+        if url and self._egress_guard is not None:
+            self._egress_guard(urlparse(str(url)).hostname or str(url))
+
     async def _apply(self, name: str, spec: dict[str, Any]) -> None:
         """Reconcile one server to its spec: disconnect, then (re)connect if enabled."""
         await self._disconnect(name)
@@ -198,6 +228,7 @@ class McpManager:
             return
         client = self._factory(_spec_to_config(name, spec))
         try:
+            self._check_remote_egress(spec)  # remote URL must pass the egress allowlist
             tools = await client.connect()
         except Exception as exc:  # noqa: BLE001 - one bad server must not break the others
             logger.warning("MCP server %r failed to connect: %s", name, exc)

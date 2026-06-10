@@ -35,3 +35,17 @@ def test_skips_disabled_and_commandless(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert [c.name for c in load_server_configs(p)] == ["ok"]
+
+
+def test_parses_remote_http_server(tmp_path: Path) -> None:
+    p = tmp_path / "mcp.json"
+    p.write_text(
+        '{"mcpServers": {"remote": {"url": "https://host/mcp",'
+        ' "headers": {"Authorization": "x"}}}}',
+        encoding="utf-8",
+    )
+    configs = load_server_configs(p)
+    assert len(configs) == 1
+    c = configs[0]
+    assert c.name == "remote" and c.url == "https://host/mcp" and c.command == ""
+    assert c.headers == {"Authorization": "x"}

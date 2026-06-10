@@ -158,3 +158,18 @@ def test_start_connects_enabled_from_file_and_aclose(tmp_path: Path) -> None:
     assert "a.do" in regs.tools.names()
     asyncio.run(mgr.aclose())
     assert "a.do" not in regs.tools.names()  # unregistered on shutdown
+
+
+def test_remote_http_server_is_egress_gated(tmp_path: Path) -> None:
+    def guard(host: str) -> None:
+        if host != "127.0.0.1":
+            raise RuntimeError(f"egress blocked: {host}")
+
+    mgr = McpManager(
+        Registries(), tmp_path / "mcp.json", client_factory=_FakeClient, egress_guard=guard
+    )
+    blocked = asyncio.run(mgr.upsert("remote", {"url": "http://evil.example/mcp", "enabled": True}))
+    assert not blocked["connected"] and "egress blocked" in blocked["error"]
+    local = asyncio.run(mgr.upsert("local", {"url": "http://127.0.0.1:9/mcp", "enabled": True}))
+    assert local["connected"]  # loopback url passes the guard -> fake client connects
+    assert mgr.config_json()["local"]["url"] == "http://127.0.0.1:9/mcp"  # url round-trips

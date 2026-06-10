@@ -81,6 +81,23 @@ Two useful servers — browser automation and document→Markdown conversion:
   chat model on 48 GB). Configure the endpoint/model via `MARKITDOWN_OLLAMA_BASE_URL` /
   `MARKITDOWN_OLLAMA_MODEL` (defaults: `http://localhost:11434/v1`, `qwen2.5vl:7b`).
 
+### Remote (HTTP) servers
+
+Besides local `command` servers, PersonalAI can connect a **remote** MCP server over Streamable
+HTTP — give a `url` (and optional `headers`) instead of a `command`:
+
+```json
+"remote": {
+  "url": "https://mcp.example.com/mcp",
+  "headers": { "Authorization": "Bearer <token>" }
+}
+```
+
+The URL's host goes through the **egress allowlist** (loopback passes; other hosts need
+`PERSONALAI_EGRESS_ENABLED` + `PERSONALAI_ALLOWED_EGRESS_HOSTS`). Header values are masked like env
+secrets. Configure remote servers via the **Edit JSON** / **Import** view (the Add form is for local
+commands).
+
 ### Tavily (web search/extract/crawl for agents)
 
 [Tavily](https://github.com/tavily-ai/tavily-mcp) exposes `search`, `extract`, `map`, and `crawl` —
