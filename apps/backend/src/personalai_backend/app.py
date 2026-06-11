@@ -36,6 +36,7 @@ from personalai_backend.ingestion import chunk_ids, ingest_file
 from personalai_backend.logbuffer import LOG_BUFFER
 from personalai_backend.logbuffer import install as install_log_buffer
 from personalai_backend.mcp_manager import McpManager
+from personalai_backend.tenant_querier import TenantQuerier
 from personalai_contracts.ports import (
     ChatMessage,
     GenerationRequest,
@@ -65,7 +66,6 @@ from personalai_storage_postgres import (
     PgDocumentStore,
     PgMemoryStore,
     PgVectorRepository,
-    TenantDb,
     apply_migrations,
     create_pool,
 )
@@ -247,18 +247,19 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         try:
             pool = await create_pool(boot.config.database_url)
             await apply_migrations(pool)
-            vectors = PgVectorRepository(pool)
+            # Stores run through a tenant-bound proxy so every data query is RLS-scoped to the
+            # request's tenant (ADR-0010, P2). The raw pool stays for identity/auth (not RLS-gated)
+            # and for shutdown.
+            querier = TenantQuerier(pool)
+            vectors = PgVectorRepository(querier)
             boot.registries.vector_repositories.register("pgvector", vectors, overwrite=True)
             app.state.storage = Storage(
                 pool=pool,
                 vectors=vectors,
-                documents=PgDocumentStore(pool),
-                conversations=PgConversationStore(pool),
-                memories=PgMemoryStore(pool),
+                documents=PgDocumentStore(querier),
+                conversations=PgConversationStore(querier),
+                memories=PgMemoryStore(querier),
             )
-            app.state.tenant_db = TenantDb(
-                pool
-            )  # tenant-bound connections for per-request RLS (P2)
         except Exception as exc:  # noqa: BLE001 - storage is optional; degrade gracefully
             logger.warning("storage unavailable (file/RAG features disabled): %s", exc)
             app.state.storage = None
