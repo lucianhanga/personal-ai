@@ -36,6 +36,13 @@ const FILES_BODY = JSON.stringify({ ok: true, data: { files: [] } });
 test("user can pick a model and stream a chat reply", async ({ page }) => {
   // Pre-set the API token so the Chat view renders without manual entry.
   await page.addInitScript(() => localStorage.setItem("personalai_token", "demo"));
+  await page.route("**/api/v1/auth/session/me", (r) =>
+    r.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: '{"data":{"subject_id":"dev","tenant_id":"t","auth_kind":"dev"}}',
+    }),
+  );
   await page.route("**/health", (r) =>
     r.fulfill({ status: 200, contentType: "application/json", body: '{"status":"ok"}' }),
   );

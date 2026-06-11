@@ -162,8 +162,69 @@ export interface McpHealth {
 /** The whole mcpServers map (env masked) for the JSON editor / export. */
 export type McpConfig = Record<string, McpServerInput>;
 
+function readCookie(name: string): string {
+  const m = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  return m ? decodeURIComponent(m[1]) : "";
+}
+
+// Auth headers for every request: the legacy bearer token (local/dev) plus the double-submit CSRF
+// token (hosted cookie sessions). Both are harmless when unused — the backend resolves cookie
+// sessions first, then the bearer; CSRF is only checked for cookie-authenticated unsafe requests.
 function authHeaders(token: string): Record<string, string> {
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+  const csrf = readCookie("pai_csrf");
+  if (csrf) headers["X-CSRF-Token"] = csrf;
+  return headers;
+}
+
+// All authenticated requests send credentials so the session cookie rides cross-origin (hosted SPA).
+const CREDS: RequestCredentials = "include";
+
+export interface SessionInfo {
+  subject_id: string;
+  tenant_id: string;
+  auth_kind: string;
+}
+
+/** Current session (dev/cookie/api-key), or null when unauthenticated (hosted, not logged in). */
+export async function fetchSession(token: string): Promise<SessionInfo | null> {
+  const res = await fetch(`${API_BASE}/api/v1/auth/session/me`, {
+    headers: authHeaders(token),
+    credentials: CREDS,
+  });
+  if (res.status === 401) return null;
+  if (!res.ok) throw new Error(`session request failed: ${res.status}`);
+  return ((await res.json()) as { data?: SessionInfo }).data ?? null;
+}
+
+/** Log in with email + password (hosted mode); sets the session + CSRF cookies. */
+export async function login(email: string, password: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: CREDS,
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) throw new Error("invalid credentials");
+}
+
+/** Create an account (hosted mode). Always succeeds silently (no user enumeration). */
+export async function signup(email: string, password: string): Promise<void> {
+  await fetch(`${API_BASE}/api/v1/auth/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: CREDS,
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+/** Log out: revoke the session and clear cookies. */
+export async function logout(token: string): Promise<void> {
+  await fetch(`${API_BASE}/api/v1/auth/logout`, {
+    method: "POST",
+    headers: authHeaders(token),
+    credentials: CREDS,
+  });
 }
 
 /** Returns true if the backend /health endpoint reports ok. Never throws. */
@@ -182,7 +243,7 @@ export async function fetchHealth(): Promise<boolean> {
 export async function fetchProviders(
   token: string,
 ): Promise<{ default: string; providers: string[] }> {
-  const res = await fetch(`${API_BASE}/api/v1/providers`, { headers: authHeaders(token) });
+  const res = await fetch(`${API_BASE}/api/v1/providers`, { headers: authHeaders(token), credentials: CREDS });
   if (!res.ok) throw new Error(`providers request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { default?: string; providers?: string[] } };
   return { default: body.data?.default ?? "", providers: body.data?.providers ?? [] };
@@ -195,7 +256,7 @@ export async function fetchModels(
 ): Promise<{ defaultModel: string; models: ModelInfo[] }> {
   const url = new URL(`${API_BASE}/api/v1/models`);
   if (provider) url.searchParams.set("provider", provider);
-  const res = await fetch(url, { headers: authHeaders(token) });
+  const res = await fetch(url, { headers: authHeaders(token), credentials: CREDS });
   if (!res.ok) throw new Error(`models request failed: ${res.status}`);
   const body = (await res.json()) as {
     ok?: boolean;
@@ -213,6 +274,7 @@ export async function uploadFile(token: string, file: File): Promise<DocumentInf
   const res = await fetch(`${API_BASE}/api/v1/files`, {
     method: "POST",
     headers: authHeaders(token),
+    credentials: CREDS,
     body: form,
   });
   if (!res.ok) throw new Error(`upload failed: ${res.status}`);
@@ -227,7 +289,7 @@ export async function uploadFile(token: string, file: File): Promise<DocumentInf
 
 /** List ingested documents. */
 export async function fetchFiles(token: string): Promise<DocumentInfo[]> {
-  const res = await fetch(`${API_BASE}/api/v1/files`, { headers: authHeaders(token) });
+  const res = await fetch(`${API_BASE}/api/v1/files`, { headers: authHeaders(token), credentials: CREDS });
   if (!res.ok) throw new Error(`files request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { files?: DocumentInfo[] } };
   return body.data?.files ?? [];
@@ -238,6 +300,7 @@ export async function deleteFile(token: string, id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/files/${id}`, {
     method: "DELETE",
     headers: authHeaders(token),
+    credentials: CREDS,
   });
   if (!res.ok) throw new Error(`delete failed: ${res.status}`);
 }
@@ -250,6 +313,7 @@ export async function createConversation(
 ): Promise<ConversationSummary> {
   const res = await fetch(`${API_BASE}/api/v1/conversations`, {
     method: "POST",
+    credentials: CREDS,
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
     body: JSON.stringify({ title, incognito }),
   });
@@ -261,7 +325,7 @@ export async function createConversation(
 
 /** List long-term memories. */
 export async function fetchMemories(token: string): Promise<MemoryItem[]> {
-  const res = await fetch(`${API_BASE}/api/v1/memory`, { headers: authHeaders(token) });
+  const res = await fetch(`${API_BASE}/api/v1/memory`, { headers: authHeaders(token), credentials: CREDS });
   if (!res.ok) throw new Error(`memory request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { memories?: MemoryItem[] } };
   return body.data?.memories ?? [];
@@ -271,6 +335,7 @@ export async function fetchMemories(token: string): Promise<MemoryItem[]> {
 export async function updateMemory(token: string, id: string, text: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/memory/${id}`, {
     method: "PATCH",
+    credentials: CREDS,
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
     body: JSON.stringify({ text }),
   });
@@ -282,6 +347,7 @@ export async function deleteMemory(token: string, id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/memory/${id}`, {
     method: "DELETE",
     headers: authHeaders(token),
+    credentials: CREDS,
   });
   if (!res.ok) throw new Error(`delete memory failed: ${res.status}`);
 }
@@ -291,13 +357,14 @@ export async function forgetAllMemory(token: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/memory`, {
     method: "DELETE",
     headers: authHeaders(token),
+    credentials: CREDS,
   });
   if (!res.ok) throw new Error(`forget all failed: ${res.status}`);
 }
 
 /** List the tools registered behind the gateway. */
 export async function fetchTools(token: string): Promise<ToolInfo[]> {
-  const res = await fetch(`${API_BASE}/api/v1/tools`, { headers: authHeaders(token) });
+  const res = await fetch(`${API_BASE}/api/v1/tools`, { headers: authHeaders(token), credentials: CREDS });
   if (!res.ok) throw new Error(`tools request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { tools?: ToolInfo[] } };
   return body.data?.tools ?? [];
@@ -310,6 +377,7 @@ const convQuery = (conversationId?: string | null): string =>
 export async function fetchLogs(token: string, conversationId?: string | null): Promise<LogEntry[]> {
   const res = await fetch(`${API_BASE}/api/v1/logs${convQuery(conversationId)}`, {
     headers: authHeaders(token),
+    credentials: CREDS,
   });
   if (!res.ok) throw new Error(`logs request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { logs?: LogEntry[] } };
@@ -318,7 +386,7 @@ export async function fetchLogs(token: string, conversationId?: string | null): 
 
 /** Configured MCP servers + connect status + the tools each exposed. */
 export async function fetchMcp(token: string): Promise<McpServer[]> {
-  const res = await fetch(`${API_BASE}/api/v1/mcp`, { headers: authHeaders(token) });
+  const res = await fetch(`${API_BASE}/api/v1/mcp`, { headers: authHeaders(token), credentials: CREDS });
   if (!res.ok) throw new Error(`mcp request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { servers?: McpServer[] } };
   return body.data?.servers ?? [];
@@ -332,6 +400,7 @@ export async function upsertMcpServer(
 ): Promise<McpServer> {
   const res = await fetch(`${API_BASE}/api/v1/mcp/servers/${encodeURIComponent(name)}`, {
     method: "PUT",
+    credentials: CREDS,
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
     body: JSON.stringify(input),
   });
@@ -347,6 +416,7 @@ export async function importMcpServers(
 ): Promise<McpServer[]> {
   const res = await fetch(`${API_BASE}/api/v1/mcp/import`, {
     method: "POST",
+    credentials: CREDS,
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
     body: JSON.stringify({ mcpServers }),
   });
@@ -357,7 +427,7 @@ export async function importMcpServers(
 
 /** The whole mcpServers config (env masked) for the JSON editor / export. */
 export async function fetchMcpConfig(token: string): Promise<McpConfig> {
-  const res = await fetch(`${API_BASE}/api/v1/mcp/config`, { headers: authHeaders(token) });
+  const res = await fetch(`${API_BASE}/api/v1/mcp/config`, { headers: authHeaders(token), credentials: CREDS });
   if (!res.ok) throw new Error(`mcp config request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { mcpServers?: McpConfig } };
   return body.data?.mcpServers ?? {};
@@ -367,6 +437,7 @@ export async function fetchMcpConfig(token: string): Promise<McpConfig> {
 export async function putMcpConfig(token: string, mcpServers: McpConfig): Promise<McpServer[]> {
   const res = await fetch(`${API_BASE}/api/v1/mcp/config`, {
     method: "PUT",
+    credentials: CREDS,
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
     body: JSON.stringify({ mcpServers }),
   });
@@ -379,7 +450,7 @@ export async function putMcpConfig(token: string, mcpServers: McpConfig): Promis
 export async function checkMcpHealth(token: string, name: string): Promise<McpHealth> {
   const res = await fetch(
     `${API_BASE}/api/v1/mcp/servers/${encodeURIComponent(name)}/health`,
-    { method: "POST", headers: authHeaders(token) },
+    { method: "POST", headers: authHeaders(token), credentials: CREDS },
   );
   if (!res.ok) throw new Error(`health check failed: ${res.status}`);
   const body = (await res.json()) as { data?: { health?: McpHealth } };
@@ -389,7 +460,7 @@ export async function checkMcpHealth(token: string, name: string): Promise<McpHe
 /** MCP tool activity (namespaced server.tool calls) from the audit log, optionally one server. */
 export async function fetchMcpLog(token: string, server?: string): Promise<ToolLogEntry[]> {
   const q = server ? `?server=${encodeURIComponent(server)}` : "";
-  const res = await fetch(`${API_BASE}/api/v1/mcp/log${q}`, { headers: authHeaders(token) });
+  const res = await fetch(`${API_BASE}/api/v1/mcp/log${q}`, { headers: authHeaders(token), credentials: CREDS });
   if (!res.ok) throw new Error(`mcp log request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { entries?: ToolLogEntry[] } };
   return body.data?.entries ?? [];
@@ -400,6 +471,7 @@ export async function deleteMcpServer(token: string, name: string): Promise<void
   const res = await fetch(`${API_BASE}/api/v1/mcp/servers/${encodeURIComponent(name)}`, {
     method: "DELETE",
     headers: authHeaders(token),
+    credentials: CREDS,
   });
   if (!res.ok) throw new Error(`delete MCP server failed: ${res.status}`);
 }
@@ -411,6 +483,7 @@ export async function fetchToolLog(
 ): Promise<ToolLogEntry[]> {
   const res = await fetch(`${API_BASE}/api/v1/tools/log${convQuery(conversationId)}`, {
     headers: authHeaders(token),
+    credentials: CREDS,
   });
   if (!res.ok) throw new Error(`tool log request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { entries?: ToolLogEntry[] } };
@@ -430,6 +503,7 @@ export async function invokeTool(
 ): Promise<ToolInvokeResult> {
   const res = await fetch(`${API_BASE}/api/v1/tools/invoke`, {
     method: "POST",
+    credentials: CREDS,
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
     body: JSON.stringify({
       tool: req.tool,
@@ -450,7 +524,7 @@ export async function invokeTool(
 
 /** List conversations (most-recent first). */
 export async function fetchConversations(token: string): Promise<ConversationSummary[]> {
-  const res = await fetch(`${API_BASE}/api/v1/conversations`, { headers: authHeaders(token) });
+  const res = await fetch(`${API_BASE}/api/v1/conversations`, { headers: authHeaders(token), credentials: CREDS });
   if (!res.ok) throw new Error(`conversations request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { conversations?: ConversationSummary[] } };
   return body.data?.conversations ?? [];
@@ -461,7 +535,7 @@ export async function fetchConversation(
   token: string,
   id: string,
 ): Promise<{ id: string; title: string; messages: ChatMessage[] }> {
-  const res = await fetch(`${API_BASE}/api/v1/conversations/${id}`, { headers: authHeaders(token) });
+  const res = await fetch(`${API_BASE}/api/v1/conversations/${id}`, { headers: authHeaders(token), credentials: CREDS });
   if (!res.ok) throw new Error(`conversation request failed: ${res.status}`);
   const body = (await res.json()) as {
     data?: { id: string; title: string; messages: ChatMessage[] };
@@ -475,6 +549,7 @@ export async function fetchConversation(
 export async function renameConversation(token: string, id: string, title: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/conversations/${id}`, {
     method: "PATCH",
+    credentials: CREDS,
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
     body: JSON.stringify({ title }),
   });
@@ -485,6 +560,7 @@ export async function deleteConversation(token: string, id: string): Promise<voi
   const res = await fetch(`${API_BASE}/api/v1/conversations/${id}`, {
     method: "DELETE",
     headers: authHeaders(token),
+    credentials: CREDS,
   });
   if (!res.ok) throw new Error(`delete conversation failed: ${res.status}`);
 }
@@ -516,6 +592,7 @@ export async function streamChat(
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/chat`, {
     method: "POST",
+    credentials: CREDS,
     headers: { "Content-Type": "application/json", ...authHeaders(params.token) },
     body: JSON.stringify({
       messages: params.messages,
