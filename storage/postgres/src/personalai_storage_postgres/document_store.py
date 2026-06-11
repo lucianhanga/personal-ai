@@ -7,6 +7,8 @@ from datetime import datetime
 
 import asyncpg
 
+from personalai_storage_postgres.db import TENANT_ID_SQL, Querier
+
 
 @dataclass(frozen=True)
 class Document:
@@ -23,16 +25,16 @@ class Document:
 class PgDocumentStore:
     """CRUD for the ``documents`` table."""
 
-    def __init__(self, pool: asyncpg.Pool) -> None:
+    def __init__(self, pool: Querier) -> None:
         self._pool = pool
 
     async def add(
         self, *, id: str, name: str, mime: str, size_bytes: int, chunk_count: int
     ) -> Document:
         row = await self._pool.fetchrow(
-            "INSERT INTO documents (id, name, mime, size_bytes, chunk_count) "
-            "VALUES ($1, $2, $3, $4, $5) "
-            "RETURNING id, name, mime, size_bytes, chunk_count, created_at",
+            f"INSERT INTO documents (id, name, mime, size_bytes, chunk_count, tenant_id) "
+            f"VALUES ($1, $2, $3, $4, $5, {TENANT_ID_SQL}) "
+            f"RETURNING id, name, mime, size_bytes, chunk_count, created_at",
             id,
             name,
             mime,
