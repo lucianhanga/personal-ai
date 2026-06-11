@@ -75,7 +75,7 @@ def test_two_users_have_separate_conversations() -> None:
 
 
 def test_querier_fails_closed_without_context() -> None:
-    # A store query with no SecurityContext in scope must raise, never silently use a default tenant.
+    # A store query with no SecurityContext in scope must raise, never use a default tenant.
     async def _run() -> None:
         pool = await create_pool(DB_URL)
         try:
