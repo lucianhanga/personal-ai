@@ -706,6 +706,21 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 usage_frame = _usage_frame(usage, provider)
                 if usage_frame is not None:
                     yield usage_frame
+                # Empty turn: no answer text and no tool steps. Tell the UI instead of closing the
+                # stream silently (e.g. a reasoning model that spent the whole turn thinking) — that
+                # silent close is the "no answer" symptom (#224).
+                if not answer.strip() and not trace:
+                    notice = StructuredResult(
+                        ok=False,
+                        error=ErrorInfo(
+                            code="E_EMPTY",
+                            message=(
+                                "No answer was produced — the model may have spent the turn "
+                                "reasoning. Try again, or set reasoning to Off/Brief."
+                            ),
+                        ),
+                    )
+                    yield f"event: error\ndata: {notice.model_dump_json()}\n\n".encode()
                 # Persist the assistant turn (with tool/reasoning meta). Also persist when the
                 # answer is empty but tools/reasoning happened, so the trace isn't lost on reload.
                 if persist_id is not None and storage is not None and (answer or trace):

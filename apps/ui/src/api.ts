@@ -609,6 +609,29 @@ export async function streamChat(
   });
   if (!res.ok || res.body === null) throw new Error(`chat request failed: ${res.status}`);
 
+  const processFrame = (frame: string): void => {
+    const lines = frame.split("\n");
+    const event = lines.find((l) => l.startsWith("event: "))?.slice("event: ".length);
+    const dataLine = lines.find((l) => l.startsWith("data: "));
+    if (dataLine === undefined) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(dataLine.slice("data: ".length));
+    } catch {
+      return; // skip a malformed/partial frame rather than aborting the whole stream
+    }
+    if (event === "citations") return onCitations?.(parsed as Citation[]);
+    if (event === "tool") return onToolStep?.(parsed as ToolStep);
+    if (event === "usage") return onUsage?.(parsed as UsageInfo);
+    if (event === "error") {
+      onError?.((parsed as { error?: { message?: string } }).error?.message ?? "generation failed");
+      return;
+    }
+    const payload = parsed as { delta?: string; thinking?: string | null };
+    if (payload.thinking) onThinking?.(payload.thinking);
+    if (payload.delta) onDelta(payload.delta);
+  };
+
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -618,32 +641,10 @@ export async function streamChat(
     buffer += decoder.decode(value, { stream: true });
     const frames = buffer.split("\n\n");
     buffer = frames.pop() ?? "";
-    for (const frame of frames) {
-      const lines = frame.split("\n");
-      const event = lines.find((l) => l.startsWith("event: "))?.slice("event: ".length);
-      const dataLine = lines.find((l) => l.startsWith("data: "));
-      if (dataLine === undefined) continue;
-      const data = dataLine.slice("data: ".length);
-      if (event === "citations") {
-        onCitations?.(JSON.parse(data) as Citation[]);
-        continue;
-      }
-      if (event === "tool") {
-        onToolStep?.(JSON.parse(data) as ToolStep);
-        continue;
-      }
-      if (event === "usage") {
-        onUsage?.(JSON.parse(data) as UsageInfo);
-        continue;
-      }
-      if (event === "error") {
-        const e = JSON.parse(data) as { error?: { message?: string } };
-        onError?.(e.error?.message ?? "generation failed");
-        continue;
-      }
-      const payload = JSON.parse(data) as { delta?: string; thinking?: string | null };
-      if (payload.thinking) onThinking?.(payload.thinking);
-      if (payload.delta) onDelta(payload.delta);
-    }
+    for (const frame of frames) if (frame.trim()) processFrame(frame);
   }
+  // Flush any multi-byte remainder + process a trailing frame that lacked the final "\n\n"
+  // (otherwise the last event — sometimes the answer or the error notice — is dropped).
+  buffer += decoder.decode();
+  if (buffer.trim()) processFrame(buffer);
 }
