@@ -114,6 +114,9 @@ def test_allowed_origin_gets_cors_header(client: TestClient) -> None:
     resp = client.get("/health", headers={"Origin": "http://localhost"})
     assert resp.status_code == 200
     assert resp.headers.get("access-control-allow-origin") == "http://localhost"
+    # Credentials allowed even in local mode: the SPA sends credentials:"include", which the browser
+    # blocks without this header (#234).
+    assert resp.headers.get("access-control-allow-credentials") == "true"
 
 
 def test_disallowed_origin_gets_no_cors_header(client: TestClient) -> None:
