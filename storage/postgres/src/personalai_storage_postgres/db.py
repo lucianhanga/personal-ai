@@ -8,6 +8,18 @@ import asyncpg
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
+# A pool or a single connection — stores accept either, so a TenantDb-bound connection (RLS active)
+# can be passed in place of the raw pool (ADR-0010, P0.5). Both expose fetch/fetchrow/execute/...
+Querier = asyncpg.Pool | asyncpg.Connection
+
+# SQL for a row's tenant: the bound tenant (app.tenant_id GUC) when set, else the default tenant.
+# Lets INSERTs satisfy RLS WITH CHECK on a tenant-bound connection and still work on the raw pool
+# (default tenant) where the app is not yet tenant-bound. P0.4 later drops the column default.
+TENANT_ID_SQL = (
+    "coalesce(current_setting('app.tenant_id', true)::uuid, "
+    "'00000000-0000-0000-0000-000000000001'::uuid)"
+)
+
 
 async def create_pool(database_url: str) -> asyncpg.Pool:
     """Create an asyncpg connection pool for ``database_url``."""

@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 import asyncpg
 
 from personalai_contracts.ports import MemoryItem, MemoryKind
+from personalai_storage_postgres.db import TENANT_ID_SQL, Querier
 from personalai_storage_postgres.vector_repo import _to_pgvector
 
 _COLS = "id, kind, text, confidence, source, superseded, created_at, updated_at"
@@ -16,7 +17,7 @@ _COLS = "id, kind, text, confidence, source, superseded, created_at, updated_at"
 class PgMemoryStore:
     """A :class:`MemoryStore` over Postgres + pgvector (cosine similarity)."""
 
-    def __init__(self, pool: asyncpg.Pool) -> None:
+    def __init__(self, pool: Querier) -> None:
         self._pool = pool
 
     async def add(
@@ -30,8 +31,8 @@ class PgMemoryStore:
         source: Mapping[str, str],
     ) -> MemoryItem:
         row = await self._pool.fetchrow(
-            "INSERT INTO memories (id, kind, text, embedding, confidence, source) "
-            "VALUES ($1, $2, $3, $4::vector, $5, $6::jsonb) "
+            f"INSERT INTO memories (id, kind, text, embedding, confidence, source, tenant_id) "
+            f"VALUES ($1, $2, $3, $4::vector, $5, $6::jsonb, {TENANT_ID_SQL}) "
             f"RETURNING {_COLS}",
             id,
             kind.value,

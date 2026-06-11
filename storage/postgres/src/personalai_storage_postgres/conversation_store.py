@@ -14,6 +14,8 @@ from typing import Any
 
 import asyncpg
 
+from personalai_storage_postgres.db import TENANT_ID_SQL, Querier
+
 
 @dataclass(frozen=True)
 class Conversation:
@@ -43,15 +45,15 @@ class Message:
 class PgConversationStore:
     """CRUD for conversations + their messages."""
 
-    def __init__(self, pool: asyncpg.Pool) -> None:
+    def __init__(self, pool: Querier) -> None:
         self._pool = pool
 
     _COLS = "id, title, created_at, updated_at, summary, summary_through, incognito"
 
     async def create(self, *, id: str, title: str, incognito: bool = False) -> Conversation:
         row = await self._pool.fetchrow(
-            f"INSERT INTO conversations (id, title, incognito) VALUES ($1, $2, $3) "
-            f"RETURNING {self._COLS}",
+            f"INSERT INTO conversations (id, title, incognito, tenant_id) "
+            f"VALUES ($1, $2, $3, {TENANT_ID_SQL}) RETURNING {self._COLS}",
             id,
             title,
             incognito,
@@ -100,8 +102,9 @@ class PgConversationStore:
         meta: Mapping[str, Any] | None = None,
     ) -> Message:
         row = await self._pool.fetchrow(
-            "INSERT INTO messages (conversation_id, role, content, meta) VALUES ($1, $2, $3, $4) "
-            "RETURNING id, conversation_id, role, content, created_at, meta",
+            f"INSERT INTO messages (conversation_id, role, content, meta, tenant_id) "
+            f"VALUES ($1, $2, $3, $4, {TENANT_ID_SQL}) "
+            f"RETURNING id, conversation_id, role, content, created_at, meta",
             conversation_id,
             role,
             content,

@@ -9,9 +9,8 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 
-import asyncpg
-
 from personalai_contracts.ports.storage import VectorMatch, VectorRecord
+from personalai_storage_postgres.db import TENANT_ID_SQL, Querier
 
 # Embedding dimension of the default embedding model (mxbai-embed-large).
 VECTOR_DIM = 1024
@@ -25,14 +24,15 @@ def _to_pgvector(values: Sequence[float]) -> str:
 class PgVectorRepository:
     """A :class:`VectorRepository` backed by Postgres + pgvector (cosine similarity)."""
 
-    def __init__(self, pool: asyncpg.Pool) -> None:
+    def __init__(self, pool: Querier) -> None:
         self._pool = pool
 
     async def upsert(self, records: Sequence[VectorRecord]) -> None:
         await self._pool.executemany(
-            "INSERT INTO vectors (id, embedding, metadata) VALUES ($1, $2::vector, $3::jsonb) "
-            "ON CONFLICT (id) DO UPDATE SET embedding = EXCLUDED.embedding, "
-            "metadata = EXCLUDED.metadata",
+            f"INSERT INTO vectors (id, embedding, metadata, tenant_id) "
+            f"VALUES ($1, $2::vector, $3::jsonb, {TENANT_ID_SQL}) "
+            f"ON CONFLICT (id) DO UPDATE SET embedding = EXCLUDED.embedding, "
+            f"metadata = EXCLUDED.metadata",
             [(r.id, _to_pgvector(r.vector), json.dumps(dict(r.metadata))) for r in records],
         )
 
