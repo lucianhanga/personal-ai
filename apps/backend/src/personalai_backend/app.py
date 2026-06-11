@@ -300,13 +300,15 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     )
     app.state.bg_tasks = set()  # fire-and-forget background tasks (e.g. memory extraction)
 
-    # CORS restricted to the configured origins (an allowlist). In hosted mode the SPA authenticates
-    # via cookies, so credentials must be allowed; in local mode auth is token/dev-login and cookies
-    # are unused. Non-browser clients send no Origin and are unaffected.
+    # CORS restricted to the configured origins (an allowlist of loopback dev origins). Credentials
+    # are allowed in BOTH modes because the SPA always sends credentials:"include" (cookie auth in
+    # hosted; harmless in local) — a credentialed cross-origin request is blocked by the browser
+    # unless the response sets Access-Control-Allow-Credentials. The explicit (non-wildcard) origin
+    # allowlist is the control that makes allow_credentials safe. Non-browser clients send no Origin.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(boot.config.allowed_origins),
-        allow_credentials=boot.config.app_mode == "hosted",
+        allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
