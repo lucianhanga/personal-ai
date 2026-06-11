@@ -23,6 +23,7 @@ _ENV_FIELDS = {
     "DEFAULT_MODEL": "default_model",
     "OLLAMA_HOST": "ollama_host",
     "OLLAMA_NUM_CTX": "ollama_num_ctx",
+    "OLLAMA_KEEP_ALIVE": "ollama_keep_alive",
     "MCP_CONFIG": "mcp_config_path",
     "AGENT_MAX_ITERATIONS": "agent_max_iterations",
     "RETRIEVER": "retriever",
@@ -96,6 +97,9 @@ class CoreConfig(StrictModel):
     ollama_host: str = "http://127.0.0.1:11434"
     # Bound the Ollama context window (KV cache) to control memory / avoid swap on constrained RAM.
     ollama_num_ctx: int = 32768
+    # How long Ollama keeps the model resident after a request ("30m", "1h", "-1" = never unload).
+    # Keeps a large model warm between turns so it isn't cold-reloaded (slow on big models).
+    ollama_keep_alive: str = "30m"
     # Path to an mcp.json (mcpServers map) of MCP servers to connect at startup (M7); empty = none.
     mcp_config_path: str = ""
     # Max model<->tool iterations in the agent loop before it must answer (multi-step tool use).
