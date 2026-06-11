@@ -47,6 +47,8 @@ _ENV_FIELDS = {
     "MEMORY_TOP_K": "memory_top_k",
     "GROUNDING_ENABLED": "grounding_enabled",
     "AUDIT_LOG_PATH": "audit_log_path",
+    "SESSION_IDLE_SECONDS": "session_idle_seconds",
+    "SESSION_ABSOLUTE_SECONDS": "session_absolute_seconds",
 }
 
 _INT_FIELDS = {
@@ -57,6 +59,8 @@ _INT_FIELDS = {
     "memory_top_k",
     "ollama_num_ctx",
     "agent_max_iterations",
+    "session_idle_seconds",
+    "session_absolute_seconds",
 }
 _BOOL_FIELDS = {
     "egress_enabled",
@@ -112,6 +116,9 @@ class CoreConfig(StrictModel):
     grounding_enabled: bool = True
     # Append-only JSONL audit sink path (survives restart); empty = in-memory only.
     audit_log_path: str = ""
+    # Session lifetimes (ADR-0010): sliding idle window + hard absolute cap, in seconds.
+    session_idle_seconds: int = 86_400  # 24h
+    session_absolute_seconds: int = 604_800  # 7d
     bind_host: str = Field(default="127.0.0.1", description="Loopback by default.")
     bind_port: int = Field(default=8765, ge=1, le=65535)
     egress_enabled: bool = Field(default=False, description="Network egress off by default.")

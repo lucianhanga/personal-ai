@@ -195,7 +195,9 @@ jobs:
           retention-days: 14
 
       - name: Python vulnerability audit (pip-audit)
-        run: uv run pip-audit
+        # --skip-editable: our local workspace packages (personalai-* 0.0.0) aren't on PyPI, so
+        # auditing them just hammers PyPI and fails on any 503/hiccup. Third-party deps still audited.
+        run: uv run pip-audit --skip-editable
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
