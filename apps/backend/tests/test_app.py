@@ -272,7 +272,7 @@ class EmptyProvider:
 
 
 def test_chat_empty_completion_emits_notice() -> None:
-    # An empty turn (no answer, no tools) must surface a notice, not close the stream silently (#224).
+    # An empty turn (no answer/tools) must surface a notice, not close the stream silently (#224).
     client = _app_with_provider("empty", EmptyProvider())
     with client.stream(
         "POST",
