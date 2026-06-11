@@ -76,6 +76,21 @@ class PgTenantStore:
         )
         return _subject(row) if row else None
 
+    async def set_password_hash(self, subject_id: str, password_hash: str) -> None:
+        """Store the argon2id PHC string for a subject (never a plaintext)."""
+        await self._pool.execute(
+            "UPDATE subjects SET password_hash = $2 WHERE id = $1", subject_id, password_hash
+        )
+
+    async def get_password_hash(self, email: str) -> tuple[str, str] | None:
+        """Return ``(subject_id, password_hash)`` for a login email, or None if no password set."""
+        row = await self._pool.fetchrow(
+            "SELECT id, password_hash FROM subjects WHERE email = $1", email.strip().lower()
+        )
+        if row is None or row["password_hash"] is None:
+            return None
+        return str(row["id"]), row["password_hash"]
+
     async def add_membership(self, tenant_id: str, subject_id: str, role: str = "member") -> None:
         await self._pool.execute(
             "INSERT INTO memberships(tenant_id, subject_id, role) VALUES($1, $2, $3) "
