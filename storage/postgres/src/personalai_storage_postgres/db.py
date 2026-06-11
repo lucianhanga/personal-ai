@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, Protocol
 
 import asyncpg
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
-# A pool or a single connection — stores accept either, so a TenantDb-bound connection (RLS active)
-# can be passed in place of the raw pool (ADR-0010, P0.5). Both expose fetch/fetchrow/execute/...
-Querier = asyncpg.Pool | asyncpg.Connection
+
+class Querier(Protocol):
+    """The query surface the stores use. Satisfied by asyncpg Pool/Connection and by a tenant-bound
+    proxy (ADR-0010, P0.5/P2) so RLS-scoped access can be dropped in without changing the stores."""
+
+    async def execute(self, query: str, *args: Any, **kwargs: Any) -> Any: ...
+    async def executemany(self, query: str, args: Any, **kwargs: Any) -> Any: ...
+    async def fetch(self, query: str, *args: Any, **kwargs: Any) -> Any: ...
+    async def fetchrow(self, query: str, *args: Any, **kwargs: Any) -> Any: ...
+
 
 # SQL for a row's tenant: the bound tenant (app.tenant_id GUC) when set, else the default tenant.
 # Lets INSERTs satisfy RLS WITH CHECK on a tenant-bound connection and still work on the raw pool
