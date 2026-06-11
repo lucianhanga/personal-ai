@@ -9,7 +9,8 @@
 > [Dependency Policy](../policies/DEPENDENCY-POLICY.md). A generated SBOM (CycloneDX) is the
 > machine-readable companion to this human-readable register.
 
-- **Last reviewed:** 2026-06-09 (M7: optional **MarkItDown-on-Ollama MCP** helper script `tools/markitdown-ollama/server.py` declares `markitdown[all]` + `openai` via PEP 723 inline metadata — **not** in the workspace lockfile; resolved into an ephemeral env only when the user runs it via `uv run --script`. See the optional-tooling note below.)
+- **Last reviewed:** 2026-06-11 (IAM P1.2: added **argon2-cffi** for built-in password hashing — see the runtime table. Transitive: cffi/pycparser, already common.)
+- **Earlier:** 2026-06-09 (M7: optional **MarkItDown-on-Ollama MCP** helper script `tools/markitdown-ollama/server.py` declares `markitdown[all]` + `openai` via PEP 723 inline metadata — **not** in the workspace lockfile; resolved into an ephemeral env only when the user runs it via `uv run --script`.)
 - **Status legend:** `planned` (vetted, not yet in code) · `adopted` (in the build) · `evaluating` · `rejected`
 - **Provenance note:** Licenses below are grounded in public sources cited in the architecture
   report. They MUST be re-verified against each project's `LICENSE` file at pin time (Phase 0).
@@ -42,6 +43,7 @@
 | **Starlette** | Encode | BSD-3-Clause | Mature | **adopted** (M0-5, via FastAPI) | ASGI toolkit underlying FastAPI | — | — |
 | **python-multipart** | Andrew Dunham / Encode | Apache-2.0 | Mature | **adopted** (M3-2) | Multipart file uploads for FastAPI | Size-limited uploads | — |
 | **jsonschema** | Julian Berman | MIT | Very mature | **adopted** (M5-1) | Validate tool/MCP I/O against manifest JSON Schemas at the gateway | Core trust boundary for tool args/results | fastjsonschema |
+| **argon2-cffi** | Hynek Schlawack | MIT | Very mature | **adopted** (IAM P1.2) | argon2id password hashing for the built-in IdentityProvider (ADR-0010) | The password trust boundary; OWASP/RFC 9106 recommended KDF; PHC strings only, never plaintext | bcrypt (weaker), scrypt |
 | **mcp** (Python SDK) | Model Context Protocol (Anthropic) | MIT | Maturing | **adopted** (M7-1) | MCP client: connect to MCP servers (stdio/HTTP), list + call tools, wrapped behind the gateway | Third-party MCP servers are untrusted (manifest risk HIGH, sandboxed via executor tiers); the SDK itself only speaks the protocol | hand-rolled JSON-RPC client |
 | **markitdown[all]** | Microsoft | MIT | Maturing | **opt-in tooling** (M7) | Document→Markdown conversion in the optional `tools/markitdown-ollama` MCP server | NOT in the workspace lockfile; runs as a separate stdio subprocess via `uv run --script`; parses untrusted files; HIGH-risk behind the gateway | official `markitdown-mcp` (no local LLM) |
 | **openai** (SDK) | OpenAI | Apache-2.0 | Mature | **opt-in tooling** (M7) | OpenAI-compatible client used by the markitdown-ollama server to reach **Ollama** for image OCR | Same opt-in script; points at local Ollama (no remote calls); key is a dummy | httpx direct |
