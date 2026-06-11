@@ -31,7 +31,7 @@ class PgVectorRepository:
         await self._pool.executemany(
             f"INSERT INTO vectors (id, embedding, metadata, tenant_id) "
             f"VALUES ($1, $2::vector, $3::jsonb, {TENANT_ID_SQL}) "
-            f"ON CONFLICT (id) DO UPDATE SET embedding = EXCLUDED.embedding, "
+            f"ON CONFLICT (tenant_id, id) DO UPDATE SET embedding = EXCLUDED.embedding, "
             f"metadata = EXCLUDED.metadata",
             [(r.id, _to_pgvector(r.vector), json.dumps(dict(r.metadata))) for r in records],
         )
