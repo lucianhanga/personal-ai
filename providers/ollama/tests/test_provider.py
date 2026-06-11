@@ -154,6 +154,25 @@ def test_generate_sets_num_ctx_when_configured() -> None:
     assert sent["options"]["num_ctx"] == 32768
 
 
+def test_generate_sets_keep_alive_when_configured() -> None:
+    route = respx.post(f"{BASE}/api/chat").mock(
+        return_value=httpx.Response(200, json={"message": {"content": "ok"}})
+    )
+
+    async def _run() -> None:
+        provider = OllamaProvider(base_url=BASE, keep_alive="30m")
+        try:
+            await provider.generate(
+                GenerationRequest(messages=[ChatMessage(Role.USER, "hi")], model="qwen3:8b")
+            )
+        finally:
+            await provider.aclose()
+
+    asyncio.run(_run())
+    sent = _json.loads(route.calls.last.request.content)
+    assert sent["keep_alive"] == "30m"  # keeps the model warm between turns
+
+
 @respx.mock
 def test_generate_forwards_options_and_handles_missing_usage() -> None:
     route = respx.post(f"{BASE}/api/chat").mock(

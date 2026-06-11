@@ -44,6 +44,7 @@ def register_adapters(registries: Registries, config: CoreConfig) -> None:
         OllamaProvider(
             base_url=config.ollama_host,
             num_ctx=config.ollama_num_ctx,
+            keep_alive=config.ollama_keep_alive,
             egress_guard=_ollama_egress,
         ),
     )
