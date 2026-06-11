@@ -14,7 +14,6 @@ This module makes no outbound network calls; egress remains disabled until expli
 from __future__ import annotations
 
 import asyncio
-import hmac
 import json
 import logging
 import uuid
@@ -24,12 +23,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile, status
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from starlette.responses import JSONResponse, StreamingResponse
 
 from personalai_backend import __version__
+from personalai_backend.auth.context import require_context
+from personalai_backend.auth.routes import router as auth_router
 from personalai_backend.composition import Bootstrap, bootstrap
 from personalai_backend.ingestion import chunk_ids, ingest_file
 from personalai_backend.logbuffer import LOG_BUFFER
@@ -199,23 +200,6 @@ class ToolInvokeRequest(BaseModel):
     approved: bool = False
 
 
-def _require_token(request: Request, authorization: str | None = Header(default=None)) -> None:
-    """Bearer-token auth dependency (constant-time compare); fail-closed if unconfigured."""
-    config: CoreConfig = request.app.state.config
-    expected = config.auth_token
-    if not expected:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="auth token not configured",
-        )
-    prefix = "Bearer "
-    if not authorization or not authorization.startswith(prefix):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing bearer token")
-    presented = authorization[len(prefix) :]
-    if not hmac.compare_digest(presented, expected):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token")
-
-
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 # Grounding/anti-hallucination instruction (config.grounding_enabled). Balanced so it curbs
@@ -242,11 +226,17 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     """Build the FastAPI app from the assembled wiring."""
     boot = boot or bootstrap()
     install_log_buffer()  # capture recent application logs for the /api/logs view
-    # Refuse to expose a non-loopback bind without an auth token (THREAT-MODEL: fail-closed).
-    if boot.config.bind_host not in _LOOPBACK_HOSTS and not boot.config.auth_token:
+    # Refuse to expose a non-loopback bind that would be open: local mode uses dev-login (no auth),
+    # so a non-loopback local bind needs an auth token. Hosted mode requires a real login, so it may
+    # bind non-loopback (THREAT-MODEL: fail-closed).
+    if (
+        boot.config.bind_host not in _LOOPBACK_HOSTS
+        and boot.config.app_mode != "hosted"
+        and not boot.config.auth_token
+    ):
         raise RuntimeError(
-            f"refusing to bind non-loopback host {boot.config.bind_host!r} without an auth token; "
-            "set PERSONALAI_AUTH_TOKEN or bind to loopback"
+            f"refusing to bind non-loopback host {boot.config.bind_host!r} in local mode without "
+            "an auth token; set PERSONALAI_AUTH_TOKEN, PERSONALAI_APP_MODE=hosted, or bind loopback"
         )
 
     @asynccontextmanager
@@ -305,16 +295,17 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     )
     app.state.bg_tasks = set()  # fire-and-forget background tasks (e.g. memory extraction)
 
-    # CORS restricted to the configured (loopback) origins: enables the browser SPA while still
-    # acting as an origin allowlist. The bearer token remains the real auth control; credentials
-    # (cookies) are not used. Non-browser clients send no Origin and are unaffected.
+    # CORS restricted to the configured origins (an allowlist). In hosted mode the SPA authenticates
+    # via cookies, so credentials must be allowed; in local mode auth is token/dev-login and cookies
+    # are unused. Non-browser clients send no Origin and are unaffected.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(boot.config.allowed_origins),
-        allow_credentials=False,
+        allow_credentials=boot.config.app_mode == "hosted",
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.include_router(auth_router)
 
     @app.middleware("http")
     async def _limit_body_size(request: Request, call_next: Any) -> Any:
@@ -339,7 +330,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return VersionResponse(name="personalai-backend", version=__version__)
 
     @app.get(
-        "/api/v1/status", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+        "/api/v1/status", response_model=StructuredResult, dependencies=[Depends(require_context)]
     )
     def api_status() -> StructuredResult:
         config: CoreConfig = app.state.config
@@ -390,7 +381,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         task.add_done_callback(app.state.bg_tasks.discard)
 
     @app.get(
-        "/api/v1/providers", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+        "/api/v1/providers",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
     )
     def api_providers() -> StructuredResult:
         config: CoreConfig = app.state.config
@@ -404,7 +397,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         )
 
     @app.get(
-        "/api/v1/models", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+        "/api/v1/models", response_model=StructuredResult, dependencies=[Depends(require_context)]
     )
     async def api_models(provider: str | None = None) -> StructuredResult:
         config: CoreConfig = app.state.config
@@ -544,7 +537,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         }
         return f"event: usage\ndata: {json.dumps(payload)}\n\n".encode()
 
-    @app.post("/api/v1/chat", dependencies=[Depends(_require_token)])
+    @app.post("/api/v1/chat", dependencies=[Depends(require_context)])
     async def chat(req: ChatRequest) -> StreamingResponse:
         config: CoreConfig = app.state.config
         provider = _resolve_provider(req.provider)
@@ -739,7 +732,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return storage
 
     @app.post(
-        "/api/v1/files", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+        "/api/v1/files", response_model=StructuredResult, dependencies=[Depends(require_context)]
     )
     async def upload_file(file: UploadFile = File(...)) -> StructuredResult:
         config: CoreConfig = app.state.config
@@ -778,7 +771,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         )
 
     @app.get(
-        "/api/v1/files", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+        "/api/v1/files", response_model=StructuredResult, dependencies=[Depends(require_context)]
     )
     async def list_files() -> StructuredResult:
         storage = _require_storage()
@@ -798,7 +791,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.delete(
         "/api/v1/files/{document_id}",
         response_model=StructuredResult,
-        dependencies=[Depends(_require_token)],
+        dependencies=[Depends(require_context)],
     )
     async def delete_file(document_id: str) -> StructuredResult:
         storage = _require_storage()
@@ -812,7 +805,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.post(
         "/api/v1/conversations",
         response_model=StructuredResult,
-        dependencies=[Depends(_require_token)],
+        dependencies=[Depends(require_context)],
     )
     async def create_conversation(body: ConversationCreate) -> StructuredResult:
         storage = _require_storage()
@@ -832,7 +825,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.get(
         "/api/v1/conversations",
         response_model=StructuredResult,
-        dependencies=[Depends(_require_token)],
+        dependencies=[Depends(require_context)],
     )
     async def list_conversations() -> StructuredResult:
         storage = _require_storage()
@@ -845,7 +838,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.get(
         "/api/v1/conversations/{conversation_id}",
         response_model=StructuredResult,
-        dependencies=[Depends(_require_token)],
+        dependencies=[Depends(require_context)],
     )
     async def get_conversation(conversation_id: str) -> StructuredResult:
         storage = _require_storage()
@@ -863,7 +856,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.patch(
         "/api/v1/conversations/{conversation_id}",
         response_model=StructuredResult,
-        dependencies=[Depends(_require_token)],
+        dependencies=[Depends(require_context)],
     )
     async def rename_conversation(
         conversation_id: str, body: ConversationRename
@@ -880,7 +873,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.delete(
         "/api/v1/conversations/{conversation_id}",
         response_model=StructuredResult,
-        dependencies=[Depends(_require_token)],
+        dependencies=[Depends(require_context)],
     )
     async def delete_conversation(conversation_id: str) -> StructuredResult:
         storage = _require_storage()
@@ -888,7 +881,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return StructuredResult(ok=True, data={"id": conversation_id})
 
     @app.get(
-        "/api/v1/memory", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+        "/api/v1/memory", response_model=StructuredResult, dependencies=[Depends(require_context)]
     )
     async def list_memory() -> StructuredResult:
         storage = _require_storage()
@@ -909,7 +902,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.patch(
         "/api/v1/memory/{memory_id}",
         response_model=StructuredResult,
-        dependencies=[Depends(_require_token)],
+        dependencies=[Depends(require_context)],
     )
     async def update_memory(memory_id: str, body: MemoryUpdate) -> StructuredResult:
         storage = _require_storage()
@@ -921,7 +914,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.delete(
         "/api/v1/memory/{memory_id}",
         response_model=StructuredResult,
-        dependencies=[Depends(_require_token)],
+        dependencies=[Depends(require_context)],
     )
     async def delete_memory(memory_id: str) -> StructuredResult:
         storage = _require_storage()
@@ -929,7 +922,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return StructuredResult(ok=True, data={"id": memory_id})
 
     @app.delete(
-        "/api/v1/memory", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+        "/api/v1/memory", response_model=StructuredResult, dependencies=[Depends(require_context)]
     )
     async def forget_all_memory() -> StructuredResult:
         storage = _require_storage()
@@ -937,7 +930,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return StructuredResult(ok=True, data={"cleared": True})
 
     @app.get(
-        "/api/v1/tools", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+        "/api/v1/tools", response_model=StructuredResult, dependencies=[Depends(require_context)]
     )
     def list_tools() -> StructuredResult:
         registries: Registries = app.state.bootstrap.registries
@@ -962,7 +955,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.post(
         "/api/v1/tools/invoke",
         response_model=StructuredResult,
-        dependencies=[Depends(_require_token)],
+        dependencies=[Depends(require_context)],
     )
     async def invoke_tool(req: ToolInvokeRequest) -> StructuredResult:
         gateway = app.state.bootstrap.gateway
@@ -982,7 +975,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return StructuredResult(ok=True, data=dict(result.output))
 
     @app.get(
-        "/api/v1/tools/log", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+        "/api/v1/tools/log",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
     )
     def tool_log(conversation_id: str | None = None) -> StructuredResult:
         # The gateway audits every tool call (allowed + denied); surface the tool.* entries,
@@ -1005,7 +1000,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return StructuredResult(ok=True, data={"entries": list(reversed(entries))})
 
     @app.get(
-        "/api/v1/logs", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+        "/api/v1/logs", response_model=StructuredResult, dependencies=[Depends(require_context)]
     )
     def app_logs(conversation_id: str | None = None) -> StructuredResult:
         logs = [
@@ -1015,7 +1010,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         ]
         return StructuredResult(ok=True, data={"logs": list(reversed(logs))})
 
-    @app.get("/api/v1/mcp", response_model=StructuredResult, dependencies=[Depends(_require_token)])
+    @app.get(
+        "/api/v1/mcp", response_model=StructuredResult, dependencies=[Depends(require_context)]
+    )
     def list_mcp() -> StructuredResult:
         # Configured MCP servers + connect status + the tools each exposed (behind the gateway).
         return StructuredResult(ok=True, data={"servers": app.state.mcp_manager.list_servers()})
@@ -1023,7 +1020,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.post(
         "/api/v1/mcp/health",
         response_model=StructuredResult,
-        dependencies=[Depends(_require_token)],
+        dependencies=[Depends(require_context)],
     )
     async def check_all_mcp() -> StructuredResult:
         return StructuredResult(ok=True, data={"servers": await app.state.mcp_manager.check_all()})
@@ -1031,7 +1028,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.post(
         "/api/v1/mcp/servers/{name}/health",
         response_model=StructuredResult,
-        dependencies=[Depends(_require_token)],
+        dependencies=[Depends(require_context)],
     )
     async def check_mcp(name: str) -> StructuredResult:
         result = await app.state.mcp_manager.check_health(name)
@@ -1040,7 +1037,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return StructuredResult(ok=True, data={"health": result})
 
     @app.get(
-        "/api/v1/mcp/log", response_model=StructuredResult, dependencies=[Depends(_require_token)]
+        "/api/v1/mcp/log", response_model=StructuredResult, dependencies=[Depends(require_context)]
     )
     def mcp_log(server: str | None = None, conversation_id: str | None = None) -> StructuredResult:
         # MCP tool activity from the audit log: namespaced tools (server.tool); optionally 1 server.
@@ -1067,7 +1064,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.put(
         "/api/v1/mcp/servers/{name}",
         response_model=StructuredResult,
-        dependencies=[Depends(_require_token)],
+        dependencies=[Depends(require_context)],
     )
     async def upsert_mcp(name: str, body: McpServerIn) -> StructuredResult:
         # Create/update a server, persist to mcp.json, and apply live (connect if enabled).
@@ -1081,7 +1078,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.get(
         "/api/v1/mcp/config",
         response_model=StructuredResult,
-        dependencies=[Depends(_require_token)],
+        dependencies=[Depends(require_context)],
     )
     def get_mcp_config() -> StructuredResult:
         # The whole mcpServers map (env secrets masked) for the JSON editor / export.
@@ -1090,7 +1087,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.put(
         "/api/v1/mcp/config",
         response_model=StructuredResult,
-        dependencies=[Depends(_require_token)],
+        dependencies=[Depends(require_context)],
     )
     async def put_mcp_config(body: McpImport) -> StructuredResult:
         # Replace the whole config and reconcile live (connect new/changed, drop removed).
@@ -1102,7 +1099,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.post(
         "/api/v1/mcp/import",
         response_model=StructuredResult,
-        dependencies=[Depends(_require_token)],
+        dependencies=[Depends(require_context)],
     )
     async def import_mcp(body: McpImport) -> StructuredResult:
         # Merge a pasted mcpServers map into the config and connect each (live).
@@ -1116,7 +1113,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.delete(
         "/api/v1/mcp/servers/{name}",
         response_model=StructuredResult,
-        dependencies=[Depends(_require_token)],
+        dependencies=[Depends(require_context)],
     )
     async def delete_mcp(name: str) -> StructuredResult:
         removed = await app.state.mcp_manager.delete(name)

@@ -135,10 +135,16 @@ def test_cors_preflight_allows_protected_route(client: TestClient) -> None:
     assert resp.headers.get("access-control-allow-origin") == "http://localhost"
 
 
-def test_auth_unconfigured_is_fail_closed() -> None:
-    # No auth_token configured -> protected routes are unavailable (fail-closed), not open.
+def test_local_mode_no_token_uses_dev_login() -> None:
+    # Local mode with no auth_token is zero-login (dev context), so protected routes work.
     client = TestClient(create_app(bootstrap(config=CoreConfig())))
-    assert client.get("/api/v1/status").status_code == 503
+    assert client.get("/api/v1/status").status_code == 200
+
+
+def test_hosted_mode_no_credentials_is_denied() -> None:
+    # Hosted mode requires a real session: no credentials => 401 (fail-closed), not dev-login.
+    client = TestClient(create_app(bootstrap(config=CoreConfig(app_mode="hosted"))))
+    assert client.get("/api/v1/status").status_code == 401
 
 
 def test_non_loopback_bind_requires_auth_token() -> None:

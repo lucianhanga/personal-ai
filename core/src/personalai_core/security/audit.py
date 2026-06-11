@@ -17,11 +17,17 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from personalai_contracts.ports import SecurityContext
 from personalai_core.security.redaction import redact
 
 # Conversation in scope for the current request; audit + app-log entries are stamped with it so the
 # UI can show per-chat history. Set/reset by the backend around a chat turn (default None).
 current_conversation: ContextVar[str | None] = ContextVar("current_conversation", default=None)
+
+# Authenticated principal + tenant for the current request (ADR-0010). Set by the SecurityContext
+# resolver; read by tenant-scoped data access, the audit log, the agent loop, and the MCP manager.
+# Fail-closed: None means no authenticated request in scope.
+current_security: ContextVar[SecurityContext | None] = ContextVar("current_security", default=None)
 
 
 class AuditEvent(BaseModel):
