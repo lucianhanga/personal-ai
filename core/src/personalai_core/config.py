@@ -18,6 +18,7 @@ _ENV_PREFIX = "PERSONALAI_"
 
 # Maps an env var (without prefix) to a CoreConfig field.
 _ENV_FIELDS = {
+    "APP_MODE": "app_mode",
     "MODEL_PROVIDER": "model_provider",
     "DEFAULT_MODEL": "default_model",
     "OLLAMA_HOST": "ollama_host",
@@ -87,6 +88,9 @@ _DEFAULT_ORIGINS = (
 class CoreConfig(StrictModel):
     """Selection of active adapters plus local-first runtime defaults."""
 
+    # Deployment mode (ADR-0010): "local" = single-user dev/personal (dev-login, stdio MCP ok);
+    # "hosted" = multi-tenant SaaS (real login required, cookies+CSRF, remote-HTTP MCP only).
+    app_mode: str = "local"
     model_provider: str = "ollama"
     default_model: str = "qwen3.6:35b-a3b"
     ollama_host: str = "http://127.0.0.1:11434"
