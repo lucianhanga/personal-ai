@@ -241,6 +241,51 @@ def test_chat_requires_token() -> None:
     assert resp.status_code == 401
 
 
+class EmptyProvider:
+    """A provider whose stream yields nothing (e.g. a reasoning model that produced no answer)."""
+
+    name = "empty"
+
+    async def capabilities(self, model: str) -> ModelCapabilities:
+        return ModelCapabilities(
+            text=True,
+            vision=False,
+            embeddings=False,
+            tool_calling=False,
+            structured_output=False,
+            thinking=False,
+            max_context_tokens=None,
+        )
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        raise NotImplementedError
+
+    async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+        return
+        yield GenerationChunk()  # pragma: no cover - unreachable; makes this an async generator
+
+    async def list_models(self) -> Sequence[ModelDescriptor]:
+        return []
+
+    async def embed(self, texts: Sequence[str], model: str) -> EmbeddingResult:
+        raise NotImplementedError
+
+
+def test_chat_empty_completion_emits_notice() -> None:
+    # An empty turn (no answer/tools) must surface a notice, not close the stream silently (#224).
+    client = _app_with_provider("empty", EmptyProvider())
+    with client.stream(
+        "POST",
+        "/api/v1/chat",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={"messages": [{"role": "user", "content": "hi"}], "provider": "empty"},
+    ) as resp:
+        assert resp.status_code == 200
+        body = "".join(resp.iter_text())
+    assert "event: error" in body
+    assert "E_EMPTY" in body
+
+
 def test_chat_streams_deltas() -> None:
     client = _app_with_provider("fake", FakeModelProvider(name="fake"))
     with client.stream(
