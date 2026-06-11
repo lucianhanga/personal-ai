@@ -8,6 +8,7 @@ from personalai_storage_postgres.conversation_store import (
 from personalai_storage_postgres.db import apply_migrations, create_pool
 from personalai_storage_postgres.document_store import Document, PgDocumentStore
 from personalai_storage_postgres.memory_store import PgMemoryStore
+from personalai_storage_postgres.tenant_db import TenantDb
 from personalai_storage_postgres.tenant_store import (
     DEFAULT_TENANT_ID,
     PgTenantStore,
@@ -29,6 +30,7 @@ __all__ = [
     "PgVectorRepository",
     "Subject",
     "Tenant",
+    "TenantDb",
     "apply_migrations",
     "create_pool",
 ]
