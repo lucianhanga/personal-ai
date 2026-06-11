@@ -9,6 +9,17 @@ def test_defaults_are_local_first() -> None:
     config = CoreConfig()
     assert config.bind_host == "127.0.0.1"
     assert config.egress_enabled is False
+    # M8 graph is opt-in; single-agent loop by default.
+    assert config.agent_graph_enabled is False
+    assert config.agent_accuracy_mode == "standard"
+
+
+def test_from_env_parses_agent_graph_flags() -> None:
+    config = CoreConfig.from_env(
+        {"PERSONALAI_AGENT_GRAPH_ENABLED": "true", "PERSONALAI_AGENT_ACCURACY_MODE": "accurate"}
+    )
+    assert config.agent_graph_enabled is True
+    assert config.agent_accuracy_mode == "accurate"
 
 
 def test_from_env_overrides_and_parses_bool() -> None:
