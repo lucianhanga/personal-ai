@@ -154,6 +154,7 @@ def test_generate_sets_num_ctx_when_configured() -> None:
     assert sent["options"]["num_ctx"] == 32768
 
 
+@respx.mock
 def test_generate_sets_keep_alive_when_configured() -> None:
     route = respx.post(f"{BASE}/api/chat").mock(
         return_value=httpx.Response(200, json={"message": {"content": "ok"}})
