@@ -21,15 +21,10 @@ import {
   type TraceItem,
   type UsageInfo,
 } from "./api";
-import { AppLogs } from "./AppLogs";
-import { ContextMeter } from "./ContextMeter";
-import { Markdown } from "./Markdown";
-import { McpActivity } from "./McpActivity";
-import { McpPanel } from "./McpPanel";
-import { Memory } from "./Memory";
-import { MessageDetails } from "./MessageDetails";
-import { ToolLog } from "./ToolLog";
-import { Tools } from "./Tools";
+import { ChatsPanel } from "./ChatsPanel";
+import { MessageList } from "./MessageList";
+import { SettingsAccordion } from "./SettingsAccordion";
+import { SidePanel } from "./SidePanel";
 
 // Key for the not-yet-persisted "new" chat (before its conversation id exists).
 const NEW_CHAT = "__new__";
@@ -470,153 +465,30 @@ export function Chat({
       </header>
 
       {/* Row 2: global settings (collapsible accordion). */}
-      <div
-        data-testid="settings-accordion"
-        style={{ border: "1px solid #ddd", borderRadius: 8, fontSize: "0.85rem" }}
-      >
-        <button
-          data-testid="settings-toggle"
-          onClick={() => setShowSettings((v) => !v)}
-          style={{
-            width: "100%",
-            textAlign: "left",
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            padding: "0.5rem 0.75rem",
-            fontWeight: 600,
-          }}
-        >
-          {showSettings ? "▾" : "▸"} Settings
-        </button>
-        {showSettings && (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: "0.5rem",
-              padding: "0 0.75rem 0.75rem",
-            }}
-          >
-            {/* Line 1: Documents */}
-            <div
-              data-testid="settings-documents"
-              style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}
-            >
-              <label>
-                Documents:{" "}
-                <input
-                  data-testid="file-input"
-                  type="file"
-                  accept=".txt,.md,.markdown,.pdf,.docx"
-                  disabled={uploading}
-                  onChange={(e) => void onUpload(e.target.files?.[0])}
-                />
-              </label>
-              {uploading && <span data-testid="upload-status">uploading…</span>}
-              {files.length > 0 && !useRag && (
-                <span data-testid="rag-hint" style={{ marginLeft: "auto", color: "#b06f00" }}>
-                  Not using your documents — turn on to ground answers.
-                </span>
-              )}
-              <label style={{ marginLeft: files.length > 0 && !useRag ? "0.5rem" : "auto" }}>
-                <input
-                  data-testid="rag-toggle"
-                  type="checkbox"
-                  checked={useRag}
-                  onChange={(e) => setUseRag(e.target.checked)}
-                />{" "}
-                Use my documents
-              </label>
-            </div>
-
-            {/* Line 2: Tools */}
-            <div
-              data-testid="settings-tools"
-              style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}
-            >
-              <button data-testid="tools-show" onClick={() => setShowTools((v) => !v)}>
-                {showTools ? "Hide tools" : "Tools"}
-              </button>
-              <label style={{ marginLeft: "auto" }}>
-                <input
-                  data-testid="tools-toggle"
-                  type="checkbox"
-                  checked={useTools}
-                  onChange={(e) => setUseTools(e.target.checked)}
-                />{" "}
-                Use tools
-              </label>
-              {useTools && (
-                <label title="Allow high-risk tools (e.g. http_fetch) to run this session">
-                  <input
-                    data-testid="approve-tools-toggle"
-                    type="checkbox"
-                    checked={approveTools}
-                    onChange={(e) => setApproveTools(e.target.checked)}
-                  />{" "}
-                  approve high-risk
-                </label>
-              )}
-            </div>
-            {showTools && <Tools token={token} />}
-
-            {/* Line 3: Memory */}
-            <div
-              data-testid="settings-memory"
-              style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}
-            >
-              <button data-testid="memory-show" onClick={() => setShowMemory((v) => !v)}>
-                {showMemory ? "Hide memory" : "Memory"}
-              </button>
-              <label style={{ marginLeft: "auto" }}>
-                <input
-                  data-testid="memory-toggle"
-                  type="checkbox"
-                  checked={useMemory}
-                  onChange={(e) => setUseMemory(e.target.checked)}
-                />{" "}
-                Use my memory
-              </label>
-            </div>
-            {showMemory && <Memory token={token} />}
-
-            {/* Line 4: Reasoning */}
-            <div
-              data-testid="settings-reasoning"
-              style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}
-            >
-              <span style={{ color: "#555" }}>Reasoning</span>
-              <label
-                style={{ marginLeft: "auto" }}
-                title="How much the model thinks before answering. Off = no reasoning; Brief = think but stay concise; Full = think freely (slower). Shown under each message's Details."
-              >
-                <select
-                  data-testid="reasoning-select"
-                  value={reasoning}
-                  onChange={(e) => setReasoning(e.target.value as "off" | "brief" | "full")}
-                >
-                  <option value="off">Off</option>
-                  <option value="brief">Brief</option>
-                  <option value="full">Full</option>
-                </select>
-              </label>
-            </div>
-
-            {/* Line 5: MCP servers */}
-            <div
-              data-testid="settings-mcp"
-              style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}
-            >
-              <button data-testid="mcp-show" onClick={() => setShowMcp((v) => !v)}>
-                {showMcp ? "Hide MCP" : "Manage MCP"}
-              </button>
-              <span style={{ marginLeft: "auto", color: "#888" }}>MCP servers (tool sources)</span>
-            </div>
-            {showMcp && <McpPanel token={token} />}
-          </div>
-        )}
-      </div>
+      <SettingsAccordion
+        token={token}
+        showSettings={showSettings}
+        setShowSettings={setShowSettings}
+        files={files}
+        uploading={uploading}
+        onUpload={(f) => void onUpload(f)}
+        useRag={useRag}
+        setUseRag={setUseRag}
+        showTools={showTools}
+        setShowTools={setShowTools}
+        useTools={useTools}
+        setUseTools={setUseTools}
+        approveTools={approveTools}
+        setApproveTools={setApproveTools}
+        showMemory={showMemory}
+        setShowMemory={setShowMemory}
+        useMemory={useMemory}
+        setUseMemory={setUseMemory}
+        reasoning={reasoning}
+        setReasoning={setReasoning}
+        showMcp={showMcp}
+        setShowMcp={setShowMcp}
+      />
 
       {/* Row 3: workspace — chats (1/6) | chat (3/6) | logs (2/6). */}
       {token ? (
@@ -632,119 +504,23 @@ export function Chat({
           }}
         >
           {/* Column 1: chats (collapsible) */}
-          {!chatsCollapsed ? (
-            <aside
-              data-testid="chats-panel"
-              style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "0.4rem" }}
-            >
-              <div style={{ display: "flex", alignItems: "center" }}>
-                <strong style={{ flex: 1 }}>Chats</strong>
-                <button
-                  data-testid="chats-toggle"
-                  onClick={() => setChatsCollapsed(true)}
-                  title="Collapse chats"
-                >
-                  ‹
-                </button>
-              </div>
-              <button data-testid="new-chat" onClick={() => newChat()}>
-                + New chat
-              </button>
-              <label style={{ fontSize: "0.8rem" }} title="Incognito chats are not remembered">
-                <input
-                  data-testid="incognito-toggle"
-                  type="checkbox"
-                  checked={incognito}
-                  onChange={(e) => setIncognito(e.target.checked)}
-                />{" "}
-                incognito
-              </label>
-              <div
-                data-testid="conversations"
-                style={{ display: "flex", flexDirection: "column", gap: "0.2rem", overflowY: "auto" }}
-              >
-                {conversations.map((c) => (
-                  <span
-                    key={c.id}
-                    style={{ display: "flex", alignItems: "center", gap: "0.25rem", fontSize: "0.8rem" }}
-                  >
-                    {renamingId === c.id ? (
-                      <input
-                        data-testid={`rename-input-${c.id}`}
-                        autoFocus
-                        value={renameDraft}
-                        onChange={(e) => setRenameDraft(e.target.value)}
-                        onBlur={() => void commitRename(c.id)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") void commitRename(c.id);
-                          if (e.key === "Escape") setRenamingId(null);
-                        }}
-                        style={{ flex: 1 }}
-                      />
-                    ) : (
-                      <>
-                        <button
-                          data-testid={`open-${c.id}`}
-                          onClick={() => void openConversation(c.id)}
-                          onDoubleClick={() => {
-                            setRenamingId(c.id);
-                            setRenameDraft(c.title);
-                          }}
-                          style={{
-                            flex: 1,
-                            textAlign: "left",
-                            fontWeight: c.id === activeId ? 700 : 400,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {chats[c.id]?.busy && (
-                            <span
-                              data-testid={`busy-${c.id}`}
-                              title="Generating…"
-                              aria-label="generating"
-                            >
-                              ⏳{" "}
-                            </span>
-                          )}
-                          {c.title}
-                        </button>
-                        <button
-                          data-testid={`rename-${c.id}`}
-                          onClick={() => {
-                            setRenamingId(c.id);
-                            setRenameDraft(c.title);
-                          }}
-                          title="rename conversation"
-                          style={{ fontSize: "0.7rem" }}
-                        >
-                          ✎
-                        </button>
-                        <button
-                          data-testid={`del-conv-${c.id}`}
-                          onClick={() => void removeConversation(c.id)}
-                          title="delete conversation"
-                          style={{ fontSize: "0.7rem" }}
-                        >
-                          ×
-                        </button>
-                      </>
-                    )}
-                  </span>
-                ))}
-              </div>
-            </aside>
-          ) : (
-            <button
-              data-testid="chats-toggle"
-              onClick={() => setChatsCollapsed(false)}
-              title="Show chats"
-              style={{ flex: "0 0 auto", alignSelf: "flex-start" }}
-            >
-              Chats ›
-            </button>
-          )}
+          <ChatsPanel
+            collapsed={chatsCollapsed}
+            setCollapsed={setChatsCollapsed}
+            conversations={conversations}
+            chats={chats}
+            activeId={activeId}
+            incognito={incognito}
+            setIncognito={setIncognito}
+            renamingId={renamingId}
+            setRenamingId={setRenamingId}
+            renameDraft={renameDraft}
+            setRenameDraft={setRenameDraft}
+            onNewChat={newChat}
+            onOpen={(id) => void openConversation(id)}
+            onCommitRename={(id) => void commitRename(id)}
+            onRemove={(id) => void removeConversation(id)}
+          />
 
           {/* Column 2: chat output + composer */}
           <section
@@ -772,53 +548,14 @@ export function Chat({
               </ul>
             )}
 
-            <div
-              ref={listRef}
-              data-testid="messages"
+            <MessageList
+              messages={messages}
+              trace={trace}
+              citations={citations}
+              busy={busy}
+              listRef={listRef}
               onScroll={onMessagesScroll}
-              style={{
-                border: "1px solid #ddd",
-                borderRadius: 8,
-                padding: "0.75rem",
-                flex: 1,
-                minHeight: 200,
-                overflowY: "auto",
-              }}
-            >
-              {messages.length === 0 && (
-                <p style={{ color: "#888" }}>Ask your local model anything.</p>
-              )}
-              {messages.map((m, i) =>
-                m.role === "assistant" ? (
-                  <div key={i} data-testid="msg-assistant" style={{ margin: "0.4rem 0" }}>
-                    <strong>AI:</strong>
-                    <MessageDetails
-                      trace={trace[i]?.length ? trace[i] : m.meta?.trace}
-                      steps={m.meta?.tool_steps}
-                      thinking={m.meta?.thinking}
-                      defaultOpen={busy && i === messages.length - 1}
-                    />
-                    <Markdown content={m.content} />
-                    {citations[i]?.length ? (
-                      <div data-testid="citations" style={{ fontSize: "0.75rem", color: "#555" }}>
-                        Sources:{" "}
-                        {citations[i]
-                          .map(
-                            (c) =>
-                              `[${c.n}] ${c.name ?? c.source_id.slice(0, 8)}` +
-                              (c.locator ? ` (${c.locator})` : ""),
-                          )
-                          .join("   ")}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : (
-                  <p key={i} data-testid="msg-user" style={{ margin: "0.4rem 0" }}>
-                    <strong>You:</strong> {m.content}
-                  </p>
-                ),
-              )}
-            </div>
+            />
 
             {!atBottom && (
               <button
@@ -854,57 +591,19 @@ export function Chat({
           </section>
 
           {/* Column 3: logs (collapsible) */}
-          {!sidebarCollapsed ? (
-            <aside
-              data-testid="side-panel"
-              aria-label="panels"
-              style={{ flex: 2, minWidth: 0, display: "flex", flexDirection: "column", gap: "0.5rem" }}
-            >
-              <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", flexWrap: "wrap" }}>
-                <button data-testid="toollog-show" onClick={() => setShowLog((v) => !v)}>
-                  {showLog ? "Hide activity" : "Activity"}
-                </button>
-                <button data-testid="applogs-show" onClick={() => setShowAppLogs((v) => !v)}>
-                  {showAppLogs ? "Hide app logs" : "App logs"}
-                </button>
-                <button
-                  data-testid="mcp-activity-show"
-                  onClick={() => setShowMcpActivity((v) => !v)}
-                >
-                  {showMcpActivity ? "Hide MCP" : "MCP"}
-                </button>
-                <button
-                  data-testid="side-toggle"
-                  onClick={() => setSidebarCollapsed(true)}
-                  title="Collapse panel"
-                  style={{ marginLeft: "auto" }}
-                >
-                  Collapse ›
-                </button>
-              </div>
-
-              {usage && <ContextMeter usage={usage} />}
-
-              {showLog && <ToolLog token={token} conversationId={activeId} />}
-              {showAppLogs && <AppLogs token={token} conversationId={activeId} />}
-              {showMcpActivity && <McpActivity token={token} />}
-
-              {!showLog && !showAppLogs && !showMcpActivity && !usage && (
-                <p data-testid="side-hint" style={{ color: "#888", fontSize: "0.8rem" }}>
-                  Open a panel above to view logs, MCP activity, or context usage.
-                </p>
-              )}
-            </aside>
-          ) : (
-            <button
-              data-testid="side-toggle"
-              onClick={() => setSidebarCollapsed(false)}
-              title="Show panels"
-              style={{ flex: "0 0 auto", alignSelf: "flex-start" }}
-            >
-              ‹ Panels
-            </button>
-          )}
+          <SidePanel
+            token={token}
+            conversationId={activeId}
+            usage={usage}
+            collapsed={sidebarCollapsed}
+            setCollapsed={setSidebarCollapsed}
+            showLog={showLog}
+            setShowLog={setShowLog}
+            showAppLogs={showAppLogs}
+            setShowAppLogs={setShowAppLogs}
+            showMcpActivity={showMcpActivity}
+            setShowMcpActivity={setShowMcpActivity}
+          />
         </div>
       ) : (
         <p data-testid="need-token" style={{ color: "#888" }}>
