@@ -10,6 +10,14 @@ from personalai_contracts.ports.agent import (
     AgentRole,
     AgentState,
 )
+from personalai_contracts.ports.identity import (
+    AuthKind,
+    AuthResult,
+    IdentityProvider,
+    SecurityContext,
+    Session,
+    SessionStore,
+)
 from personalai_contracts.ports.modality import (
     MediaRef,
     ModalityHandler,
@@ -59,6 +67,13 @@ __all__ = [
     "AgentNode",
     "AgentRole",
     "AgentState",
+    # identity
+    "AuthKind",
+    "AuthResult",
+    "IdentityProvider",
+    "SecurityContext",
+    "Session",
+    "SessionStore",
     # modality
     "MediaRef",
     "ModalityHandler",
