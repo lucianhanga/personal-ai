@@ -85,7 +85,9 @@ export function Chat({
   const [useMemory, setUseMemory] = useState(true);
   const [useTools, setUseTools] = useState(true);
   const [approveTools, setApproveTools] = useState(true);
-  const [reasoning, setReasoning] = useState<"off" | "brief" | "full">("full");
+  // Default to "brief": reasoning on but bounded, so large reasoning models (e.g. 35B) don't
+  // over-deliberate and appear to hang. "Off"/"Full" remain selectable.
+  const [reasoning, setReasoning] = useState<"off" | "brief" | "full">("brief");
   const [incognito, setIncognito] = useState(false);
   const [showSettings, setShowSettings] = useState(true);
   const [showMemory, setShowMemory] = useState(false);

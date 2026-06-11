@@ -262,7 +262,7 @@ test("toggles default on and the settings accordion collapses", async () => {
   expect(screen.getByTestId("memory-toggle")).toBeChecked();
   expect(screen.getByTestId("tools-toggle")).toBeChecked();
   expect(screen.getByTestId("approve-tools-toggle")).toBeChecked();
-  expect((screen.getByTestId("reasoning-select") as HTMLSelectElement).value).toBe("full"); // default
+  expect((screen.getByTestId("reasoning-select") as HTMLSelectElement).value).toBe("brief"); // default
   // Grouped lines incl. MCP (in Settings, not the sidebar).
   expect(screen.getByTestId("settings-tools")).toBeInTheDocument();
   expect(screen.getByTestId("settings-memory")).toBeInTheDocument();
@@ -351,12 +351,12 @@ test("the chosen reasoning amount is sent to the chat request", async () => {
   await waitFor(() =>
     expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
   );
-  // Default is Full (think on).
+  // Default is Brief (think on, bounded).
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "why?" } });
   fireEvent.click(screen.getByTestId("send"));
   await waitFor(() =>
     expect(stream).toHaveBeenCalledWith(
-      expect.objectContaining({ reasoning: "full", think: true }),
+      expect.objectContaining({ reasoning: "brief", think: true }),
       ...Array(6).fill(expect.any(Function)),
     ),
   );
