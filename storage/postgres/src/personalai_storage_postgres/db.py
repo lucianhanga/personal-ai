@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -29,9 +30,20 @@ TENANT_ID_SQL = (
 )
 
 
+async def _init_connection(conn: asyncpg.Connection) -> None:
+    """Per-connection setup. Enable pgvector iterative index scans (0.8+): under RLS every ANN
+    query is a *filtered* search, and a plain HNSW scan can return fewer than k rows (or none) for
+    a small tenant once tables are shared — iterative scans re-probe until k tenant rows are found.
+    Best-effort: older pgvector lacks this GUC."""
+    with contextlib.suppress(asyncpg.PostgresError):  # older pgvector (< 0.8) lacks this GUC
+        await conn.execute("SET hnsw.iterative_scan = relaxed_order")
+
+
 async def create_pool(database_url: str) -> asyncpg.Pool:
     """Create an asyncpg connection pool for ``database_url``."""
-    return await asyncpg.create_pool(dsn=database_url, min_size=1, max_size=5)
+    return await asyncpg.create_pool(
+        dsn=database_url, min_size=1, max_size=5, init=_init_connection
+    )
 
 
 async def apply_migrations(pool: asyncpg.Pool, migrations_dir: Path = MIGRATIONS_DIR) -> list[str]:
