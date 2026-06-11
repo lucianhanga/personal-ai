@@ -26,6 +26,8 @@ _ENV_FIELDS = {
     "OLLAMA_KEEP_ALIVE": "ollama_keep_alive",
     "MCP_CONFIG": "mcp_config_path",
     "AGENT_MAX_ITERATIONS": "agent_max_iterations",
+    "AGENT_GRAPH_ENABLED": "agent_graph_enabled",
+    "AGENT_ACCURACY_MODE": "agent_accuracy_mode",
     "RETRIEVER": "retriever",
     "VECTOR_REPOSITORY": "vector_repository",
     "OBJECT_STORE": "object_store",
@@ -70,6 +72,7 @@ _BOOL_FIELDS = {
     "memory_enabled",
     "egress_allow_any",
     "grounding_enabled",
+    "agent_graph_enabled",
 }
 
 _CSV_FIELDS = {"allowed_origins", "allowed_egress_hosts"}
@@ -104,6 +107,11 @@ class CoreConfig(StrictModel):
     mcp_config_path: str = ""
     # Max model<->tool iterations in the agent loop before it must answer (multi-step tool use).
     agent_max_iterations: int = 8
+    # M8 (ADR-0011): opt into the multi-agent typed graph (planner/researcher/critic/verifier);
+    # default off keeps the single-agent loop. accuracy_mode drives the verification-ladder depth
+    # ("standard"/"accurate"). Security gates (approval, egress, tenant) are NEVER accuracy-gated.
+    agent_graph_enabled: bool = False
+    agent_accuracy_mode: str = "standard"
     retriever: str = "pgvector"
     vector_repository: str = "pgvector"
     object_store: str = "local"
