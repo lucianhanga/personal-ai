@@ -1602,12 +1602,14 @@ version = "0.0.0"
 source = { editable = "storage/postgres" }
 dependencies = [
     { name = "asyncpg" },
+    { name = "langgraph-checkpoint" },
     { name = "personalai-contracts" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "asyncpg", specifier = ">=0.29" },
+    { name = "langgraph-checkpoint", specifier = ">=4.1,<5" },
     { name = "personalai-contracts", editable = "contracts" },
 ]
 
