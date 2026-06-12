@@ -57,3 +57,14 @@ def test_apply_migrations_twice_does_not_deadlock() -> None:
             await pool.close()
 
     asyncio.run(_run())
+
+
+def test_create_pool_max_size_is_configurable() -> None:
+    async def _run() -> None:
+        pool = await create_pool(DB_URL, max_size=7)
+        try:
+            assert pool.get_max_size() == 7
+        finally:
+            await pool.close()
+
+    asyncio.run(_run())

@@ -39,10 +39,10 @@ async def _init_connection(conn: asyncpg.Connection) -> None:
         await conn.execute("SET hnsw.iterative_scan = relaxed_order")
 
 
-async def create_pool(database_url: str) -> asyncpg.Pool:
-    """Create an asyncpg connection pool for ``database_url``."""
+async def create_pool(database_url: str, *, max_size: int = 20) -> asyncpg.Pool:
+    """Create an asyncpg connection pool for ``database_url`` (``max_size`` from CoreConfig)."""
     return await asyncpg.create_pool(
-        dsn=database_url, min_size=1, max_size=5, init=_init_connection
+        dsn=database_url, min_size=1, max_size=max_size, init=_init_connection
     )
 
 

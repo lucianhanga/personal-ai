@@ -12,6 +12,7 @@ def test_defaults_are_local_first() -> None:
     # M8 graph is opt-in; single-agent loop by default.
     assert config.agent_graph_enabled is False
     assert config.agent_accuracy_mode == "standard"
+    assert config.db_pool_max_size == 20 and config.agent_timeout_seconds == 300
 
 
 def test_from_env_parses_agent_graph_flags() -> None:
