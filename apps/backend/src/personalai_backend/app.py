@@ -630,48 +630,61 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 try:
                     # Orchestration lives in run_turn (FastAPI-independent, fake-testable); the
                     # route maps its typed events to SSE frames + the ordered trace.
-                    async for ev in run_turn(
-                        generation=generation,
-                        provider=provider,
-                        use_tools=req.use_tools,
-                        approve_tools=req.approve_tools,
-                        tools=tool_list,
-                        grants=grants,
-                        gateway=app.state.bootstrap.gateway,
-                        max_iterations=config.agent_max_iterations,
-                    ):
-                        if ev.kind == "reasoning":
-                            _add_reasoning(ev.text)
-                            yield f"data: {json.dumps({'thinking': ev.text})}\n\n".encode()
-                        elif ev.kind == "answer":
-                            answer += ev.text
-                            frame = {"delta": ev.text, "done": False}
-                            yield f"data: {json.dumps(frame)}\n\n".encode()
-                        elif ev.kind == "tool":
-                            trace.append(
-                                {
-                                    "kind": "tool_call" if ev.phase == "call" else "tool_result",
+                    async with asyncio.timeout(config.agent_timeout_seconds):
+                        async for ev in run_turn(
+                            generation=generation,
+                            provider=provider,
+                            use_tools=req.use_tools,
+                            approve_tools=req.approve_tools,
+                            tools=tool_list,
+                            grants=grants,
+                            gateway=app.state.bootstrap.gateway,
+                            max_iterations=config.agent_max_iterations,
+                        ):
+                            if ev.kind == "reasoning":
+                                _add_reasoning(ev.text)
+                                yield f"data: {json.dumps({'thinking': ev.text})}\n\n".encode()
+                            elif ev.kind == "answer":
+                                answer += ev.text
+                                frame = {"delta": ev.text, "done": False}
+                                yield f"data: {json.dumps(frame)}\n\n".encode()
+                            elif ev.kind == "tool":
+                                trace.append(
+                                    {
+                                        "kind": f"tool_{ev.phase}",  # tool_call | tool_result
+                                        "tool": ev.tool,
+                                        "args": ev.args,
+                                        "ok": ev.ok,
+                                        "output": ev.output,
+                                        "error": ev.error,
+                                    }
+                                )
+                                payload = {
+                                    "phase": ev.phase,
                                     "tool": ev.tool,
                                     "args": ev.args,
                                     "ok": ev.ok,
                                     "output": ev.output,
                                     "error": ev.error,
                                 }
-                            )
-                            payload = {
-                                "phase": ev.phase,
-                                "tool": ev.tool,
-                                "args": ev.args,
-                                "ok": ev.ok,
-                                "output": ev.output,
-                                "error": ev.error,
-                            }
-                            yield f"event: tool\ndata: {json.dumps(payload)}\n\n".encode()
-                        else:  # final
-                            if ev.usage:
-                                usage = ev.usage
-                            done = {"delta": "", "done": True, "finish_reason": "stop"}
-                            yield f"data: {json.dumps(done)}\n\n".encode()
+                                yield f"event: tool\ndata: {json.dumps(payload)}\n\n".encode()
+                            else:  # final
+                                if ev.usage:
+                                    usage = ev.usage
+                                done = {"delta": "", "done": True, "finish_reason": "stop"}
+                                yield f"data: {json.dumps(done)}\n\n".encode()
+                except TimeoutError:
+                    # Whole-turn wall-clock cap hit: surface E_TIMEOUT so a wedged model/node can't
+                    # hang the stream forever. Any partial answer was already streamed.
+                    timed_out = StructuredResult(
+                        ok=False,
+                        error=ErrorInfo(
+                            code="E_TIMEOUT",
+                            message="The turn exceeded the time limit and was stopped.",
+                        ),
+                    )
+                    yield f"event: error\ndata: {timed_out.model_dump_json()}\n\n".encode()
+                    return
                 except Exception as exc:  # noqa: BLE001 - surface as a structured error event
                     # Persist what happened (partial answer + reasoning/tool trace) so reopening the
                     # chat shows it, then surface the error to the UI. Otherwise the turn vanishes.
