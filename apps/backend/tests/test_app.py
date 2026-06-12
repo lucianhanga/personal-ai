@@ -271,6 +271,47 @@ class EmptyProvider:
         raise NotImplementedError
 
 
+class SlowProvider:
+    """A provider whose stream hangs — used to exercise the per-turn timeout."""
+
+    name = "slow"
+
+    async def capabilities(self, model: str) -> ModelCapabilities:
+        raise NotImplementedError
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        raise NotImplementedError
+
+    async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+        import asyncio
+
+        await asyncio.sleep(30)  # pragma: no cover - cancelled by the turn timeout
+        yield GenerationChunk()  # pragma: no cover
+
+    async def list_models(self) -> Sequence[ModelDescriptor]:
+        return []
+
+    async def embed(self, texts: Sequence[str], model: str) -> EmbeddingResult:
+        raise NotImplementedError
+
+
+def test_chat_turn_timeout_emits_e_timeout() -> None:
+    # A wedged model must not hang the turn: a 0s cap stops it and emits E_TIMEOUT (#256).
+    config = CoreConfig(auth_token=TOKEN, agent_timeout_seconds=0)
+    boot = bootstrap(config=config)
+    boot.registries.model_providers.register("slow", SlowProvider(), overwrite=True)
+    client = TestClient(create_app(boot))
+    with client.stream(
+        "POST",
+        "/api/v1/chat",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={"messages": [{"role": "user", "content": "hi"}], "provider": "slow"},
+    ) as resp:
+        body = "".join(resp.iter_text())
+    assert "event: error" in body
+    assert "E_TIMEOUT" in body
+
+
 def test_chat_empty_completion_emits_notice() -> None:
     # An empty turn (no answer/tools) must surface a notice, not close the stream silently (#224).
     client = _app_with_provider("empty", EmptyProvider())
