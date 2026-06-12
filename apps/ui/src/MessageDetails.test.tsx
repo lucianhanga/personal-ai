@@ -30,6 +30,26 @@ test("can start expanded", () => {
   expect(screen.getByTestId("details-body")).toHaveTextContent("web_search");
 });
 
+test("renders M8 multi-agent / verification kinds + a generic fallback for unknown kinds", () => {
+  render(
+    <MessageDetails
+      defaultOpen
+      trace={[
+        { kind: "plan", text: "research then verify" },
+        { kind: "critique", role: "critic", text: "missing a source" },
+        { kind: "verification", verdict: "pass", text: "grounded" },
+        // An unknown future kind must still render (generic fallback), not break the UI.
+        { kind: "future-kind" as unknown as "plan", text: "hi" },
+      ]}
+    />,
+  );
+  expect(screen.getByTestId("details-plan")).toHaveTextContent("research then verify");
+  expect(screen.getByTestId("details-critique")).toHaveTextContent("critic");
+  expect(screen.getByTestId("details-verification")).toHaveTextContent("pass");
+  expect(screen.getByTestId("details-other")).toHaveTextContent("future-kind");
+});
+
+
 test("renders an ordered trace: reasoning, tool call, more reasoning", () => {
   render(
     <MessageDetails

@@ -18,9 +18,14 @@ export interface ModelInfo {
   capabilities: ModelCapabilities;
 }
 
+// Ordered step in an assistant turn's timeline. The single-agent loop emits reasoning/tool_call/
+// tool_result; M8 (ADR-0011) adds multi-agent + verification kinds (plan/critique/verification). The
+// UI renders unknown kinds generically, so adding kinds server-side never breaks an older client.
 export interface TraceItem {
-  kind: "reasoning" | "tool_call" | "tool_result";
+  kind: "reasoning" | "tool_call" | "tool_result" | "plan" | "critique" | "verification";
   text?: string;
+  role?: string | null; // which agent produced it (researcher/critic/verifier) — M8
+  verdict?: string | null; // verification outcome (e.g. "pass"/"fail"/"needs-revision") — M8
   tool?: string | null;
   args?: Record<string, unknown> | null;
   ok?: boolean | null;
