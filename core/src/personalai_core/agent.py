@@ -65,9 +65,11 @@ def _tool_payload(result_ok: bool, output: Mapping[str, Any], error: str | None)
 
 @dataclass(frozen=True)
 class AgentEvent:
-    """A step in the agent loop: a tool call, its result, or the final answer."""
+    """A step in the agent loop / graph: reasoning, a tool call, its result, the final answer, or
+    (M8 multi-node graph, ADR-0012) a planner ``plan`` / critic ``critique`` step. ``text`` carries
+    the plan/critique content; ``answer``/``thinking`` carry the answer/reasoning content."""
 
-    type: Literal["reasoning", "answer", "tool_call", "tool_result", "final"]
+    type: Literal["reasoning", "answer", "tool_call", "tool_result", "final", "plan", "critique"]
     tool: str | None = None
     args: Mapping[str, Any] | None = None
     ok: bool | None = None
@@ -76,6 +78,7 @@ class AgentEvent:
     answer: str | None = None
     usage: Mapping[str, int] | None = None
     thinking: str | None = None
+    text: str | None = None
 
 
 async def run_agent(
