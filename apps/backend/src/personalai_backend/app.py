@@ -39,6 +39,7 @@ from personalai_backend.mcp_manager import McpManager
 from personalai_backend.tenant_querier import TenantQuerier
 from personalai_backend.turn import run_turn
 from personalai_contracts.ports import (
+    AgentContext,
     ChatMessage,
     GenerationRequest,
     ModelProvider,
@@ -58,7 +59,7 @@ from personalai_core import (
     summarize,
 )
 from personalai_core.registries import Registries
-from personalai_core.security import assert_egress_allowed, current_conversation
+from personalai_core.security import assert_egress_allowed, current_conversation, current_security
 from personalai_modality_files import UnsupportedFileTypeError
 from personalai_storage_postgres import (
     Conversation,
@@ -213,6 +214,16 @@ _GROUNDING = (
     "citations. When you used tools or documents, cite the sources you relied on. For creative or "
     "opinion requests, respond normally."
 )
+
+
+def _agent_context(conversation_id: str | None) -> AgentContext | None:
+    """The tenant-carrying AgentContext for the agent graph, from the request's SecurityContext."""
+    sec = current_security.get()
+    if sec is None:
+        return None
+    return AgentContext(
+        tenant_id=sec.tenant_id, subject_id=sec.subject_id, conversation_id=conversation_id or ""
+    )
 
 
 def _mcp_config_path(config: CoreConfig) -> Path:
@@ -642,6 +653,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                             grants=grants,
                             gateway=app.state.bootstrap.gateway,
                             max_iterations=config.agent_max_iterations,
+                            graph_enabled=config.agent_graph_enabled,
+                            context=_agent_context(req.conversation_id),
                         ):
                             if ev.kind == "reasoning":
                                 _add_reasoning(ev.text)

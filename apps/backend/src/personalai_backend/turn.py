@@ -12,8 +12,8 @@ from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from personalai_contracts.ports import GenerationRequest, ModelProvider
-from personalai_core import run_agent
+from personalai_contracts.ports import AgentContext, GenerationRequest, ModelProvider
+from personalai_core import run_agent, run_graph
 
 
 @dataclass(frozen=True)
@@ -41,20 +41,43 @@ async def run_turn(
     grants: Sequence[Any],
     gateway: Any,
     max_iterations: int,
+    graph_enabled: bool = False,
+    context: AgentContext | None = None,
 ) -> AsyncIterator[TurnEvent]:
-    """Drive one turn, yielding ordered TurnEvents (always ending with a single ``final``)."""
+    """Drive one turn, yielding ordered TurnEvents (always ending with a single ``final``).
+
+    With ``graph_enabled`` (M8, ADR-0011) the tool path runs through the typed graph
+    otherwise the single-agent loop (``run_agent``). Both yield the same AgentEvents, so the mapping
+    below is identical.
+    """
     if use_tools:
-        async for ev in run_agent(
-            messages=generation.messages,
-            provider=provider,
-            model=generation.model,
-            gateway=gateway,
-            tools=tools,
-            grants=grants,
-            approved=approve_tools,
-            think=generation.think,
-            max_iterations=max_iterations,
-        ):
+        agent_events = (
+            run_graph(
+                messages=generation.messages,
+                provider=provider,
+                model=generation.model,
+                gateway=gateway,
+                tools=tools,
+                grants=grants,
+                approved=approve_tools,
+                think=generation.think,
+                max_iterations=max_iterations,
+                context=context,
+            )
+            if graph_enabled
+            else run_agent(
+                messages=generation.messages,
+                provider=provider,
+                model=generation.model,
+                gateway=gateway,
+                tools=tools,
+                grants=grants,
+                approved=approve_tools,
+                think=generation.think,
+                max_iterations=max_iterations,
+            )
+        )
+        async for ev in agent_events:
             if ev.type == "reasoning":
                 yield TurnEvent("reasoning", text=ev.thinking or "")
             elif ev.type == "answer":
