@@ -42,6 +42,7 @@ _ENV_FIELDS = {
     "OPENAI_API_KEY": "openai_api_key",  # pragma: allowlist secret  (env var name, not a secret)
     "OPENAI_BASE_URL": "openai_base_url",
     "DATABASE_URL": "database_url",
+    "DB_POOL_MAX_SIZE": "db_pool_max_size",
     "EMBED_PROVIDER": "embed_provider",
     "EMBED_MODEL": "embed_model",
     "MAX_UPLOAD_BYTES": "max_upload_bytes",
@@ -60,6 +61,7 @@ _INT_FIELDS = {
     "bind_port",
     "max_upload_bytes",
     "max_request_bytes",
+    "db_pool_max_size",
     "stm_keep_recent",
     "memory_top_k",
     "ollama_num_ctx",
@@ -122,6 +124,10 @@ class CoreConfig(StrictModel):
     object_store: str = "local"
     # Dev default: local pgvector via docker-compose (trust auth, no password in code).
     database_url: str = "postgresql://personalai@127.0.0.1:5432/personalai"
+    # asyncpg pool max size. A turn fans out into per-node RLS-bound queries (each a short
+    # transaction) concurrent with streaming + background memory, and M8 multiplies that — so the
+    # default is generous to avoid pool-exhaustion stalls.
+    db_pool_max_size: int = 20
     embed_provider: str = "ollama"
     embed_model: str = "mxbai-embed-large"
     max_upload_bytes: int = 10_000_000

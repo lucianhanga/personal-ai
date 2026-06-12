@@ -246,7 +246,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         # Best-effort storage startup: connect to Postgres, migrate, register the vector repo.
         # If the DB is unreachable, the app still runs (chat works); file/RAG features return 503.
         try:
-            pool = await create_pool(boot.config.database_url)
+            pool = await create_pool(
+                boot.config.database_url, max_size=boot.config.db_pool_max_size
+            )
             await apply_migrations(pool)
             # Stores run through a tenant-bound proxy so every data query is RLS-scoped to the
             # request's tenant (ADR-0010, P2). The raw pool stays for identity/auth (not RLS-gated)
