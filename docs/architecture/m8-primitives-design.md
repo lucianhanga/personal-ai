@@ -1,5 +1,14 @@
 # M8 primitives design: durable interrupt/resume + schema-repair loop
 
+> **Update (2026-06-12, ADR-0012):** the agent engine is now **LangGraph**, not the hand-rolled graph.
+> The design below stands, with one substitution: **LangGraph's checkpoint is the durable state** and
+> **replaces the hand-rolled `pending_runs` table** in §1. The security requirements are unchanged and
+> become the M8.1 acceptance gate — checkpoints persist **tenant-scoped under RLS** via `TenantDb`
+> (preferred: a custom `BaseCheckpointSaver`; fallback: LangGraph's Postgres saver + an app-level
+> tenant guard), `thread_id = run_id`, and **cross-tenant resume must be impossible** (load only under
+> the resumer's tenant; assert `tenant_id` match). Read the `pending_runs` schema below as the shape of
+> the checkpoint row, not a separate hand-rolled table.
+
 Design note for the two M8 primitives that ADR-0011 assumes but that do not exist yet (pre-M8 audit
 findings A7/#233). This is a design deliverable; the code lands in M8.1 (interrupt/resume) and M8.2
 (schema-repair). Built on the seams hardened in the Pre-M8 sprint: explicit `AgentContext.tenant_id`

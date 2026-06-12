@@ -1,8 +1,12 @@
 # 11. M8 agent framework: a hand-rolled typed graph over the existing seams
 
-- Status: Accepted
+- Status: Superseded by ADR-0012
 - Date: 2026-06-10
 - Supersedes: the "LangGraph deferred to M8" part of ADR-0008
+- Superseded by: ADR-0012 (adopt LangGraph) — 2026-06-12. The product-owner direction is to use a
+  well-established platform rather than a hand-rolled graph. The load-bearing invariant (nodes call
+  only our `ModelProvider` + `ToolGateway`) and the reference shape (planner/researcher/critic/
+  verifier + accuracy ladder) carry forward unchanged; only the engine changes.
 
 ## Context
 
