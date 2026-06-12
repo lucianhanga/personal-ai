@@ -49,18 +49,29 @@ async def create_pool(database_url: str) -> asyncpg.Pool:
 async def apply_migrations(pool: asyncpg.Pool, migrations_dir: Path = MIGRATIONS_DIR) -> list[str]:
     """Apply any unapplied ``*.sql`` migrations in order; return the versions applied."""
     applied: list[str] = []
+    lock_key = "SELECT {fn}(hashtext('personalai_migrations'))"
     async with pool.acquire() as conn:
-        await conn.execute(
-            "CREATE TABLE IF NOT EXISTS schema_migrations ("
-            "version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"
-        )
-        done = {r["version"] for r in await conn.fetch("SELECT version FROM schema_migrations")}
-        for path in sorted(migrations_dir.glob("*.sql")):
-            if path.name in done:
-                continue
-            sql = path.read_text(encoding="utf-8")
-            async with conn.transaction():
-                await conn.execute(sql)
-                await conn.execute("INSERT INTO schema_migrations(version) VALUES($1)", path.name)
-            applied.append(path.name)
+        # Serialize migrations across concurrent boots (e.g. several backend instances starting at
+        # once): a session-level advisory lock so exactly one runner applies migrations; the others
+        # block here, then find everything applied. Unlocked in finally so it doesn't leak on the
+        # pooled connection.
+        await conn.execute(lock_key.format(fn="pg_advisory_lock"))
+        try:
+            await conn.execute(
+                "CREATE TABLE IF NOT EXISTS schema_migrations ("
+                "version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"
+            )
+            done = {r["version"] for r in await conn.fetch("SELECT version FROM schema_migrations")}
+            for path in sorted(migrations_dir.glob("*.sql")):
+                if path.name in done:
+                    continue
+                sql = path.read_text(encoding="utf-8")
+                async with conn.transaction():
+                    await conn.execute(sql)
+                    await conn.execute(
+                        "INSERT INTO schema_migrations(version) VALUES($1)", path.name
+                    )
+                applied.append(path.name)
+        finally:
+            await conn.execute(lock_key.format(fn="pg_advisory_unlock"))
     return applied
