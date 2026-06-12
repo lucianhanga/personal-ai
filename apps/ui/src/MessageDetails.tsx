@@ -74,25 +74,67 @@ export function MessageDetails({
             overflowY: "auto",
           }}
         >
-          {items.map((t, k) =>
-            t.kind === "reasoning" ? (
-              <div
-                key={k}
-                data-testid="details-thinking"
-                style={{ whiteSpace: "pre-wrap", margin: "2px 0" }}
-              >
-                💭 {t.text}
+          {items.map((t, k) => {
+            if (t.kind === "reasoning") {
+              return (
+                <div
+                  key={k}
+                  data-testid="details-thinking"
+                  style={{ whiteSpace: "pre-wrap", margin: "2px 0" }}
+                >
+                  💭 {t.text}
+                </div>
+              );
+            }
+            if (t.kind === "tool_call") {
+              return (
+                <div key={k}>
+                  🔧 {t.tool}({JSON.stringify(t.args ?? {})})
+                </div>
+              );
+            }
+            if (t.kind === "tool_result") {
+              return (
+                <div key={k} style={{ color: t.ok ? "#2a7" : "#b00" }}>
+                  ↳ {t.tool}: {t.ok ? "ok" : `error: ${t.error}`}
+                </div>
+              );
+            }
+            if (t.kind === "plan") {
+              return (
+                <div key={k} data-testid="details-plan" style={{ whiteSpace: "pre-wrap" }}>
+                  🧭 Plan: {t.text}
+                </div>
+              );
+            }
+            if (t.kind === "critique") {
+              return (
+                <div key={k} data-testid="details-critique" style={{ whiteSpace: "pre-wrap" }}>
+                  🔎 Critique{t.role ? ` (${t.role})` : ""}: {t.text}
+                </div>
+              );
+            }
+            if (t.kind === "verification") {
+              const pass = t.verdict === "pass";
+              return (
+                <div
+                  key={k}
+                  data-testid="details-verification"
+                  style={{ color: pass ? "#2a7" : "#b00" }}
+                >
+                  {pass ? "✓" : "✗"} Verification{t.verdict ? ` (${t.verdict})` : ""}
+                  {t.text ? `: ${t.text}` : ""}
+                </div>
+              );
+            }
+            // Generic fallback so any future trace kind renders instead of breaking the UI.
+            return (
+              <div key={k} data-testid="details-other" style={{ whiteSpace: "pre-wrap" }}>
+                • {t.kind}
+                {t.text ? `: ${t.text}` : ""}
               </div>
-            ) : t.kind === "tool_call" ? (
-              <div key={k}>
-                🔧 {t.tool}({JSON.stringify(t.args ?? {})})
-              </div>
-            ) : (
-              <div key={k} style={{ color: t.ok ? "#2a7" : "#b00" }}>
-                ↳ {t.tool}: {t.ok ? "ok" : `error: ${t.error}`}
-              </div>
-            ),
-          )}
+            );
+          })}
         </div>
       )}
     </div>
