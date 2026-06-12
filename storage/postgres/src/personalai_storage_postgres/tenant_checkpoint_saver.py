@@ -59,11 +59,23 @@ class TenantCheckpointSaver(BaseCheckpointSaver[str]):
                 "parent_checkpoint_id=excluded.parent_checkpoint_id, type=excluded.type, "
                 "checkpoint=excluded.checkpoint, metadata_type=excluded.metadata_type, "
                 "metadata=excluded.metadata",
-                self._tenant, thread_id, ns, checkpoint["id"], cfg.get("checkpoint_id"),
-                cp_type, cp_blob, md_type, md_blob,
+                self._tenant,
+                thread_id,
+                ns,
+                checkpoint["id"],
+                cfg.get("checkpoint_id"),
+                cp_type,
+                cp_blob,
+                md_type,
+                md_blob,
             )
-        return {"configurable": {"thread_id": thread_id, "checkpoint_ns": ns,
-                                 "checkpoint_id": checkpoint["id"]}}
+        return {
+            "configurable": {
+                "thread_id": thread_id,
+                "checkpoint_ns": ns,
+                "checkpoint_id": checkpoint["id"],
+            }
+        }
 
     async def aput_writes(
         self,
@@ -85,8 +97,15 @@ class TenantCheckpointSaver(BaseCheckpointSaver[str]):
                     "ON CONFLICT (tenant_id, thread_id, checkpoint_ns, checkpoint_id, task_id, "
                     "idx) DO UPDATE SET channel=excluded.channel, type=excluded.type, "
                     "blob=excluded.blob",
-                    self._tenant, thread_id, ns, checkpoint_id, task_id,
-                    WRITES_IDX_MAP.get(channel, idx), channel, w_type, w_blob,
+                    self._tenant,
+                    thread_id,
+                    ns,
+                    checkpoint_id,
+                    task_id,
+                    WRITES_IDX_MAP.get(channel, idx),
+                    channel,
+                    w_type,
+                    w_blob,
                 )
 
     async def aget_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
@@ -99,14 +118,17 @@ class TenantCheckpointSaver(BaseCheckpointSaver[str]):
                     "SELECT checkpoint_id, parent_checkpoint_id, type, checkpoint, metadata_type, "
                     "metadata FROM agent_checkpoints WHERE thread_id=$1 AND checkpoint_ns=$2 "
                     "AND checkpoint_id=$3",
-                    thread_id, ns, checkpoint_id,
+                    thread_id,
+                    ns,
+                    checkpoint_id,
                 )
             else:
                 row = await conn.fetchrow(
                     "SELECT checkpoint_id, parent_checkpoint_id, type, checkpoint, metadata_type, "
                     "metadata FROM agent_checkpoints WHERE thread_id=$1 AND checkpoint_ns=$2 "
                     "ORDER BY checkpoint_id DESC LIMIT 1",
-                    thread_id, ns,
+                    thread_id,
+                    ns,
                 )
             if row is None:
                 return None
@@ -114,7 +136,9 @@ class TenantCheckpointSaver(BaseCheckpointSaver[str]):
                 "SELECT task_id, channel, type, blob FROM agent_checkpoint_writes "
                 "WHERE thread_id=$1 AND checkpoint_ns=$2 AND checkpoint_id=$3 "
                 "ORDER BY task_id, idx",
-                thread_id, ns, row["checkpoint_id"],
+                thread_id,
+                ns,
+                row["checkpoint_id"],
             )
         return self._to_tuple(thread_id, ns, row, writes)
 
@@ -148,20 +172,32 @@ class TenantCheckpointSaver(BaseCheckpointSaver[str]):
                     "SELECT task_id, channel, type, blob FROM agent_checkpoint_writes "
                     "WHERE thread_id=$1 AND checkpoint_ns=$2 AND checkpoint_id=$3 "
                     "ORDER BY task_id, idx",
-                    thread_id, ns, row["checkpoint_id"],
+                    thread_id,
+                    ns,
+                    row["checkpoint_id"],
                 )
                 yield self._to_tuple(thread_id, ns, row, writes)
 
     def _to_tuple(self, thread_id: str, ns: str, row: Any, writes: Any) -> CheckpointTuple:
         parent = row["parent_checkpoint_id"]
         return CheckpointTuple(
-            config={"configurable": {"thread_id": thread_id, "checkpoint_ns": ns,
-                                     "checkpoint_id": row["checkpoint_id"]}},
+            config={
+                "configurable": {
+                    "thread_id": thread_id,
+                    "checkpoint_ns": ns,
+                    "checkpoint_id": row["checkpoint_id"],
+                }
+            },
             checkpoint=self.serde.loads_typed((row["type"], row["checkpoint"])),
             metadata=self.serde.loads_typed((row["metadata_type"], row["metadata"])),
             parent_config=(
-                {"configurable": {"thread_id": thread_id, "checkpoint_ns": ns,
-                                  "checkpoint_id": parent}}
+                {
+                    "configurable": {
+                        "thread_id": thread_id,
+                        "checkpoint_ns": ns,
+                        "checkpoint_id": parent,
+                    }
+                }
                 if parent
                 else None
             ),
