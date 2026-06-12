@@ -1,34 +1,51 @@
-"""M8.0 typed-graph runtime: the responder graph equals the single-agent loop, and the runner
-routes through nodes + honors the step cap."""
+"""M8.0-lg LangGraph runtime: the single responder graph equals the single-agent loop, and the
+custom-stream surface yields the same ordered AgentEvents (reasoning/tool/answer/final) as
+``run_agent`` (ADR-0012)."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
-from dataclasses import dataclass
 
-from personalai_contracts.ports import ChatMessage, Role
-from personalai_contracts.testing import FakeModelProvider
-from personalai_core import (
-    AgentEvent,
-    Graph,
-    GraphState,
-    InProcessExecutor,
-    Registry,
-    ToolGateway,
-    run_graph,
+from personalai_contracts.ports import (
+    ChatMessage,
+    GenerationRequest,
+    GenerationResult,
+    Role,
+    ToolCall,
+    ToolCallRequest,
+    ToolResult,
 )
+from personalai_contracts.schemas.tools import Provenance, RiskLevel, ToolManifest
+from personalai_contracts.testing import FakeModelProvider
+from personalai_core import AgentEvent, InProcessExecutor, Registry, ToolGateway, run_graph
 from personalai_core.gateway import RegisteredTool
-from personalai_core.security import AuditLog
+from personalai_core.security.audit import AuditLog
+
+ECHO = ToolManifest(
+    name="echo",
+    version="1.0.0",
+    provenance=Provenance(maintainer="tests"),
+    description="echo",
+    risk=RiskLevel.LOW,
+)
 
 
-def _gateway() -> ToolGateway:
+class _Echo:
+    name = "echo"
+
+    async def invoke(self, call: ToolCall) -> ToolResult:
+        return ToolResult(ok=True, output={"echoed": True})
+
+
+def _gateway(tools: list[RegisteredTool] | None = None) -> ToolGateway:
     reg: Registry[RegisteredTool] = Registry("tool")
+    for rt in tools or []:
+        reg.register(rt.manifest.name, rt)
     return ToolGateway(reg, InProcessExecutor(), audit=AuditLog(), egress_check=lambda h: None)
 
 
 def test_run_graph_equals_single_agent_loop_no_tools() -> None:
-    # M8.0: the single-responder graph yields exactly what run_agent does.
+    # M8.0-lg: the single-responder LangGraph graph yields exactly what run_agent does.
     async def _run() -> list[AgentEvent]:
         return [
             ev
@@ -47,45 +64,48 @@ def test_run_graph_equals_single_agent_loop_no_tools() -> None:
     assert events[-1].answer == "echo: hi"
 
 
-@dataclass
-class _SayNode:
-    name: str
-    text: str
+class _ToolThenAnswer(FakeModelProvider):
+    """Turn 1: reasoning + a tool call; turn 2: a plain answer with usage."""
 
-    async def run(self, state: GraphState) -> AsyncIterator[AgentEvent]:
-        yield AgentEvent(type="answer", answer=self.text)
+    def __init__(self) -> None:
+        super().__init__(name="scripted")
+        self._n = 0
 
-
-def test_graph_runner_routes_through_nodes_and_accumulates_answer() -> None:
-    def route(state: GraphState) -> str | None:
-        # a -> b -> stop
-        if state.data.get("went_b"):
-            return None
-        state.data["went_b"] = True
-        return "b"
-
-    graph = Graph(
-        nodes={"a": _SayNode("a", "A "), "b": _SayNode("b", "B")},
-        entry="a",
-        route=route,
-    )
-
-    async def _run() -> GraphState:
-        state = GraphState()
-        async for _ in graph.run(state):
-            pass
-        return state
-
-    state = asyncio.run(_run())
-    assert state.answer == "A B"  # both nodes ran, in order; answer accumulated
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        self._n += 1
+        if self._n == 1:
+            return GenerationResult(
+                text="",
+                model=request.model,
+                thinking="deciding",
+                tool_calls=[ToolCallRequest(name="echo", arguments={"v": 1})],
+            )
+        return GenerationResult(text="done", model=request.model, usage={"total_tokens": 7})
 
 
-def test_graph_runner_honors_step_cap() -> None:
-    # A router that never stops must still terminate at max_steps.
-    graph = Graph(nodes={"a": _SayNode("a", "x")}, entry="a", route=lambda _s: "a", max_steps=3)
+def test_run_graph_streams_all_event_kinds_through_the_graph() -> None:
+    # The LangGraph custom-stream surface carries reasoning, tool_call, tool_result, answer and
+    # final in order, identical to the single-agent loop.
+    tool = RegisteredTool(ECHO, _Echo())
 
     async def _run() -> list[AgentEvent]:
-        return [ev async for ev in graph.run(GraphState())]
+        return [
+            ev
+            async for ev in run_graph(
+                messages=[ChatMessage(Role.USER, "use a tool")],
+                provider=_ToolThenAnswer(),
+                model="m",
+                gateway=_gateway([tool]),
+                tools=[tool],
+                approved=True,
+                max_iterations=4,
+                think=True,
+            )
+        ]
 
     events = asyncio.run(_run())
-    assert len(events) == 3  # capped at max_steps, not infinite
+    kinds = [e.type for e in events]
+    assert kinds == ["reasoning", "tool_call", "tool_result", "answer", "final"]
+    assert events[1].tool == "echo"
+    assert events[2].ok is True
+    assert events[-1].usage == {"total_tokens": 7}
