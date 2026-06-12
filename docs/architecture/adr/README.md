@@ -15,6 +15,7 @@ lightweight [MADR](https://adr.github.io/madr/)-style format.
 | [0008](./0008-single-agent-loop.md) | Single-agent tool-calling loop (LangGraph deferred) | Accepted |
 | [0009](./0009-mcp-isolation-posture.md) | MCP isolation: out-of-process servers + gateway envelope; container executor deferred | Accepted |
 | [0010](./0010-iam-multitenant-security.md) | Identity, authentication & multi-tenancy (always-on, RLS-isolated) | Accepted |
-| [0011](./0011-agent-framework.md) | M8 agent framework: a hand-rolled typed graph over the existing seams | Accepted |
+| [0011](./0011-agent-framework.md) | M8 agent framework: a hand-rolled typed graph over the existing seams | Superseded by 0012 |
+| [0012](./0012-langgraph-orchestration.md) | Adopt LangGraph as the agent orchestration platform | Accepted |
 
 > New decisions get the next number. Status: Proposed → Accepted → Superseded (link the successor).
