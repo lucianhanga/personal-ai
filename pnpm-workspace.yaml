@@ -7,3 +7,36 @@ packages:
 # esbuild (a vitest dependency) needs its post-install to place the platform binary.
 allowBuilds:
   esbuild: true
+minimumReleaseAgeExclude:
+  - '@esbuild/aix-ppc64@0.28.1'
+  - '@esbuild/android-arm64@0.28.1'
+  - '@esbuild/android-arm@0.28.1'
+  - '@esbuild/android-x64@0.28.1'
+  - '@esbuild/darwin-arm64@0.28.1'
+  - '@esbuild/darwin-x64@0.28.1'
+  - '@esbuild/freebsd-arm64@0.28.1'
+  - '@esbuild/freebsd-x64@0.28.1'
+  - '@esbuild/linux-arm64@0.28.1'
+  - '@esbuild/linux-arm@0.28.1'
+  - '@esbuild/linux-ia32@0.28.1'
+  - '@esbuild/linux-loong64@0.28.1'
+  - '@esbuild/linux-mips64el@0.28.1'
+  - '@esbuild/linux-ppc64@0.28.1'
+  - '@esbuild/linux-riscv64@0.28.1'
+  - '@esbuild/linux-s390x@0.28.1'
+  - '@esbuild/linux-x64@0.28.1'
+  - '@esbuild/netbsd-arm64@0.28.1'
+  - '@esbuild/netbsd-x64@0.28.1'
+  - '@esbuild/openbsd-arm64@0.28.1'
+  - '@esbuild/openbsd-x64@0.28.1'
+  - '@esbuild/openharmony-arm64@0.28.1'
+  - '@esbuild/sunos-x64@0.28.1'
+  - '@esbuild/win32-arm64@0.28.1'
+  - '@esbuild/win32-ia32@0.28.1'
+  - '@esbuild/win32-x64@0.28.1'
+  - esbuild@0.28.1
+# Force the transitive esbuild (via vite) to the patched line: < 0.28.1 has a high-severity advisory
+# (RCE via NPM_CONFIG_REGISTRY, missing binary integrity verification). Surgical override avoids a
+# risky vite major bump; revisit when vite ships esbuild >= 0.28.1 natively (#275).
+overrides:
+  esbuild@<0.28.1: ">=0.28.1"
