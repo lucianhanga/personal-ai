@@ -30,6 +30,19 @@ current_conversation: ContextVar[str | None] = ContextVar("current_conversation"
 current_security: ContextVar[SecurityContext | None] = ContextVar("current_security", default=None)
 
 
+class SecurityContextError(RuntimeError):
+    """A tenant-scoped operation ran with no SecurityContext in scope (fail-closed)."""
+
+
+def require_security() -> SecurityContext:
+    """Return the request's SecurityContext, or raise (fail-closed). Use at orchestration/agent
+    boundaries that must be tenant-scoped instead of silently proceeding without a tenant."""
+    ctx = current_security.get()
+    if ctx is None:
+        raise SecurityContextError("no security context in scope")
+    return ctx
+
+
 class AuditEvent(BaseModel):
     """A single audit record. Immutable; the payload is stored already-redacted."""
 

@@ -18,8 +18,12 @@ AgentState = Mapping[str, Any]
 
 @dataclass(frozen=True)
 class AgentContext:
-    """Ambient context for an agent run (conversation, workspace, etc.)."""
+    """Context for an agent run. ``tenant_id``/``subject_id`` are REQUIRED so every node's data
+    access is explicitly tenant-scoped (ADR-0010) rather than relying only on an ambient contextvar
+    — important for M8 where multiple nodes/sub-tasks run within a turn (audit A2/#225)."""
 
+    tenant_id: str
+    subject_id: str
     conversation_id: str
     metadata: Mapping[str, Any] = field(default_factory=dict)
 

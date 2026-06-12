@@ -155,3 +155,18 @@ def test_audit_reopens_existing_sink_without_truncating(tmp_path: Path) -> None:
     # A new AuditLog on the same existing path must append, not recreate/truncate.
     AuditLog(sink_path=sink).append("second", {})
     assert len(sink.read_text(encoding="utf-8").strip().splitlines()) == 2
+
+
+def test_require_security_is_fail_closed() -> None:
+    from personalai_contracts.ports import SecurityContext
+    from personalai_core.security import SecurityContextError, current_security, require_security
+
+    with pytest.raises(SecurityContextError):
+        require_security()  # no context in scope -> fail-closed
+
+    ctx = SecurityContext(subject_id="s", tenant_id="t")
+    token = current_security.set(ctx)
+    try:
+        assert require_security() is ctx
+    finally:
+        current_security.reset(token)
