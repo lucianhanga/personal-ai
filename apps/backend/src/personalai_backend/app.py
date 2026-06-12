@@ -37,6 +37,7 @@ from personalai_backend.logbuffer import LOG_BUFFER
 from personalai_backend.logbuffer import install as install_log_buffer
 from personalai_backend.mcp_manager import McpManager
 from personalai_backend.tenant_querier import TenantQuerier
+from personalai_backend.turn import run_turn
 from personalai_contracts.ports import (
     ChatMessage,
     GenerationRequest,
@@ -53,7 +54,6 @@ from personalai_core import (
     VectorRetriever,
     recall,
     remember,
-    run_agent,
     split_recent,
     summarize,
 )
@@ -622,72 +622,56 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     else:
                         trace.append({"kind": "reasoning", "text": text})
 
+                # Tools get their declared permissions; high-risk still needs approve_tools and
+                # egress is enforced by the gateway. (Built once; run_turn ignores them off-path.)
+                registries: Registries = app.state.bootstrap.registries
+                tool_list = [registries.tools.get(n) for n in registries.tools.names()]
+                grants = [p for rt in tool_list for p in rt.manifest.permissions]
                 try:
-                    if req.use_tools:
-                        # Drive the agent loop, turning its typed events straight into SSE frames +
-                        # the ordered trace (no intermediate tuple channel).
-                        registries: Registries = app.state.bootstrap.registries
-                        tool_list = [registries.tools.get(n) for n in registries.tools.names()]
-                        # Tools get their declared permissions; high-risk still needs approve_tools
-                        # and egress is enforced by the gateway.
-                        grants = [p for rt in tool_list for p in rt.manifest.permissions]
-                        async for ev in run_agent(
-                            messages=generation.messages,
-                            provider=provider,
-                            model=generation.model,
-                            gateway=app.state.bootstrap.gateway,
-                            tools=tool_list,
-                            grants=grants,
-                            approved=req.approve_tools,
-                            think=generation.think,
-                            max_iterations=config.agent_max_iterations,
-                        ):
-                            if ev.type == "reasoning":
-                                _add_reasoning(ev.thinking or "")
-                                yield f"data: {json.dumps({'thinking': ev.thinking})}\n\n".encode()
-                            elif ev.type == "answer":
-                                answer += ev.answer or ""
-                                frame = {"delta": ev.answer or "", "done": False}
-                                yield f"data: {json.dumps(frame)}\n\n".encode()
-                            elif ev.type == "final":
-                                if ev.usage:
-                                    usage = ev.usage
-                                done = {"delta": "", "done": True, "finish_reason": "stop"}
-                                yield f"data: {json.dumps(done)}\n\n".encode()
-                            else:  # tool_call / tool_result
-                                trace.append(
-                                    {
-                                        "kind": ev.type,
-                                        "tool": ev.tool,
-                                        "args": ev.args,
-                                        "ok": ev.ok,
-                                        "output": ev.output,
-                                        "error": ev.error,
-                                    }
-                                )
-                                payload = {
-                                    "phase": "call" if ev.type == "tool_call" else "result",
+                    # Orchestration lives in run_turn (FastAPI-independent, fake-testable); the
+                    # route maps its typed events to SSE frames + the ordered trace.
+                    async for ev in run_turn(
+                        generation=generation,
+                        provider=provider,
+                        use_tools=req.use_tools,
+                        approve_tools=req.approve_tools,
+                        tools=tool_list,
+                        grants=grants,
+                        gateway=app.state.bootstrap.gateway,
+                        max_iterations=config.agent_max_iterations,
+                    ):
+                        if ev.kind == "reasoning":
+                            _add_reasoning(ev.text)
+                            yield f"data: {json.dumps({'thinking': ev.text})}\n\n".encode()
+                        elif ev.kind == "answer":
+                            answer += ev.text
+                            frame = {"delta": ev.text, "done": False}
+                            yield f"data: {json.dumps(frame)}\n\n".encode()
+                        elif ev.kind == "tool":
+                            trace.append(
+                                {
+                                    "kind": "tool_call" if ev.phase == "call" else "tool_result",
                                     "tool": ev.tool,
                                     "args": ev.args,
                                     "ok": ev.ok,
                                     "output": ev.output,
                                     "error": ev.error,
                                 }
-                                yield f"event: tool\ndata: {json.dumps(payload)}\n\n".encode()
-                    else:
-                        async for chunk in provider.stream(generation):
-                            answer += chunk.delta
-                            if chunk.thinking:
-                                _add_reasoning(chunk.thinking)
-                            if chunk.usage:
-                                usage = dict(chunk.usage)
+                            )
                             payload = {
-                                "delta": chunk.delta,
-                                "thinking": chunk.thinking,
-                                "done": chunk.done,
-                                "finish_reason": chunk.finish_reason,
+                                "phase": ev.phase,
+                                "tool": ev.tool,
+                                "args": ev.args,
+                                "ok": ev.ok,
+                                "output": ev.output,
+                                "error": ev.error,
                             }
-                            yield f"data: {json.dumps(payload)}\n\n".encode()
+                            yield f"event: tool\ndata: {json.dumps(payload)}\n\n".encode()
+                        else:  # final
+                            if ev.usage:
+                                usage = ev.usage
+                            done = {"delta": "", "done": True, "finish_reason": "stop"}
+                            yield f"data: {json.dumps(done)}\n\n".encode()
                 except Exception as exc:  # noqa: BLE001 - surface as a structured error event
                     # Persist what happened (partial answer + reasoning/tool trace) so reopening the
                     # chat shows it, then surface the error to the UI. Otherwise the turn vanishes.
