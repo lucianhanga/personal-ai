@@ -7,7 +7,7 @@ import os
 
 import pytest
 
-from personalai_storage_postgres import create_pool
+from personalai_storage_postgres import apply_migrations, create_pool
 
 DB_URL = os.environ.get(
     "PERSONALAI_DATABASE_URL", "postgresql://personalai@127.0.0.1:5432/personalai"
@@ -38,6 +38,21 @@ def test_pool_enables_hnsw_iterative_scan() -> None:
             value = await pool.fetchval("SELECT current_setting('hnsw.iterative_scan', true)")
             # pgvector >= 0.8 (CI + local use pgvector/pgvector:pg17 -> 0.8+).
             assert value == "relaxed_order"
+        finally:
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_apply_migrations_twice_does_not_deadlock() -> None:
+    # The advisory lock must be released (not leaked on the pooled connection): a second run on the
+    # same pool must complete (and find everything already applied) rather than block forever.
+    async def _run() -> None:
+        pool = await create_pool(DB_URL)
+        try:
+            await apply_migrations(pool)
+            second = await asyncio.wait_for(apply_migrations(pool), timeout=10)
+            assert second == []  # all already applied; lock was released
         finally:
             await pool.close()
 
