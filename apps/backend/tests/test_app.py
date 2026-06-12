@@ -327,6 +327,27 @@ def test_chat_empty_completion_emits_notice() -> None:
     assert "E_EMPTY" in body
 
 
+def test_chat_with_graph_enabled_streams_answer() -> None:
+    # M8.0: with agent_graph_enabled the tool path runs through the typed graph; same behavior.
+    config = CoreConfig(auth_token=TOKEN, agent_graph_enabled=True)
+    boot = bootstrap(config=config)
+    boot.registries.model_providers.register("fake", FakeModelProvider(name="fake"), overwrite=True)
+    client = TestClient(create_app(boot))
+    with client.stream(
+        "POST",
+        "/api/v1/chat",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={
+            "messages": [{"role": "user", "content": "hi there"}],
+            "provider": "fake",
+            "use_tools": True,
+        },
+    ) as resp:
+        assert resp.status_code == 200
+        body = "".join(resp.iter_text())
+    assert "echo:" in body and '"done": true' in body
+
+
 def test_chat_streams_deltas() -> None:
     client = _app_with_provider("fake", FakeModelProvider(name="fake"))
     with client.stream(
@@ -384,3 +405,10 @@ def test_entrypoint_module_importable() -> None:
     import personalai_backend.__main__ as entry
 
     assert callable(entry.main)
+
+
+def test_agent_context_is_none_without_security() -> None:
+    # _agent_context fails soft to None when no SecurityContext is in scope (graph gets no tenant).
+    from personalai_backend.app import _agent_context
+
+    assert _agent_context("c1") is None
