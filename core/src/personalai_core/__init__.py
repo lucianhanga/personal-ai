@@ -8,7 +8,7 @@ and resolve them by name at the composition root.
 from personalai_core.agent import AgentEvent, run_agent
 from personalai_core.config import CoreConfig
 from personalai_core.gateway import InProcessExecutor, RegisteredTool, ToolGateway
-from personalai_core.graph import Graph, GraphNode, GraphState, run_graph
+from personalai_core.graph import GraphState, run_graph
 from personalai_core.memory import split_recent, summarize
 from personalai_core.memory_extraction import extract_facts, recall, remember
 from personalai_core.registries import Registries
@@ -20,8 +20,6 @@ __version__ = "0.0.0"
 __all__ = [
     "AgentEvent",
     "CoreConfig",
-    "Graph",
-    "GraphNode",
     "GraphState",
     "InProcessExecutor",
     "RegisteredTool",

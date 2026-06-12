@@ -9,7 +9,8 @@
 > [Dependency Policy](../policies/DEPENDENCY-POLICY.md). A generated SBOM (CycloneDX) is the
 > machine-readable companion to this human-readable register.
 
-- **Last reviewed:** 2026-06-11 (IAM P1.2: added **argon2-cffi** for built-in password hashing — see the runtime table. Transitive: cffi/pycparser, already common.)
+- **Last reviewed:** 2026-06-12 (ADR-0012 / M8: **LangGraph** promoted `planned` -> `adopted` as the agent orchestration engine — see §2. Added as a `personalai-core` dependency `langgraph>=1.2,<2`. Transitive (LangChain ecosystem, all MIT): **langchain-core**, **langgraph-checkpoint**, **langgraph-prebuilt**, **langgraph-sdk**, plus **xxhash** (BSD). Usage surface kept tiny: LangGraph is the engine only; model+tool calls stay on our `ModelProvider`/`ToolGateway` seams, so the LangChain model/tool layers are not used.)
+- **Earlier:** 2026-06-11 (IAM P1.2: added **argon2-cffi** for built-in password hashing — see the runtime table. Transitive: cffi/pycparser, already common.)
 - **Earlier:** 2026-06-09 (M7: optional **MarkItDown-on-Ollama MCP** helper script `tools/markitdown-ollama/server.py` declares `markitdown[all]` + `openai` via PEP 723 inline metadata — **not** in the workspace lockfile; resolved into an ephemeral env only when the user runs it via `uv run --script`.)
 - **Status legend:** `planned` (vetted, not yet in code) · `adopted` (in the build) · `evaluating` · `rejected`
 - **Provenance note:** Licenses below are grounded in public sources cited in the architecture
@@ -33,7 +34,7 @@
 
 | Component | Maintainer / Org | License | Maturity | Status | Reason | Security notes | Alternatives |
 |---|---|---|---|---|---|---|---|
-| **LangGraph** | LangChain | MIT (OSS) | Mature, active | planned | Graph orchestration, checkpointing, human-in-the-loop | Ecosystem churn — pin versions | Microsoft Agent Framework |
+| **LangGraph** | LangChain | MIT (OSS) | Mature, active | **adopted** (M8, ADR-0012) | Agent orchestration engine: typed graph, checkpointing, human-in-the-loop interrupt/resume. Pinned `>=1.2,<2` in `personalai-core` | Ecosystem churn — pinned + used as engine only (model/tool calls stay on our seams, not LangChain's); transitive: langchain-core, langgraph-checkpoint/-prebuilt/-sdk, xxhash | Microsoft Agent Framework, PydanticAI |
 | **Microsoft Agent Framework** | Microsoft | OSS (verify) | GA Q1 2026 | evaluating | Enterprise/.NET alt (AutoGen + Semantic Kernel successor) | Azure-leaning; verify license | LangGraph |
 | **Pydantic** | Pydantic (Samuel Colvin et al.) | MIT | Mature | **adopted** (M0-3) | Python runtime validation; JSON-Schema bridge; strict fail-closed contracts | Pin major; `extra="forbid"` everywhere | attrs |
 | **Zod** | Colin McDonnell | MIT | Mature | **adopted** (M0-3) | TS runtime validation; `.strict()` bindings shared with UI/extension | Pin major | io-ts, valibot |
