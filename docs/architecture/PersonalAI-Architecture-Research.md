@@ -541,8 +541,13 @@ The dependency arrow always points **inward to `/contracts`**. Adapters never im
 
 Each milestone is shippable, builds on the previous, and **exercises a seam** so the next milestone slots in without rework. "Owner agent" = which Claude Code specialist naturally owns that slice.
 
-> **Status (v0.6.0):** **M0–M6 are complete and shipped.** M7 is next. The rows below mark each
-> milestone's state; the swap of M6/M7 is recorded in the roadmap notes after the table.
+> **Status:** **M0–M7 complete**, plus an **Identity + multi-tenancy** milestone (ADR-0010: always-on
+> auth + Postgres RLS) and a **Pre-M8 hardening** pass, all shipped. **M8 is next.**
+> **Note (supersession):** this research report originally recommended **LangGraph** for orchestration.
+> That was **superseded by ADR-0011**, which adopts a **hand-rolled typed graph** over the existing
+> seams (LangGraph rejected mainly on dependency weight for a local-first repo). Where this document
+> says "LangGraph", read "the hand-rolled typed graph (ADR-0011)". The ADRs are authoritative; this
+> report is the original rationale.
 
 | M | Milestone | What ships | Seam established | Additive guarantee | Owner agent | Status |
 |---|---|---|---|---|---|---|
@@ -553,8 +558,9 @@ Each milestone is shippable, builds on the previous, and **exercises a seam** so
 | **M4** | **Memory (short-term + long-term)** | **STM** (isolated per chat): token-budgeted context assembly + rolling per-conversation summary; incognito chats. **LTM** (cross-chat, semantic): `MemoryStore` on Postgres+pgvector; background fact extraction (structured output + salience, provenance + temporal validity); recency/importance/relevance retrieval injected as "What I remember" (untrusted data); **Memory UI** to view/edit/delete facts + "Forget everything" + "Use my memory" toggle | Memory seam (reuses Retriever/Storage); STM vs LTM isolation | Graph (KAG) upgrade is M11; RAG/chat untouched | agentic-ai-architect, database-architect, ui-developer | done |
 | **M5** | **Tool/MCP gateway** | Registry + manifests + permission model + tiered sandbox + egress allowlist + audit log; built-in tools (calculator, http_fetch) | Tool seam (the side-effect chokepoint) | New tools = drop-in manifest+handler, verified & sandboxed | agentic-ai-architect, backend-api-architect | done |
 | **M6** | **Single-agent loop + tools** | Hand-rolled streaming agent loop (ADR-0008): autonomous tool calling through the gateway, **streamed reasoning + answer**, tool calls parsed from the provider stream (Ollama + OpenAI); per-message **Details** (`meta.trace`); built-in **web_search** (DuckDuckGo); per-chat Activity + App logs; context-usage meter; rename chats | Agent seam, message-contract seam | Add MCP sources / roles later behind the same gateway | agentic-ai-architect | done |
-| **M7** | **MCP plug-in/out + verification** | Local/third-party MCP servers via the gateway; MCP verification workflow; per-scope enable/disable; sandbox tiers (ADR-0007), incl. the Microsoft Playwright MCP goal | Tool seam hardened for external code | Plug/unplug tools without redeploy | agentic-ai-architect | next |
-| **M8** | **Multi-agent + selective verification** | Role-specialized agents (researcher/critic); **tiered verification** (schema-always → conditional LLM-judge → ground-truth → human) for factuality/anti-hallucination; `accuracy mode` toggle; **LangGraph** adopted here (ADR-0008) above the same gateway/provider seams | Agent seam at scale | New roles/critics are additive nodes | agentic-ai-architect | planned |
+| **M7** | **MCP plug-in/out + verification** | Local/third-party MCP servers via the gateway; MCP verification workflow; per-scope enable/disable; sandbox tiers (ADR-0007), incl. the Microsoft Playwright MCP goal | Tool seam hardened for external code | Plug/unplug tools without redeploy | agentic-ai-architect | done |
+| **IAM** | **Identity + multi-tenancy** | Always-on auth + Postgres RLS tenant isolation; `IdentityProvider`/`SessionStore`/`KeyProvider`(planned) ports; argon2id + cookie sessions + CSRF; `app_mode` local/hosted (ADR-0010) | Auth + tenant-isolation seam | New IdP (OIDC) = drop-in adapter | ciso-security-auditor, backend, db | done |
+| **M8** | **Multi-agent + selective verification** | Role-specialized agents (researcher/critic); **tiered verification** (schema-always → conditional LLM-judge → ground-truth → human) for factuality/anti-hallucination; `accuracy mode` toggle; a **hand-rolled typed graph** (ADR-0011, **not** LangGraph) above the same gateway/provider seams | Agent seam at scale | New roles/critics are additive nodes | agentic-ai-architect | next |
 | **M9** | **Multimodal** | Vision routing; **faster-whisper** STT; **Piper** TTS; optional image gen | Modality seam at scale | Each modality = a handler, no core change | ollama-llm-agent, ui-developer | planned |
 | **M10** | **Browser extension** | MV3, minimal perms, explicit capture, authenticated localhost messaging | New client behind existing gateway contract | Extension is just another authenticated client | chrome-extension-architect/developer | planned |
 | **M11** | **KAG / graph memory (graph upgrade of M4)** | Hybrid graph+vector retrieval (Postgres + Apache AGE), entity/relationship extraction + resolution, multi-hop; upgrades the long-term memory to a knowledge graph | Reuses retrieval + storage + memory seams | Pure add-on; vector RAG + semantic memory untouched | database-architect, agentic-ai-architect | planned |

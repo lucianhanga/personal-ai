@@ -1,6 +1,7 @@
 """Ports: agent role and graph node.
 
-An ``AgentNode`` is a single step in an orchestration graph (LangGraph-style): it maps an
+An ``AgentNode`` is a single step in an orchestration graph (a hand-rolled typed graph over the
+existing seams — ADR-0011, M8; not LangGraph): it maps an
 input state to an output state. An ``AgentRole`` is a named, described capability that
 exposes such a node. Typed agent-message envelopes that flow as state are defined as schemas
 in M0-3; orchestration wiring is M6.

@@ -9,18 +9,31 @@ currently `0.6.0`).
 ## Running it
 
 ```bash
-# protected routes need a token; health/version are public
-PERSONALAI_AUTH_TOKEN=demo-token make run-backend
-# or: PERSONALAI_AUTH_TOKEN=demo-token uv run python -m personalai_backend
+# local mode (default): zero-login — no token needed; everything runs as tenant #1
+make run-backend
+# or set a bearer token to require it (still single-user); or PERSONALAI_APP_MODE=hosted for real login
 ```
 
 Defaults: `http://127.0.0.1:8765`. Override with `PERSONALAI_BIND_HOST` / `PERSONALAI_BIND_PORT`.
 OpenAPI docs are served at `/docs`.
 
+## Authentication (ADR-0010)
+
+Auth is resolved per request into a fail-closed `SecurityContext{subject_id, tenant_id}` by the
+`require_context` dependency, precedence: **cookie session → bearer token (`PERSONALAI_AUTH_TOKEN`,
+a degenerate credential) → local dev-login → 401 (hosted)**.
+- **`app_mode=local` (default):** zero-login — a dev `SecurityContext` (tenant #1) is auto-applied,
+  so the bearer/cookie are optional. If `PERSONALAI_AUTH_TOKEN` is set, it becomes required.
+- **`app_mode=hosted`:** real login via `/api/v1/auth/*` (argon2id passwords → opaque server-side
+  session in a `__Host-` cookie) + double-submit **CSRF** on unsafe requests; no dev-login.
+
+Auth endpoints: `POST /api/v1/auth/signup|login|logout`, `GET /api/v1/auth/session/me`. Every other
+`/api/v1/*` route requires a resolved context; `/health` and `/version` stay unversioned + public.
+
 ## Endpoints
 
-All application routes live under `/api/v1` and require a bearer token. `/health` and `/version`
-stay unversioned and public.
+All application routes live under `/api/v1` and require an authenticated `SecurityContext` (see
+Authentication above). `/health` and `/version` stay unversioned and public.
 
 ### Infrastructure (unversioned, public)
 

@@ -1,8 +1,9 @@
 # ADR-0008: Single-agent tool-calling loop (hand-rolled, streaming)
 
-- Status: Accepted
+- Status: Accepted (the "LangGraph deferred to M8" note is **superseded by ADR-0011**, which chose a
+  hand-rolled typed graph over LangGraph for M8)
 - Date: 2026-06-09
-- Related: ADR-0004 (tool gateway), ADR-0007 (executor sandbox tiers)
+- Related: ADR-0004 (tool gateway), ADR-0007 (executor sandbox tiers), ADR-0011 (M8 agent framework)
 
 ## Context
 
