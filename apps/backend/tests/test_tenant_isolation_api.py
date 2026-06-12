@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from personalai_backend.app import create_app
 from personalai_backend.composition import bootstrap
 from personalai_backend.tenant_querier import TenantContextError, TenantQuerier
+from personalai_contracts.testing import FakeModelProvider
 from personalai_core import CoreConfig
 from personalai_storage_postgres import PgConversationStore, create_pool
 
@@ -72,6 +73,41 @@ def test_two_users_have_separate_conversations() -> None:
             c["title"] for c in bob.get("/api/v1/conversations").json()["data"]["conversations"]
         ]
         assert "Alice secret" not in bob_titles  # Bob cannot see Alice's conversation
+
+
+def test_chat_turn_is_tenant_isolated_on_the_stream_path() -> None:
+    # The SSE chat path persists per-tenant: a turn run + persisted by one user is invisible to
+    # another (audit A5 — the streaming path was previously untested for isolation).
+    boot = bootstrap(config=CoreConfig(app_mode="hosted"))
+    boot.registries.model_providers.register("fake", FakeModelProvider(name="fake"), overwrite=True)
+    app = create_app(boot)
+
+    cid = ""
+    with TestClient(app, base_url="https://testserver") as alice:
+        _signup_login(alice, f"alice-{uuid.uuid4().hex[:8]}@example.com")
+        cid = alice.post(
+            "/api/v1/conversations", json={"title": "A chat"}, headers=_csrf(alice)
+        ).json()["data"]["id"]
+        with alice.stream(
+            "POST",
+            "/api/v1/chat",
+            headers=_csrf(alice),
+            json={
+                "messages": [{"role": "user", "content": "hi"}],
+                "provider": "fake",
+                "conversation_id": cid,
+            },
+        ) as resp:
+            assert resp.status_code == 200
+            "".join(resp.iter_text())
+        alice_msgs = alice.get(f"/api/v1/conversations/{cid}").json()["data"]["messages"]
+        assert len(alice_msgs) >= 1  # the turn persisted to Alice's conversation
+
+    with TestClient(app, base_url="https://testserver") as bob:
+        _signup_login(bob, f"bob-{uuid.uuid4().hex[:8]}@example.com")
+        ids = [c["id"] for c in bob.get("/api/v1/conversations").json()["data"]["conversations"]]
+        assert cid not in ids  # Bob cannot list Alice's conversation
+        assert bob.get(f"/api/v1/conversations/{cid}").status_code == 404  # nor fetch its messages
 
 
 def test_querier_fails_closed_without_context() -> None:
