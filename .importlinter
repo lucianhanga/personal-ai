@@ -37,3 +37,14 @@ source_modules =
 forbidden_modules =
     personalai_core
     personalai_backend
+
+[importlinter:contract:adapter-independence]
+name = Adapters must not import each other (sibling isolation, ADR-0001)
+type = independence
+modules =
+    personalai_provider_ollama
+    personalai_provider_openai
+    personalai_storage_postgres
+    personalai_modality_files
+    personalai_tool_builtin
+    personalai_tool_mcp
