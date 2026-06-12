@@ -66,6 +66,7 @@ from personalai_storage_postgres import (
     PgDocumentStore,
     PgMemoryStore,
     PgVectorRepository,
+    TenantDb,
     apply_migrations,
     create_pool,
 )
@@ -260,6 +261,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 conversations=PgConversationStore(querier),
                 memories=PgMemoryStore(querier),
             )
+            # Unit-of-work: TenantDb.acquire(tenant_id) yields a tenant-bound connection in ONE
+            # transaction, so multiple store ops commit/roll back together (M8 agent writes; A3).
+            app.state.tenant_db = TenantDb(pool)
         except Exception as exc:  # noqa: BLE001 - storage is optional; degrade gracefully
             logger.warning("storage unavailable (file/RAG features disabled): %s", exc)
             app.state.storage = None

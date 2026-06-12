@@ -101,19 +101,23 @@ class PgConversationStore:
         content: str,
         meta: Mapping[str, Any] | None = None,
     ) -> Message:
+        # Single statement (CTE) so the message insert + the conversation updated_at bump are atomic
+        # even when the store runs on a per-query connection (TenantQuerier) — previously two
+        # separate statements could half-apply (audit A3/#226).
         row = await self._pool.fetchrow(
-            f"INSERT INTO messages (conversation_id, role, content, meta, tenant_id) "
-            f"VALUES ($1, $2, $3, $4, {TENANT_ID_SQL}) "
-            f"RETURNING id, conversation_id, role, content, created_at, meta",
+            f"WITH ins AS ("
+            f"  INSERT INTO messages (conversation_id, role, content, meta, tenant_id) "
+            f"  VALUES ($1, $2, $3, $4, {TENANT_ID_SQL}) "
+            f"  RETURNING id, conversation_id, role, content, created_at, meta"
+            f"), upd AS ("
+            f"  UPDATE conversations SET updated_at = now() WHERE id = $1"
+            f") SELECT id, conversation_id, role, content, created_at, meta FROM ins",
             conversation_id,
             role,
             content,
             json.dumps(meta) if meta else None,
         )
         assert row is not None
-        await self._pool.execute(
-            "UPDATE conversations SET updated_at = now() WHERE id = $1", conversation_id
-        )
         return _to_message(row)
 
     async def list_messages(self, conversation_id: str) -> Sequence[Message]:
