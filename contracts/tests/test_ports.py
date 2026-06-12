@@ -205,10 +205,12 @@ def test_agent_role_and_node() -> None:
     node = role.node()
     assert isinstance(node, AgentNode)
 
-    out = asyncio.run(node.run({"in": 1}, AgentContext(conversation_id="c1")))
+    ctx = AgentContext(tenant_id="t1", subject_id="s1", conversation_id="c1")
+    out = asyncio.run(node.run({"in": 1}, ctx))
     assert out["ran"] == "echo"
     assert out["conversation_id"] == "c1"
     assert out["in"] == 1
+    assert ctx.tenant_id == "t1" and ctx.subject_id == "s1"  # tenant explicit in agent context (A2)
 
 
 def test_tool_handler() -> None:

@@ -7,8 +7,10 @@ provided here in M0-10; components (providers, the Tool/MCP gateway) call them a
 from personalai_core.security.audit import (
     AuditEvent,
     AuditLog,
+    SecurityContextError,
     current_conversation,
     current_security,
+    require_security,
 )
 from personalai_core.security.egress import EgressBlockedError, assert_egress_allowed
 from personalai_core.security.redaction import REDACTED, redact
@@ -18,8 +20,10 @@ __all__ = [
     "AuditEvent",
     "AuditLog",
     "EgressBlockedError",
+    "SecurityContextError",
     "assert_egress_allowed",
     "current_conversation",
     "current_security",
     "redact",
+    "require_security",
 ]
