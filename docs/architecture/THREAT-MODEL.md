@@ -60,8 +60,21 @@ tenant isolation. Controls:
 | H5 | **Tenant code execution on shared host** via stdio MCP | **Hosted = remote-HTTP MCP only**; stdio is local-only; re-enabling stdio in hosting requires the container executor tier (ADR-0009) |
 | H6 | Noisy-neighbor / resource exhaustion | Per-tenant egress allowlist, rate limits, quotas; request body limits (already enforced) |
 
-Deferred hardening (post-MVP): MFA/TOTP, OIDC/SSO, container MCP sandbox tier, DB-per-tenant for
-large customers.
+**Implementation status (as of the Pre-M8 hardening pass).** The project runs **local-first** today;
+hosted multi-tenant is designed and largely built, but several §4b controls are intentionally **not
+yet enforced/implemented** and are parked in a future **"Hosted Hardening" milestone** — they are
+**safe for local** (single user, loopback, dev-login) and are **hard blockers before any hosted
+deployment**:
+- **Implemented + verified:** H1 (RLS + per-request `SecurityContext`, two layers), H2/H3 cookie
+  sessions + CSRF in hosted mode (argon2id passwords), H6 body limits + egress allowlist, BOLA→404.
+- **Planned, NOT yet in code:** **`KeyProvider` envelope encryption** (H4 — MCP/provider secrets are
+  currently plaintext in a single local file), **WebAuthn passkeys** (H3 lists them; only argon2id
+  passwords ship), **auth rate limiting** (H2/H6), **hosted stdio-MCP refusal** (H5 — documented but
+  `mcp_manager` does not yet gate stdio by `app_mode`), **per-tenant MCP config/registry** (H1/MCP).
+
+Deferred hardening (Hosted Hardening milestone / post-MVP): the "planned, NOT yet in code" items
+above, plus MFA/TOTP, OIDC/SSO, container MCP sandbox tier, DB-per-tenant, and a startup assertion
+rejecting `allowed_origins="*"` together with credentialed CORS.
 
 ## 6. Residual risks (tracked)
 

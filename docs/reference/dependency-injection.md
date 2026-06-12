@@ -50,3 +50,21 @@ If a configured adapter name is not registered, `Registry.get` raises
   object store. Resolved by name from their registry at the composition root / per request.
 - **Collections** (many enabled at once): tools, agent roles, modality handlers. Used directly
   from the registries per request (selection happens at call time, e.g. by the Tool/MCP gateway).
+
+## Identity & multi-tenancy wiring (ADR-0010)
+
+Beyond the registries, `create_app()` wires the auth + tenant-isolation layer:
+
+- **Auth** is resolved per request by the `require_context` dependency (`auth/context.py`) into a
+  `SecurityContext`, bound to the `current_security` contextvar for the request (incl. the SSE
+  stream + the `create_task`-spawned background memory job, which copies the context).
+- **`TenantQuerier`** (`tenant_querier.py`) wraps the asyncpg pool and binds every store query to
+  `current_security`'s tenant per transaction (`SET LOCAL ROLE personalai_app` + `set_config`),
+  fail-closed. `app.state.storage`'s stores are built on it, so all data access is RLS-scoped with no
+  per-endpoint changes. The raw pool is reserved for identity/auth tables (not RLS-gated) + shutdown.
+- **`app.state.tenant_db`** (`TenantDb`) is the unit-of-work primitive: `acquire(tenant_id)` yields a
+  tenant-bound connection in ONE transaction for multi-statement writes (used by M8 agent writes).
+- **Chat orchestration** is `run_turn` (`turn.py`), FastAPI-independent + fake-testable; the route is
+  a thin SSE + persistence adapter. M8's typed graph grows inside `run_turn`.
+- **Planned, not yet wired:** `KeyProvider` (per-tenant secret encryption). OIDC is a future
+  `IdentityProvider` adapter (drop-in, no core change).

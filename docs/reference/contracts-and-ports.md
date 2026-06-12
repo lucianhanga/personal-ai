@@ -46,6 +46,15 @@ If this document disagrees with the code, the code wins — please open a fix.
 | `ModalityHandler` | `ports/modality.py` | `can_handle` | `parse` | M3 / M8 |
 | `AgentRole` / `AgentNode` | `ports/agent.py` | `node` | `run` | M6 |
 | `ToolHandler` | `ports/tool.py` | — | `invoke` | M4 |
+| `IdentityProvider` | `ports/identity.py` | — | `authenticate_password` | IAM (ADR-0010) |
+| `SessionStore` | `ports/identity.py` | — | `create`, `get`, `revoke`, `revoke_all_for_subject` | IAM (ADR-0010) |
+
+> **Identity & multi-tenancy (ADR-0010).** `ports/identity.py` adds the auth seam: `SecurityContext`
+> (request principal+tenant), `AuthResult`, `Session`, and the `IdentityProvider` (built-in argon2id
+> now, OIDC later) + `SessionStore` ports. `AgentContext` (`ports/agent.py`) now carries required
+> `tenant_id`/`subject_id`. `KeyProvider` (per-tenant secret encryption) is **planned, not yet in
+> code**. Storage adapters accept a `Querier` (Pool|Connection) so a tenant-bound connection /
+> `TenantQuerier` proxy can drive RLS-scoped access — see `dependency-injection.md`.
 
 ---
 
