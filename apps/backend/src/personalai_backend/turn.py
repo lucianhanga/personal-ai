@@ -18,9 +18,10 @@ from personalai_core import run_agent, run_graph
 
 @dataclass(frozen=True)
 class TurnEvent:
-    """One step of a turn: a reasoning delta, an answer delta, a tool call/result, or the final."""
+    """One step of a turn: a reasoning/answer delta, a tool call/result, a plan/critique step, the
+    final (``text`` carries the full answer), or an ``approval_request`` (durable human gate)."""
 
-    kind: Literal["reasoning", "answer", "tool", "final", "plan", "critique"]
+    kind: Literal["reasoning", "answer", "tool", "final", "plan", "critique", "approval_request"]
     text: str = ""
     phase: str = ""  # "call" | "result" for tool events
     tool: str | None = None
@@ -43,12 +44,16 @@ async def run_turn(
     max_iterations: int,
     graph_enabled: bool = False,
     context: AgentContext | None = None,
+    checkpointer: Any | None = None,
+    thread_id: str | None = None,
+    resume: Any | None = None,
 ) -> AsyncIterator[TurnEvent]:
-    """Drive one turn, yielding ordered TurnEvents (always ending with a single ``final``).
+    """Drive one turn, yielding ordered TurnEvents (ending with a single ``final``, or an
+    ``approval_request`` when the durable human gate suspends the run).
 
-    With ``graph_enabled`` (M8, ADR-0011) the tool path runs through the typed graph
-    otherwise the single-agent loop (``run_agent``). Both yield the same AgentEvents, so the mapping
-    below is identical.
+    With ``graph_enabled`` (M8, ADR-0012) the tool path runs through the typed graph, otherwise the
+    single-agent loop (``run_agent``). A ``checkpointer`` (+ ``thread_id``) enables the durable
+    human gate; ``resume`` continues a previously suspended run.
     """
     if use_tools:
         agent_events = (
@@ -63,6 +68,9 @@ async def run_turn(
                 think=generation.think,
                 max_iterations=max_iterations,
                 context=context,
+                checkpointer=checkpointer,
+                thread_id=thread_id,
+                resume=resume,
             )
             if graph_enabled
             else run_agent(
@@ -86,8 +94,11 @@ async def run_turn(
                 yield TurnEvent("plan", text=ev.text or "")
             elif ev.type == "critique":
                 yield TurnEvent("critique", text=ev.text or "")
+            elif ev.type == "approval_request":
+                yield TurnEvent("approval_request", output=ev.output or {})
             elif ev.type == "final":
-                yield TurnEvent("final", usage=ev.usage or {})
+                # text carries the full answer so a resumed stream (no deltas) can re-deliver it.
+                yield TurnEvent("final", text=ev.answer or "", usage=ev.usage or {})
             else:  # tool_call | tool_result
                 yield TurnEvent(
                     "tool",

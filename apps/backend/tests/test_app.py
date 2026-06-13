@@ -414,3 +414,12 @@ def test_agent_context_is_none_without_security() -> None:
     from personalai_backend.app import _agent_context
 
     assert _agent_context("c1") is None
+
+
+def test_resume_without_db_is_503() -> None:
+    # Durable resume (M8.1c) needs a DB-backed tenant checkpoint; without storage it fails closed.
+    client = TestClient(
+        create_app(bootstrap(config=CoreConfig(database_url="postgresql://nope@127.0.0.1:1/none")))
+    )
+    resp = client.post("/api/v1/chat/some-run/resume", json={"decision": "approve"})
+    assert resp.status_code == 503

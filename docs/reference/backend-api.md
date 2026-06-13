@@ -55,6 +55,7 @@ Authentication above). `/health` and `/version` stay unversioned and public.
 | Method | Path | Response | Notes |
 |---|---|---|---|
 | POST | `/api/v1/chat` | `text/event-stream` (SSE) | Streaming chat. See the request/SSE detail below. |
+| POST | `/api/v1/chat/{run_id}/resume` | `text/event-stream` (SSE) | Resume a run suspended at the durable human gate (M8.1c). Body `{decision, conversation_id?}`. Tenant-scoped: a foreign `run_id` → 404. |
 
 ### Files & RAG
 
@@ -122,6 +123,11 @@ curl -N -X POST http://127.0.0.1:8765/api/v1/chat \
   - `event: citations` — RAG sources (when `use_rag` is on).
   - `event: tool` — `{phase: "call"|"result", tool, args, ok, output, error}` (when `use_tools`).
     In the agent loop, reasoning streams as `data: {thinking}` frames.
+  - `event: plan` / `event: critique` — `{kind, text}` planner/critic steps (M8 typed graph, when
+    `PERSONALAI_AGENT_GRAPH_ENABLED`).
+  - `event: approval_request` — `{run_id, reason, answer, critique}` when the durable human gate
+    (`PERSONALAI_AGENT_HUMAN_GATE`) suspends the turn; the stream ends without `done`. Continue with
+    `POST /api/v1/chat/{run_id}/resume`.
   - `event: usage` — `{prompt_tokens, completion_tokens, total_tokens, context_limit}` for the
     UI context-usage meter (`context_limit` is set only for the local Ollama provider).
   - `event: error` — a `StructuredResult` error envelope on failure.
