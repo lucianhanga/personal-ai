@@ -28,6 +28,7 @@ _ENV_FIELDS = {
     "AGENT_MAX_ITERATIONS": "agent_max_iterations",
     "AGENT_TIMEOUT_SECONDS": "agent_timeout_seconds",
     "AGENT_GRAPH_ENABLED": "agent_graph_enabled",
+    "AGENT_HUMAN_GATE": "agent_human_gate",
     "AGENT_ACCURACY_MODE": "agent_accuracy_mode",
     "RETRIEVER": "retriever",
     "VECTOR_REPOSITORY": "vector_repository",
@@ -77,6 +78,7 @@ _BOOL_FIELDS = {
     "egress_allow_any",
     "grounding_enabled",
     "agent_graph_enabled",
+    "agent_human_gate",
 }
 
 _CSV_FIELDS = {"allowed_origins", "allowed_egress_hosts"}
@@ -118,6 +120,10 @@ class CoreConfig(StrictModel):
     # default off keeps the single-agent loop. accuracy_mode drives the verification-ladder depth
     # ("standard"/"accurate"). Security gates (approval, egress, tenant) are NEVER accuracy-gated.
     agent_graph_enabled: bool = False
+    # M8.1c (ADR-0012): when the graph is enabled, also suspend each turn at a durable human gate
+    # (after the critic) for approve/reject before finalizing. Requires the graph; default off so
+    # the normal flow finalizes without a gate. The checkpoint is tenant-scoped (RLS) via TenantDb.
+    agent_human_gate: bool = False
     agent_accuracy_mode: str = "standard"
     retriever: str = "pgvector"
     vector_repository: str = "pgvector"

@@ -67,6 +67,7 @@ from personalai_storage_postgres import (
     PgDocumentStore,
     PgMemoryStore,
     PgVectorRepository,
+    TenantCheckpointSaver,
     TenantDb,
     apply_migrations,
     create_pool,
@@ -127,6 +128,14 @@ class ChatRequest(BaseModel):
     # Autonomous tool use: let the model call tools through the gateway (M6-2).
     use_tools: bool = False
     approve_tools: bool = False  # approve high-risk tools for this turn
+
+
+class ResumeRequest(BaseModel):
+    """Resume a run suspended at the durable human gate (M8.1c). ``decision`` is the human's choice
+    (e.g. "approve"/"reject"); ``conversation_id`` is where the finalized turn is persisted."""
+
+    decision: str = "approve"
+    conversation_id: str | None = None
 
 
 class McpServerIn(BaseModel):
@@ -310,6 +319,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     app.state.bootstrap = boot
     app.state.config = boot.config
     app.state.storage = None  # set on startup if a database is reachable
+    app.state.tenant_db = None  # set on startup if a database is reachable (M8.1c checkpointer)
     app.state.mcp_manager = McpManager(
         boot.registries,
         _mcp_config_path(boot.config),
@@ -565,6 +575,24 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         config: CoreConfig = app.state.config
         provider = _resolve_provider(req.provider)
 
+        # Durable human gate (M8.1c): active only when the graph is enabled, the gate is on, and a
+        # DB is available for the tenant-scoped checkpoint. thread_id = a fresh run id the client
+        # uses to resume. The checkpointer is bound to THIS request's tenant (RLS), so a run is only
+        # ever resumable by its owner.
+        sec = current_security.get()
+        gate_on = (
+            config.agent_graph_enabled
+            and config.agent_human_gate
+            and app.state.tenant_db is not None
+            and sec is not None
+        )
+        run_id = uuid.uuid4().hex if gate_on else None
+        checkpointer = (
+            TenantCheckpointSaver(app.state.tenant_db, sec.tenant_id)
+            if gate_on and sec is not None
+            else None
+        )
+
         # Resolve the target conversation once (for incognito + persistence + STM).
         storage: Storage | None = app.state.storage
         conv: Conversation | None = None
@@ -625,6 +653,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     yield f"event: citations\ndata: {json.dumps(citations)}\n\n".encode()
                 answer = ""
                 usage: Mapping[str, int] = {}
+                suspended = False  # set if the durable human gate paused the run (no final/persist)
                 # Ordered timeline of reasoning + tool steps, exactly as they happen.
                 trace: list[dict[str, Any]] = []
 
@@ -655,6 +684,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                             max_iterations=config.agent_max_iterations,
                             graph_enabled=config.agent_graph_enabled,
                             context=_agent_context(req.conversation_id),
+                            checkpointer=checkpointer,
+                            thread_id=run_id,
                         ):
                             if ev.kind == "reasoning":
                                 _add_reasoning(ev.text)
@@ -688,6 +719,15 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                                 trace.append({"kind": ev.kind, "text": ev.text})
                                 step = {"kind": ev.kind, "text": ev.text}
                                 yield f"event: {ev.kind}\ndata: {json.dumps(step)}\n\n".encode()
+                            elif ev.kind == "approval_request":
+                                # Durable human gate (M8.1c): the run is checkpointed; surface the
+                                # request with the run_id so the client can POST .../resume later.
+                                # No `done` — the turn is suspended, not finished.
+                                suspended = True
+                                payload = {"run_id": run_id, **dict(ev.output or {})}
+                                yield (
+                                    f"event: approval_request\ndata: {json.dumps(payload)}\n\n"
+                                ).encode()
                             else:  # final
                                 if ev.usage:
                                     usage = ev.usage
@@ -722,6 +762,10 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                         ok=False, error=ErrorInfo(code="E_GENERATION", message=str(exc))
                     )
                     yield f"event: error\ndata: {error.model_dump_json()}\n\n".encode()
+                    return
+                if suspended:
+                    # Paused at the human gate: the durable checkpoint holds the run; the assistant
+                    # turn is persisted on resume, not here. No usage/empty-check/done frames.
                     return
                 # Report token usage / context fill for this turn (UI meter).
                 usage_frame = _usage_frame(usage, provider)
@@ -759,6 +803,72 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                         _schedule_memory(
                             turn, provider, req.model or config.default_model, persist_id
                         )
+            finally:
+                current_conversation.reset(cv_token)
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    @app.post("/api/v1/chat/{run_id}/resume", dependencies=[Depends(require_context)])
+    async def resume_chat(run_id: str, req: ResumeRequest) -> StreamingResponse:
+        # Resume a run suspended at the durable human gate (M8.1c). A FRESH SecurityContext is in
+        # scope (new request + CSRF via require_context); the checkpoint is loaded ONLY under this
+        # tenant, so cross-tenant resume is impossible.
+        config: CoreConfig = app.state.config
+        sec = current_security.get()
+        if app.state.tenant_db is None or sec is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="resume requires a database and an authenticated context",
+            )
+        checkpointer = TenantCheckpointSaver(app.state.tenant_db, sec.tenant_id)
+        # Headline isolation rule: the checkpoint loads only under the resumer's tenant (RLS); a run
+        # owned by another tenant is simply not found -> 404 (belt-and-suspenders to the RLS deny).
+        if await checkpointer.aget_tuple({"configurable": {"thread_id": run_id}}) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run")
+
+        provider = _resolve_provider(None)
+        registries: Registries = app.state.bootstrap.registries
+        tool_list = [registries.tools.get(n) for n in registries.tools.names()]
+        grants = [p for rt in tool_list for p in rt.manifest.permissions]
+        generation = GenerationRequest(messages=[], model=config.default_model, think=False)
+        storage: Storage | None = app.state.storage
+        persist_id = req.conversation_id
+
+        async def event_stream() -> AsyncIterator[bytes]:
+            cv_token = current_conversation.set(persist_id)
+            try:
+                answer = ""
+                # Resume continues from the gate: only human_gate + finalize run, so the single
+                # `final` event carries the full answer (the original answer deltas were on the
+                # first stream). Re-deliver it so a fresh client ends with the answer.
+                async for ev in run_turn(
+                    generation=generation,
+                    provider=provider,
+                    use_tools=True,
+                    approve_tools=False,
+                    tools=tool_list,
+                    grants=grants,
+                    gateway=app.state.bootstrap.gateway,
+                    max_iterations=config.agent_max_iterations,
+                    graph_enabled=True,
+                    context=_agent_context(persist_id),
+                    checkpointer=checkpointer,
+                    thread_id=run_id,
+                    resume=req.decision,
+                ):
+                    # Resume yields just the terminal `final`, whose text is the full answer.
+                    answer = ev.text
+                yield (
+                    f"data: {json.dumps({'delta': answer, 'done': True, 'finish_reason': 'stop'})}"
+                    "\n\n"
+                ).encode()
+                if persist_id is not None and storage is not None:
+                    await storage.conversations.add_message(
+                        conversation_id=persist_id,
+                        role="assistant",
+                        content=answer,
+                        meta={"resumed": True, "decision": req.decision},
+                    )
             finally:
                 current_conversation.reset(cv_token)
 
