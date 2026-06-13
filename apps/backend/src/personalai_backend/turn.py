@@ -20,7 +20,7 @@ from personalai_core import run_agent, run_graph
 class TurnEvent:
     """One step of a turn: a reasoning delta, an answer delta, a tool call/result, or the final."""
 
-    kind: Literal["reasoning", "answer", "tool", "final"]
+    kind: Literal["reasoning", "answer", "tool", "final", "plan", "critique"]
     text: str = ""
     phase: str = ""  # "call" | "result" for tool events
     tool: str | None = None
@@ -82,6 +82,10 @@ async def run_turn(
                 yield TurnEvent("reasoning", text=ev.thinking or "")
             elif ev.type == "answer":
                 yield TurnEvent("answer", text=ev.answer or "")
+            elif ev.type == "plan":
+                yield TurnEvent("plan", text=ev.text or "")
+            elif ev.type == "critique":
+                yield TurnEvent("critique", text=ev.text or "")
             elif ev.type == "final":
                 yield TurnEvent("final", usage=ev.usage or {})
             else:  # tool_call | tool_result

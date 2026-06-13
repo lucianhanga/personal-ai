@@ -683,6 +683,11 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                                     "error": ev.error,
                                 }
                                 yield f"event: tool\ndata: {json.dumps(payload)}\n\n".encode()
+                            elif ev.kind in ("plan", "critique"):
+                                # M8 multi-node graph steps: into the ordered trace + a live frame.
+                                trace.append({"kind": ev.kind, "text": ev.text})
+                                step = {"kind": ev.kind, "text": ev.text}
+                                yield f"event: {ev.kind}\ndata: {json.dumps(step)}\n\n".encode()
                             else:  # final
                                 if ev.usage:
                                     usage = ev.usage

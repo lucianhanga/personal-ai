@@ -327,8 +327,9 @@ def test_chat_empty_completion_emits_notice() -> None:
     assert "E_EMPTY" in body
 
 
-def test_chat_with_graph_enabled_streams_answer() -> None:
-    # M8.0: with agent_graph_enabled the tool path runs through the typed graph; same behavior.
+def test_chat_with_graph_enabled_streams_plan_answer_critique() -> None:
+    # M8.1b: with agent_graph_enabled the tool path runs the planner -> researcher -> critic graph,
+    # so the stream carries plan + critique steps around the answer (in addition to the done frame).
     config = CoreConfig(auth_token=TOKEN, agent_graph_enabled=True)
     boot = bootstrap(config=config)
     boot.registries.model_providers.register("fake", FakeModelProvider(name="fake"), overwrite=True)
@@ -346,6 +347,7 @@ def test_chat_with_graph_enabled_streams_answer() -> None:
         assert resp.status_code == 200
         body = "".join(resp.iter_text())
     assert "echo:" in body and '"done": true' in body
+    assert "event: plan" in body and "event: critique" in body
 
 
 def test_chat_streams_deltas() -> None:
