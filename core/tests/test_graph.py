@@ -1,11 +1,14 @@
-"""M8.1b multi-node LangGraph graph: planner -> researcher -> critic -> END.
+"""M8.1b/c multi-node LangGraph graph: planner -> researcher -> critic -> [human_gate] -> finalize.
 
 The graph streams ordered AgentEvents (plan, the researcher's reasoning/answer/tool steps, critique,
-then a single final). Nodes call only our ModelProvider + ToolGateway seams (ADR-0012)."""
+then a single final). With a checkpointer the durable human gate suspends before finalize and
+resumes later. Nodes call only our ModelProvider + ToolGateway seams (ADR-0012)."""
 
 from __future__ import annotations
 
 import asyncio
+
+from langgraph.checkpoint.memory import InMemorySaver
 
 from personalai_contracts.ports import (
     ChatMessage,
@@ -126,3 +129,28 @@ def test_researcher_tool_steps_flow_and_usage_reaches_final() -> None:
     assert events[1].tool == "echo"
     assert events[2].ok is True
     assert events[-1].usage == {"total_tokens": 7}  # usage from run_agent's final reaches the end
+
+
+def test_human_gate_suspends_then_resumes_durably() -> None:
+    # M8.1c: with a checkpointer the graph suspends at the human gate (approval_request, no final);
+    # resuming on the SAME checkpointer continues to the final (durable interrupt/resume).
+    saver = InMemorySaver()
+    common: dict[str, object] = {
+        "messages": [ChatMessage(Role.USER, "hi")],
+        "provider": FakeModelProvider(),
+        "model": "m",
+        "gateway": _gateway(),
+        "tools": [],
+        "checkpointer": saver,
+        "thread_id": "run-1",
+    }
+
+    first = _drain(**common)
+    assert [e.type for e in first] == ["plan", "answer", "critique", "approval_request"]
+    assert first[-1].output is not None
+    assert first[-1].output["reason"] == "approve_answer"
+
+    # Resume with the human's decision -> finalize emits the single final; no second approval.
+    second = _drain(**common, resume="approve")
+    assert [e.type for e in second] == ["final"]
+    assert second[0].answer

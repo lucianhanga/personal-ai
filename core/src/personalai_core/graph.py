@@ -1,20 +1,23 @@
 """LangGraph agent orchestration runtime (M8, ADR-0012).
 
-LangGraph is the orchestration engine **only** — graph topology, typed shared state, and (from
-M8.1c) the checkpointer / interrupt-resume. The two privileged capabilities stay on our own seams:
-graph nodes call our :class:`ModelProvider` (Ollama / local-first) and our :class:`ToolGateway`
-(permissions, egress/SSRF, schema, HIGH-risk approval, audit) **directly**; LangChain's model/tool
-abstractions are not adopted. The graph runtime gets no model or tool privileges of its own
-(ADR-0012 load-bearing invariant).
+LangGraph is the orchestration engine **only** — graph topology, typed shared state, the
+checkpointer, and the durable interrupt/resume human gate. The two privileged capabilities stay on
+our own seams: graph nodes call our :class:`ModelProvider` (Ollama / local-first) and our
+:class:`ToolGateway` (permissions, egress/SSRF, schema, HIGH-risk approval, audit) **directly**;
+LangChain's model/tool abstractions are not adopted. The graph runtime gets no model or tool
+privileges of its own (ADR-0012 load-bearing invariant).
 
-M8.1b ships a typed multi-node graph: **planner -> researcher -> critic -> END**. The planner makes
-one tool-free model call producing a short plan; the researcher runs the single-agent tool loop
-(:func:`run_agent`) informed by the plan; the critic makes one model call reviewing the answer. The
-graph streams the same :class:`AgentEvent`s out via LangGraph custom streaming (plus ``plan`` and
-``critique`` steps). Linear for now — the revision loop + durable human gate land with the
-verification ladder (M8.1c / M8.2). Keeping :func:`run_graph`'s signature stable is the contract
-that ``apps/backend/.../turn.py`` and the SSE mapping rely on; the ``agent_graph_enabled`` flag
-selects this graph over the single-agent loop.
+Topology: **planner -> researcher -> critic -> [human_gate] -> finalize -> END**.
+- planner: one tool-free model call producing a short plan; emits a ``plan`` step.
+- researcher: the single-agent tool loop (:func:`run_agent`) informed by the plan; streams
+  reasoning/answer/tool steps; takes the full answer + usage from run_agent's own final.
+- critic: one model call reviewing the answer; emits a ``critique`` step.
+- human_gate (only when a ``checkpointer`` is supplied, M8.1c): LangGraph ``interrupt()`` suspends
+  the run for human approval; the durable checkpoint lets it resume later (tenant-scoped in prod).
+- finalize: emits the single terminal ``final``.
+
+Keeping :func:`run_graph`'s signature stable is the contract that ``apps/backend/.../turn.py`` and
+the SSE mapping rely on; the ``agent_graph_enabled`` flag selects this graph over the single loop.
 """
 
 from __future__ import annotations
@@ -22,8 +25,10 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command, interrupt
 from typing_extensions import TypedDict
 
 from personalai_contracts.ports import (
@@ -50,13 +55,14 @@ _CRITIC_PROMPT = (
 class GraphState(TypedDict, total=False):
     """Typed shared state threaded through the graph. ``context`` carries the tenant (ADR-0010 /
     A2); ``plan``/``answer``/``critique`` accumulate each node's output; ``usage`` carries token
-    usage to the terminal ``final`` event."""
+    usage to the terminal ``final`` event; ``decision`` is the human gate's resume value."""
 
     context: AgentContext | None
     plan: str
     answer: str
     critique: str
     usage: dict[str, int]
+    decision: str
 
 
 async def _generate_text(
@@ -83,8 +89,10 @@ def _build_graph(
     approved: bool,
     think: bool | None,
     max_iterations: int,
+    checkpointer: BaseCheckpointSaver[Any] | None,
 ) -> Any:
-    """Compile the M8.1b planner -> researcher -> critic graph."""
+    """Compile the graph. With a ``checkpointer`` a human_gate (interrupt) is inserted before
+    finalize, enabling durable interrupt/resume."""
 
     async def planner(state: GraphState) -> dict[str, Any]:
         plan = await _generate_text(
@@ -96,7 +104,7 @@ def _build_graph(
     async def researcher(state: GraphState) -> dict[str, Any]:
         # The single-agent tool loop, informed by the plan. Forwards reasoning/answer/tool events
         # to the stream; swallows run_agent's own `final` and takes the complete answer + usage from
-        # it, so the graph emits ONE final (after the critic) and the critic sees the full answer.
+        # it, so the graph emits ONE final (from finalize) and the critic sees the full answer.
         writer = get_stream_writer()
         convo = list(messages)
         if state.get("plan"):
@@ -121,29 +129,49 @@ def _build_graph(
         return {"answer": answer, "usage": usage}
 
     async def critic(state: GraphState) -> dict[str, Any]:
-        writer = get_stream_writer()
         review = [
             ChatMessage(Role.SYSTEM, _CRITIC_PROMPT),
             *messages,
             ChatMessage(Role.ASSISTANT, state.get("answer", "")),
         ]
         critique = await _generate_text(provider, model, review)
-        writer(AgentEvent(type="critique", text=critique))
-        # Terminal: emit the single final with the turn's usage (answer already streamed).
-        writer(
+        get_stream_writer()(AgentEvent(type="critique", text=critique))
+        return {"critique": critique}
+
+    async def human_gate(state: GraphState) -> dict[str, Any]:
+        # Durable suspend: interrupt() raises on the first pass (checkpoint persisted) and returns
+        # the resume value on the second. The payload is what the human is approving.
+        decision = interrupt(
+            {
+                "reason": "approve_answer",
+                "answer": state.get("answer", ""),
+                "critique": state.get("critique", ""),
+            }
+        )
+        return {"decision": str(decision)}
+
+    async def finalize(state: GraphState) -> dict[str, Any]:
+        get_stream_writer()(
             AgentEvent(type="final", answer=state.get("answer", ""), usage=state.get("usage", {}))
         )
-        return {"critique": critique}
+        return {}
 
     builder = StateGraph(GraphState)
     builder.add_node("planner", planner)
     builder.add_node("researcher", researcher)
     builder.add_node("critic", critic)
+    builder.add_node("finalize", finalize)
     builder.add_edge(START, "planner")
     builder.add_edge("planner", "researcher")
     builder.add_edge("researcher", "critic")
-    builder.add_edge("critic", END)
-    return builder.compile()
+    if checkpointer is not None:
+        builder.add_node("human_gate", human_gate)
+        builder.add_edge("critic", "human_gate")
+        builder.add_edge("human_gate", "finalize")
+    else:
+        builder.add_edge("critic", "finalize")
+    builder.add_edge("finalize", END)
+    return builder.compile(checkpointer=checkpointer)
 
 
 async def run_graph(
@@ -158,12 +186,17 @@ async def run_graph(
     max_iterations: int = 8,
     think: bool | None = None,
     context: AgentContext | None = None,
+    checkpointer: BaseCheckpointSaver[Any] | None = None,
+    thread_id: str | None = None,
+    resume: Any | None = None,
 ) -> AsyncIterator[AgentEvent]:
-    """Drive the LangGraph agent graph, yielding ordered :class:`AgentEvent`s (plan, reasoning,
-    answer, tool steps, critique, then a single final).
+    """Drive the LangGraph agent graph, yielding ordered :class:`AgentEvent`s.
 
-    M8.1b: planner -> researcher -> critic. M8.1c+ add the durable human gate + conditional revision
-    without changing this entry point.
+    Without a ``checkpointer``: planner -> researcher -> critic -> finalize (plan, answer/tool
+    steps, critique, final). With a ``checkpointer`` (+ ``thread_id``) the durable human gate is
+    active: the first run suspends at the gate and yields an ``approval_request`` (no final);
+    calling again with ``resume`` continues to the final. Cross-tenant isolation is enforced by the
+    (tenant-bound) checkpointer in production.
     """
     graph = _build_graph(
         messages=messages,
@@ -175,7 +208,18 @@ async def run_graph(
         approved=approved,
         think=think,
         max_iterations=max_iterations,
+        checkpointer=checkpointer,
     )
-    initial: GraphState = {"context": context}
-    async for ev in graph.astream(initial, stream_mode="custom"):
+    if checkpointer is None:
+        async for ev in graph.astream({"context": context}, stream_mode="custom"):
+            yield ev
+        return
+
+    config = {"configurable": {"thread_id": thread_id}}
+    graph_input: Any = Command(resume=resume) if resume is not None else {"context": context}
+    async for ev in graph.astream(graph_input, config, stream_mode="custom"):
         yield ev
+    snapshot = await graph.aget_state(config)
+    if snapshot.interrupts:
+        # Suspended at the human gate: surface the approval request (run is durably checkpointed).
+        yield AgentEvent(type="approval_request", output=dict(snapshot.interrupts[0].value))

@@ -66,10 +66,20 @@ def _tool_payload(result_ok: bool, output: Mapping[str, Any], error: str | None)
 @dataclass(frozen=True)
 class AgentEvent:
     """A step in the agent loop / graph: reasoning, a tool call, its result, the final answer, or
-    (M8 multi-node graph, ADR-0012) a planner ``plan`` / critic ``critique`` step. ``text`` carries
-    the plan/critique content; ``answer``/``thinking`` carry the answer/reasoning content."""
+    (M8 multi-node graph, ADR-0012) a planner ``plan`` / critic ``critique`` step, or an
+    ``approval_request`` when the graph suspends at the durable human gate (payload in ``output``).
+    ``text`` carries the plan/critique content; ``answer``/``thinking`` carry answer/reasoning."""
 
-    type: Literal["reasoning", "answer", "tool_call", "tool_result", "final", "plan", "critique"]
+    type: Literal[
+        "reasoning",
+        "answer",
+        "tool_call",
+        "tool_result",
+        "final",
+        "plan",
+        "critique",
+        "approval_request",
+    ]
     tool: str | None = None
     args: Mapping[str, Any] | None = None
     ok: bool | None = None
