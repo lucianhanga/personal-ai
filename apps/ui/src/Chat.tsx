@@ -386,6 +386,19 @@ export function Chat({
           // bubble (acc). Stash the run so Approve/Reject can resume it.
           patchChat(key, (s) => ({ ...s, pending: req }));
         },
+        (step) =>
+          // M8 multi-agent flow: stream planner/critic steps into the live trace so the user can
+          // follow which agent did what, in order with the researcher's tool/reasoning steps.
+          patchChat(key, (s) => ({
+            ...s,
+            trace: {
+              ...s.trace,
+              [assistantIndex]: appendTrace(s.trace[assistantIndex], {
+                kind: step.kind,
+                text: step.text,
+              }),
+            },
+          })),
       );
       if (persistence) setConversations(await fetchConversations(token));
     } catch (e: unknown) {
