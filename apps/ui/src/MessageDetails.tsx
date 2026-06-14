@@ -103,14 +103,15 @@ export function MessageDetails({
             if (t.kind === "plan") {
               return (
                 <div key={k} data-testid="details-plan" style={{ whiteSpace: "pre-wrap" }}>
-                  🧭 Plan: {t.text}
+                  🧭 <strong>Planner</strong>: {t.text}
                 </div>
               );
             }
             if (t.kind === "critique") {
               return (
                 <div key={k} data-testid="details-critique" style={{ whiteSpace: "pre-wrap" }}>
-                  🔎 Critique{t.role ? ` (${t.role})` : ""}: {t.text}
+                  🔎 <strong>Critic</strong>
+                  {t.role ? ` (${t.role})` : ""}: {t.text}
                 </div>
               );
             }

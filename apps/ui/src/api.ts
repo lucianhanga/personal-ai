@@ -603,6 +603,7 @@ export async function streamChat(
   onThinking?: (delta: string) => void,
   onError?: (message: string) => void,
   onApproval?: (req: ApprovalRequest) => void,
+  onAgentStep?: (step: { kind: "plan" | "critique"; text: string }) => void,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/chat`, {
     method: "POST",
@@ -636,6 +637,9 @@ export async function streamChat(
     }
     if (event === "citations") return onCitations?.(parsed as Citation[]);
     if (event === "tool") return onToolStep?.(parsed as ToolStep);
+    if (event === "plan" || event === "critique") {
+      return onAgentStep?.({ kind: event, text: (parsed as { text?: string }).text ?? "" });
+    }
     if (event === "usage") return onUsage?.(parsed as UsageInfo);
     if (event === "approval_request") return onApproval?.(parsed as ApprovalRequest);
     if (event === "error") {

@@ -188,7 +188,7 @@ test("shows conversations and lazily creates one on first send", async () => {
   await waitFor(() =>
     expect(stream).toHaveBeenCalledWith(
       expect.objectContaining({ conversationId: "c2" }),
-      ...Array(7).fill(expect.any(Function)),
+      ...Array(8).fill(expect.any(Function)),
     ),
   );
 });
@@ -352,7 +352,7 @@ test("the chosen reasoning amount is sent to the chat request", async () => {
   await waitFor(() =>
     expect(stream).toHaveBeenCalledWith(
       expect.objectContaining({ reasoning: "brief", think: true }),
-      ...Array(7).fill(expect.any(Function)),
+      ...Array(8).fill(expect.any(Function)),
     ),
   );
 
@@ -363,7 +363,7 @@ test("the chosen reasoning amount is sent to the chat request", async () => {
   await waitFor(() =>
     expect(stream).toHaveBeenCalledWith(
       expect.objectContaining({ reasoning: "off", think: false }),
-      ...Array(7).fill(expect.any(Function)),
+      ...Array(8).fill(expect.any(Function)),
     ),
   );
 });
@@ -481,4 +481,31 @@ test("durable human gate: shows approve/reject and resumes on approve", async ()
   );
   await waitFor(() => expect(screen.getByText(/final answer/)).toBeInTheDocument());
   expect(screen.queryByTestId("approval-request")).not.toBeInTheDocument();
+});
+
+test("streams planner and critic steps into the live trace (followable agent flow)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "streamChat").mockImplementation(
+    async (_p, onDelta, _c, _t, _u, _th, _e, _ap, onAgentStep) => {
+      onAgentStep?.({ kind: "plan", text: "outline the answer" });
+      onDelta("the answer");
+      onAgentStep?.({ kind: "critique", text: "looks complete" });
+    },
+  );
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "hi" } });
+  fireEvent.click(screen.getByTestId("send"));
+
+  await waitFor(() => expect(screen.getByTestId("msg-assistant")).toHaveTextContent("the answer"));
+  // The per-message Details auto-opens while the turn runs, so the agent steps are visible inline,
+  // in order, without any extra click.
+  await waitFor(() => expect(screen.getByTestId("details-plan")).toHaveTextContent("Planner"));
+  expect(screen.getByTestId("details-plan")).toHaveTextContent("outline the answer");
+  expect(screen.getByTestId("details-critique")).toHaveTextContent("Critic");
+  expect(screen.getByTestId("details-critique")).toHaveTextContent("looks complete");
 });
