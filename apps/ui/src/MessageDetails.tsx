@@ -2,6 +2,22 @@ import { useEffect, useRef, useState } from "react";
 
 import type { ToolStep, TraceItem } from "./api";
 
+// Color code for the agent-flow trace (no emoji, per project convention): distinct hues per agent,
+// and green=success / red=failure for results + verification.
+const TRACE = {
+  planner: "#2563eb", // blue
+  researcher: "#6b7280", // gray (reasoning)
+  tool: "#7c3aed", // violet
+  critic: "#b8860b", // amber
+  ok: "#1a7f37", // green
+  err: "#b00020", // red
+} as const;
+
+/** A small bold, colored agent/step label that prefixes each trace line. */
+function Tag({ color, children }: { color: string; children: React.ReactNode }): React.ReactElement {
+  return <span style={{ color, fontWeight: 600 }}>{children}</span>;
+}
+
 /** Build an ordered trace from legacy (separate thinking + tool_steps) meta for old messages. */
 function legacyTrace(steps?: ToolStep[], thinking?: string | null): TraceItem[] {
   const items: TraceItem[] = [];
@@ -82,35 +98,36 @@ export function MessageDetails({
                   data-testid="details-thinking"
                   style={{ whiteSpace: "pre-wrap", margin: "2px 0" }}
                 >
-                  💭 {t.text}
+                  <Tag color={TRACE.researcher}>Thinking</Tag> {t.text}
                 </div>
               );
             }
             if (t.kind === "tool_call") {
               return (
                 <div key={k}>
-                  🔧 {t.tool}({JSON.stringify(t.args ?? {})})
+                  <Tag color={TRACE.tool}>Tool</Tag> {t.tool}({JSON.stringify(t.args ?? {})})
                 </div>
               );
             }
             if (t.kind === "tool_result") {
               return (
-                <div key={k} style={{ color: t.ok ? "#2a7" : "#b00" }}>
-                  ↳ {t.tool}: {t.ok ? "ok" : `error: ${t.error}`}
+                <div key={k} style={{ color: t.ok ? TRACE.ok : TRACE.err }}>
+                  <Tag color={t.ok ? TRACE.ok : TRACE.err}>Result</Tag> {t.tool}:{" "}
+                  {t.ok ? "ok" : `error: ${t.error}`}
                 </div>
               );
             }
             if (t.kind === "plan") {
               return (
                 <div key={k} data-testid="details-plan" style={{ whiteSpace: "pre-wrap" }}>
-                  🧭 <strong>Planner</strong>: {t.text}
+                  <Tag color={TRACE.planner}>Planner</Tag>: {t.text}
                 </div>
               );
             }
             if (t.kind === "critique") {
               return (
                 <div key={k} data-testid="details-critique" style={{ whiteSpace: "pre-wrap" }}>
-                  🔎 <strong>Critic</strong>
+                  <Tag color={TRACE.critic}>Critic</Tag>
                   {t.role ? ` (${t.role})` : ""}: {t.text}
                 </div>
               );
@@ -121,9 +138,11 @@ export function MessageDetails({
                 <div
                   key={k}
                   data-testid="details-verification"
-                  style={{ color: pass ? "#2a7" : "#b00" }}
+                  style={{ color: pass ? TRACE.ok : TRACE.err }}
                 >
-                  {pass ? "✓" : "✗"} Verification{t.verdict ? ` (${t.verdict})` : ""}
+                  <Tag color={pass ? TRACE.ok : TRACE.err}>
+                    Verify{t.verdict ? ` (${t.verdict})` : ""}
+                  </Tag>
                   {t.text ? `: ${t.text}` : ""}
                 </div>
               );
@@ -131,7 +150,7 @@ export function MessageDetails({
             // Generic fallback so any future trace kind renders instead of breaking the UI.
             return (
               <div key={k} data-testid="details-other" style={{ whiteSpace: "pre-wrap" }}>
-                • {t.kind}
+                <Tag color={TRACE.researcher}>{t.kind}</Tag>
                 {t.text ? `: ${t.text}` : ""}
               </div>
             );
