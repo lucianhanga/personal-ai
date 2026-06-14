@@ -33,6 +33,14 @@ export interface TraceItem {
   error?: string | null;
 }
 
+/** A durable human-gate approval request (M8.1c): the run is suspended until POST .../resume. */
+export interface ApprovalRequest {
+  run_id: string;
+  reason?: string;
+  answer?: string;
+  critique?: string;
+}
+
 export interface MessageMeta {
   // Ordered timeline of reasoning + tool steps (new format).
   trace?: TraceItem[];
@@ -594,6 +602,7 @@ export async function streamChat(
   onUsage?: (usage: UsageInfo) => void,
   onThinking?: (delta: string) => void,
   onError?: (message: string) => void,
+  onApproval?: (req: ApprovalRequest) => void,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/chat`, {
     method: "POST",
@@ -628,6 +637,7 @@ export async function streamChat(
     if (event === "citations") return onCitations?.(parsed as Citation[]);
     if (event === "tool") return onToolStep?.(parsed as ToolStep);
     if (event === "usage") return onUsage?.(parsed as UsageInfo);
+    if (event === "approval_request") return onApproval?.(parsed as ApprovalRequest);
     if (event === "error") {
       onError?.((parsed as { error?: { message?: string } }).error?.message ?? "generation failed");
       return;
@@ -637,7 +647,56 @@ export async function streamChat(
     if (payload.delta) onDelta(payload.delta);
   };
 
-  const reader = res.body.getReader();
+  await pumpSSE(res.body, processFrame);
+}
+
+/**
+ * Resume a run suspended at the durable human gate (M8.1c). POSTs the human's decision and streams
+ * the finalized continuation (the backend re-delivers the full answer as one delta + done).
+ */
+export async function resumeChat(
+  params: { runId: string; decision: string; conversationId?: string; token: string },
+  onDelta: (delta: string) => void,
+  onUsage?: (usage: UsageInfo) => void,
+  onError?: (message: string) => void,
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/v1/chat/${encodeURIComponent(params.runId)}/resume`,
+    {
+      method: "POST",
+      credentials: CREDS,
+      headers: { "Content-Type": "application/json", ...authHeaders(params.token) },
+      body: JSON.stringify({ decision: params.decision, conversation_id: params.conversationId }),
+    },
+  );
+  if (!res.ok || res.body === null) throw new Error(`resume failed: ${res.status}`);
+
+  const processFrame = (frame: string): void => {
+    const lines = frame.split("\n");
+    const event = lines.find((l) => l.startsWith("event: "))?.slice("event: ".length);
+    const dataLine = lines.find((l) => l.startsWith("data: "));
+    if (dataLine === undefined) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(dataLine.slice("data: ".length));
+    } catch {
+      return;
+    }
+    if (event === "usage") return onUsage?.(parsed as UsageInfo);
+    if (event === "error") {
+      onError?.((parsed as { error?: { message?: string } }).error?.message ?? "resume failed");
+      return;
+    }
+    const payload = parsed as { delta?: string };
+    if (payload.delta) onDelta(payload.delta);
+  };
+
+  await pumpSSE(res.body, processFrame);
+}
+
+/** Read an SSE body to completion, dispatching each `\n\n`-delimited frame (incl. a trailing one). */
+async function pumpSSE(body: ReadableStream<Uint8Array>, onFrame: (frame: string) => void): Promise<void> {
+  const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   for (;;) {
@@ -646,10 +705,10 @@ export async function streamChat(
     buffer += decoder.decode(value, { stream: true });
     const frames = buffer.split("\n\n");
     buffer = frames.pop() ?? "";
-    for (const frame of frames) if (frame.trim()) processFrame(frame);
+    for (const frame of frames) if (frame.trim()) onFrame(frame);
   }
-  // Flush any multi-byte remainder + process a trailing frame that lacked the final "\n\n"
-  // (otherwise the last event — sometimes the answer or the error notice — is dropped).
+  // Flush any multi-byte remainder + a trailing frame that lacked the final "\n\n" (otherwise the
+  // last event — sometimes the answer or the error notice — is dropped).
   buffer += decoder.decode();
-  if (buffer.trim()) processFrame(buffer);
+  if (buffer.trim()) onFrame(buffer);
 }

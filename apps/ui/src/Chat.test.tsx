@@ -188,12 +188,7 @@ test("shows conversations and lazily creates one on first send", async () => {
   await waitFor(() =>
     expect(stream).toHaveBeenCalledWith(
       expect.objectContaining({ conversationId: "c2" }),
-      expect.any(Function),
-      expect.any(Function),
-      expect.any(Function),
-      expect.any(Function),
-      expect.any(Function),
-      expect.any(Function),
+      ...Array(7).fill(expect.any(Function)),
     ),
   );
 });
@@ -357,7 +352,7 @@ test("the chosen reasoning amount is sent to the chat request", async () => {
   await waitFor(() =>
     expect(stream).toHaveBeenCalledWith(
       expect.objectContaining({ reasoning: "brief", think: true }),
-      ...Array(6).fill(expect.any(Function)),
+      ...Array(7).fill(expect.any(Function)),
     ),
   );
 
@@ -368,7 +363,7 @@ test("the chosen reasoning amount is sent to the chat request", async () => {
   await waitFor(() =>
     expect(stream).toHaveBeenCalledWith(
       expect.objectContaining({ reasoning: "off", think: false }),
-      ...Array(6).fill(expect.any(Function)),
+      ...Array(7).fill(expect.any(Function)),
     ),
   );
 });
@@ -449,4 +444,41 @@ test("opens a past conversation and loads its messages", async () => {
 
   await waitFor(() => expect(screen.getByTestId("msg-user")).toHaveTextContent("earlier question"));
   expect(screen.getByTestId("msg-assistant")).toHaveTextContent("earlier answer");
+});
+
+test("durable human gate: shows approve/reject and resumes on approve", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  // The turn streams a draft answer then suspends at the human gate (approval_request).
+  vi.spyOn(api, "streamChat").mockImplementation(
+    async (_p, onDelta, _onCit, _onTool, _onUsage, _onThink, _onError, onApproval) => {
+      onDelta("draft answer");
+      onApproval?.({ run_id: "r1", answer: "draft answer", critique: "looks ok" });
+    },
+  );
+  const resume = vi
+    .spyOn(api, "resumeChat")
+    .mockImplementation(async (_p, onDelta) => onDelta("final answer"));
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "hi" } });
+  fireEvent.click(screen.getByTestId("send"));
+
+  // The approve/reject affordance appears with the draft answer shown.
+  await waitFor(() => expect(screen.getByTestId("approval-request")).toBeInTheDocument());
+  expect(screen.getByText(/draft answer/)).toBeInTheDocument();
+
+  // Approving resumes the run and replaces the bubble with the finalized answer.
+  fireEvent.click(screen.getByTestId("approve"));
+  await waitFor(() =>
+    expect(resume).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: "r1", decision: "approve" }),
+      ...Array(3).fill(expect.any(Function)),
+    ),
+  );
+  await waitFor(() => expect(screen.getByText(/final answer/)).toBeInTheDocument());
+  expect(screen.queryByTestId("approval-request")).not.toBeInTheDocument();
 });

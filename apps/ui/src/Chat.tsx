@@ -11,8 +11,10 @@ import {
   fetchModels,
   fetchProviders,
   renameConversation,
+  resumeChat,
   streamChat,
   uploadFile,
+  type ApprovalRequest,
   type ChatMessage,
   type Citation,
   type ConversationSummary,
@@ -37,6 +39,8 @@ interface ChatState {
   trace: Record<number, TraceItem[]>;
   usage: UsageInfo | null;
   busy: boolean;
+  // Set when a turn is suspended at the durable human gate (M8.1c), awaiting approve/reject.
+  pending: ApprovalRequest | null;
 }
 
 const EMPTY_CHAT: ChatState = {
@@ -45,6 +49,7 @@ const EMPTY_CHAT: ChatState = {
   trace: {},
   usage: null,
   busy: false,
+  pending: null,
 };
 
 /** Append a trace item in order, merging consecutive reasoning deltas into one item. */
@@ -107,7 +112,7 @@ export function Chat({
 
   const activeKey = activeId ?? NEW_CHAT;
   const view = chats[activeKey] ?? EMPTY_CHAT;
-  const { messages, citations, trace, usage, busy } = view;
+  const { messages, citations, trace, usage, busy, pending } = view;
 
   const patchChat = (key: string, fn: (s: ChatState) => ChatState): void => {
     setChats((prev) => ({ ...prev, [key]: fn(prev[key] ?? EMPTY_CHAT) }));
@@ -376,6 +381,43 @@ export function Chat({
             messages: [...history, { role: "assistant", content: acc }],
           }));
         },
+        (req) => {
+          // Durable human gate (M8.1c): the turn is suspended; the proposed answer is already in the
+          // bubble (acc). Stash the run so Approve/Reject can resume it.
+          patchChat(key, (s) => ({ ...s, pending: req }));
+        },
+      );
+      if (persistence) setConversations(await fetchConversations(token));
+    } catch (e: unknown) {
+      setError(String(e));
+    } finally {
+      patchChat(key, (s) => ({ ...s, busy: false }));
+    }
+  }
+
+  // Resolve a turn suspended at the durable human gate (M8.1c): resume with the decision, stream the
+  // finalized answer into the same assistant bubble, and clear the pending state.
+  async function resolveApproval(decision: "approve" | "reject"): Promise<void> {
+    const key = activeKey;
+    const cur = chats[key];
+    if (!cur?.pending) return;
+    const runId = cur.pending.run_id;
+    const idx = cur.messages.length - 1; // the suspended assistant message
+    setError(null);
+    patchChat(key, (s) => ({ ...s, busy: true, pending: null }));
+    try {
+      await resumeChat(
+        { runId, decision, conversationId: activeId ?? undefined, token },
+        (delta) => {
+          // Resume re-delivers the full answer as one delta -> set the bubble content.
+          patchChat(key, (s) => {
+            const msgs = [...s.messages];
+            msgs[idx] = { role: "assistant", content: delta };
+            return { ...s, messages: msgs };
+          });
+        },
+        (u) => patchChat(key, (s) => ({ ...s, usage: u })),
+        (message) => setError(message),
       );
       if (persistence) setConversations(await fetchConversations(token));
     } catch (e: unknown) {
@@ -565,6 +607,41 @@ export function Chat({
               >
                 ↓ Jump to latest
               </button>
+            )}
+
+            {pending && (
+              <div
+                data-testid="approval-request"
+                style={{
+                  border: "1px solid #c90",
+                  background: "#fff8e1",
+                  borderRadius: "0.4rem",
+                  padding: "0.5rem 0.75rem",
+                  fontSize: "0.85rem",
+                }}
+              >
+                <strong>Approval needed</strong> — review the proposed answer above before it is
+                finalized.
+                {pending.critique ? (
+                  <p style={{ margin: "0.35rem 0", color: "#555" }}>Critique: {pending.critique}</p>
+                ) : null}
+                <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.35rem" }}>
+                  <button
+                    data-testid="approve"
+                    onClick={() => void resolveApproval("approve")}
+                    disabled={busy}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    data-testid="reject"
+                    onClick={() => void resolveApproval("reject")}
+                    disabled={busy}
+                  >
+                    Reject
+                  </button>
+                </div>
+              </div>
             )}
 
             {error && (
