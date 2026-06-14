@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/lucianhanga/personal-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/lucianhanga/personal-ai/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![Status: Identity + multi-tenancy done; M8 next](https://img.shields.io/badge/status-IAM%20done%20%C2%B7%20M8%20next-brightgreen.svg)](./docs/architecture/adr/0010-iam-multitenant-security.md)
+[![Status: M8.1 multi-agent graph done; M8.2 next](https://img.shields.io/badge/status-M8.1%20done%20%C2%B7%20M8.2%20next-brightgreen.svg)](./docs/architecture/adr/0012-langgraph-orchestration.md)
 [![Local-first](https://img.shields.io/badge/local--first-yes-brightgreen.svg)](#principles)
 [![Structured-output-first](https://img.shields.io/badge/structured--output--first-yes-brightgreen.svg)](#principles)
 [![Security-first](https://img.shields.io/badge/security--first-yes-brightgreen.svg)](./SECURITY.md)
@@ -16,13 +16,15 @@ PersonalAI is **extensible** (tools + MCP), **structured-output-first** (schemas
 **open-source-first** (verified provenance only), and **security-first** (zero-trust toward
 tools, files, prompts, model outputs, and MCP servers).
 
-> **Current state:** **M0–M7 complete + Identity/multi-tenancy + a pre-M8 hardening pass; M8 next.**
+> **Current state:** **M0–M8.1 complete (Identity/multi-tenancy + the M8 multi-agent graph); M8.2 next.**
 > Streaming chat in a React UI over **local Ollama models** or **remote OpenAI-compatible
 > providers**; **chat-with-your-documents** (file ingestion → pgvector RAG with citations);
 > **persistent conversation history**; **memory** (per-chat short-term summary + cross-chat long-term
 > memory you can view/edit/erase); a security-first **Tool/MCP gateway** (permissions, egress
 > allowlist, schema-validated I/O, risk approval, audit) with **live MCP server management** (M7); a
-> **single-agent loop** that autonomously calls tools and **streams reasoning + answer**; and
+> **single-agent loop** that autonomously calls tools and **streams reasoning + answer**, plus an
+> opt-in **multi-agent graph** on LangGraph (planner → researcher → critic) with a durable
+> **human approval gate** (M8.1, ADR-0012); and
 > **always-on multi-tenancy** (ADR-0010) — Postgres Row-Level Security, an `IdentityProvider`
 > (argon2id passwords + cookie sessions), and per-request tenant isolation. **Local runs zero-login**
 > (`app_mode=local`); **hosted** mode adds real login + CSRF. The HTTP API is versioned under
@@ -78,7 +80,7 @@ Clients (Tauri UI + MV3 extension, loopback)
         │
    API Gateway ── Auth (IdentityProvider) + per-request tenant context (SecurityContext)
         │
-   Conversation ── Agent Orchestration (single-agent loop; hand-rolled typed graph at M8, ADR-0011) ── Structured-Output Validation
+   Conversation ── Agent Orchestration (single-agent loop; opt-in LangGraph multi-agent graph, ADR-0012) ── Structured-Output Validation
         │                    │
    File Ingestion       Tool/MCP Gateway ── Security Engine ── Sandbox (container/gVisor/WASM)
         │                    │
@@ -99,7 +101,7 @@ Full diagram and rationale: [architecture report](./docs/architecture/PersonalAI
 | UI | Tauri shell + web SPA (React/Svelte) | MIT/Apache-2.0 |
 | Local model runtime | Ollama (default) · llama.cpp · vLLM | MIT / MIT / Apache-2.0 |
 | Remote provider gateway | LiteLLM (opt-in) | MIT |
-| Agent orchestration | Hand-rolled typed graph over the existing seams (ADR-0011) | — |
+| Agent orchestration | Single-agent loop + opt-in LangGraph multi-agent graph over the existing seams (ADR-0012) | MIT |
 | Auth / multi-tenancy | argon2id + server sessions + Postgres RLS (ADR-0010) | — |
 | Schemas | Pydantic / Zod + JSON Schema | MIT |
 | Storage / RAG | PostgreSQL + pgvector | PostgreSQL License |
@@ -127,7 +129,8 @@ reason, alternatives) lives in
 | **M7** | MCP plug-in/out + verification | done |
 | **Identity + multi-tenancy** | Always-on auth + Postgres RLS tenant isolation (ADR-0010) | done |
 | **Pre-M8 hardening** | Audit-driven fixes (run_turn seam, unit-of-work, tenant tests, ...) | done |
-| **M8** | Multi-agent + selective verification (hand-rolled typed graph, ADR-0011) | next |
+| **M8.1** | Multi-agent graph on LangGraph (planner → researcher → critic) + durable human gate (ADR-0012) | done |
+| **M8.2** | Tiered verification ladder + bounded schema-repair + accuracy-mode | next |
 | **M9** | Multimodal (vision / STT / TTS) | planned |
 | **M10** | Browser extension (MV3) | planned |
 | **M11** | KAG / graph memory (graph upgrade of M4) | planned |
