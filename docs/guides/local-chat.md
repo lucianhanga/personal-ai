@@ -11,21 +11,23 @@ Run PersonalAI as a local, streaming chat app over your own Ollama models — fu
 ## Run it
 
 ```bash
-# terminal 1 — backend (loopback). Pick your default model.
-PERSONALAI_AUTH_TOKEN=demo PERSONALAI_DEFAULT_MODEL=qwen3.6:35b-a3b make run-backend
+# terminal 1 — backend (loopback). Local mode is zero-login by default. Pick your default model.
+PERSONALAI_DEFAULT_MODEL=qwen3.6:35b-a3b make run-backend
 
 # terminal 2 — UI (Vite dev server)
 pnpm --filter @personalai/ui dev
 ```
 
-Open **http://localhost:5173**, enter the API token (`demo`), pick a model, and chat. Replies
-stream in token by token. Everything stays on loopback; network egress is off by default.
+Open **http://localhost:5173**, pick a model, and chat. Replies stream in token by token. Everything
+stays on loopback; network egress is off by default. In the default `app_mode=local` no login is
+required; if you set `PERSONALAI_AUTH_TOKEN`, that bearer token then becomes **required** (enter it
+in the UI). `app_mode=hosted` requires real login (see [backend API](../reference/backend-api.md)).
 
 ## Configuration (env)
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PERSONALAI_AUTH_TOKEN` | (unset) | Bearer token required by `/api/v1/*`. Protected routes fail closed (503) if unset. |
+| `PERSONALAI_AUTH_TOKEN` | (unset) | Optional bearer token. Local mode is zero-login when unset; if set, it becomes required. (Hosted mode uses cookie login instead — see backend API.) |
 | `PERSONALAI_DEFAULT_MODEL` | `qwen3.6:35b-a3b` | Default chat model. |
 | `PERSONALAI_OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama server URL. |
 | `PERSONALAI_BIND_HOST` / `PERSONALAI_BIND_PORT` | `127.0.0.1` / `8765` | Backend bind (loopback by default). |
@@ -69,17 +71,82 @@ PERSONALAI_OLLAMA_IT=1 uv run pytest providers/ollama/tests/test_integration.py 
   `PERSONALAI_ALLOWED_ORIGINS` (the loopback Vite ports are allowed by default).
 - **Empty replies from a qwen3 model:** that's the thinking trace; the default `think=false` avoids
   it — make sure you're on the latest backend.
-- **401 in the UI:** the API token field must match `PERSONALAI_AUTH_TOKEN`.
+- **401 in the UI:** if you set `PERSONALAI_AUTH_TOKEN`, the API token field must match it (local
+  mode needs no token unless you set one; hosted mode needs a login).
 
-## Memory / context size (local models)
+## Running local models on constrained RAM
 
-The KV cache grows with the context window, so on constrained unified memory (e.g. a 48 GB Mac) a
-huge context can trigger swap. PersonalAI bounds it: **`PERSONALAI_OLLAMA_NUM_CTX`** (default
-**32768**) is sent to Ollama as `num_ctx`. Lower it (e.g. `8192`) for less memory, raise it for
-longer documents/agent runs. Shrink the KV cache further at the Ollama level:
+On a machine with limited unified memory (e.g. a 48 GB Mac), getting a model to load is usually a
+**memory-budget** problem, not a weights problem. The notes below come from real debugging sessions.
+
+### How loading actually works
+
+- Ollama **auto-loads any model that has been pulled** on the first request for it — you do not
+  pre-load it. It only fails to load if the model **isn't pulled** (`ollama pull <model>`) or if
+  **there isn't room** in RAM.
+- The dominant memory cost at load time is often **not the weights** — it is the **KV cache**, which
+  scales roughly as **`context_length × num_parallel`**. A large default context with parallelism
+  can make even a mid-size model refuse to load while a much bigger model loads fine at a smaller
+  context.
+- Concrete example: Ollama's defaults of `OLLAMA_CONTEXT_LENGTH=262144` (256K) and
+  `OLLAMA_NUM_PARALLEL=4` made a mid-size model unloadable. Setting `OLLAMA_CONTEXT_LENGTH=32768`
+  and `OLLAMA_NUM_PARALLEL=1` fixed it — a 24 GB, 35B model then loaded in ~13 s.
+
+### The macOS app overrides launchctl
+
+The **Ollama macOS app stores the context length in its own settings DB** and injects it as an
+environment variable, which **overrides anything you set with `launchctl setenv`**. To change it for
+the app:
+
+- Set it in the app's **Settings → Context length**, or edit the app's settings DB directly, then
+- **Restart Ollama** so the new value is applied.
+
+If you set `OLLAMA_CONTEXT_LENGTH` via `launchctl` and nothing changes, this is why — the app's own
+setting is winning.
+
+### Memory budget and co-residency
+
+Everything resident must fit in RAM at once:
+
+```
+chat-model weights + chat-model KV cache + embedding model (RAG/memory) + your other apps  ≤  RAM
+```
+
+If it doesn't fit, Ollama **evicts** models to make room, and a chat model + the embedding model can
+**ping-pong** (each request reloads the other), which feels like the app is hanging. Rule of thumb:
+**pick a model and context size that fit alongside the embedding model** (`PERSONALAI_EMBED_MODEL`,
+default `mxbai-embed-large`) **and** your other workloads — don't size the chat model to the full
+machine.
+
+### Troubleshooting: "model won't load" / appears to hang
+
+Before assuming the weights are too big, check, in order:
+
+1. `ollama ps` — is the model loaded, and is something else also resident (eviction/ping-pong)?
+2. **Free RAM** — is there actually room for weights + KV + the embedding model?
+3. `OLLAMA_CONTEXT_LENGTH` and `OLLAMA_NUM_PARALLEL` — a huge context or parallelism inflates the KV
+   cache far beyond the weights. Lower both (e.g. `32768` and `1`).
+4. Confirm the model is **pulled** (`ollama list`).
+
+### Knobs
+
+**PersonalAI** (sent to Ollama per request):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PERSONALAI_DEFAULT_MODEL` | `qwen3.6:35b-a3b` | Default chat model. |
+| `PERSONALAI_OLLAMA_NUM_CTX` | `32768` | Context window sent as `num_ctx`; bounds the KV cache for the turn. |
+| `PERSONALAI_OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the model warm between turns (`-1` = never unload). |
+
+**Ollama** (server-level, shrink the KV cache further):
 
 ```bash
+OLLAMA_CONTEXT_LENGTH=32768   # default context; KV cache ≈ context_length × num_parallel
+OLLAMA_NUM_PARALLEL=1         # one slot — biggest single KV-cache reduction
 OLLAMA_FLASH_ATTENTION=1      # efficient attention
 OLLAMA_KV_CACHE_TYPE=q8_0     # ~half the KV memory, negligible quality loss
 OLLAMA_MAX_LOADED_MODELS=1    # don't hold multiple models in RAM
 ```
+
+Note: on the macOS app, set `OLLAMA_CONTEXT_LENGTH` in the app's Settings (see above), not via
+`launchctl`.

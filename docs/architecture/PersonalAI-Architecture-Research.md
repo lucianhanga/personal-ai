@@ -541,13 +541,16 @@ The dependency arrow always points **inward to `/contracts`**. Adapters never im
 
 Each milestone is shippable, builds on the previous, and **exercises a seam** so the next milestone slots in without rework. "Owner agent" = which Claude Code specialist naturally owns that slice.
 
-> **Status:** **M0–M7 complete**, plus an **Identity + multi-tenancy** milestone (ADR-0010: always-on
-> auth + Postgres RLS) and a **Pre-M8 hardening** pass, all shipped. **M8 is next.**
-> **Note (supersession):** this research report originally recommended **LangGraph** for orchestration.
-> That was **superseded by ADR-0011**, which adopts a **hand-rolled typed graph** over the existing
-> seams (LangGraph rejected mainly on dependency weight for a local-first repo). Where this document
-> says "LangGraph", read "the hand-rolled typed graph (ADR-0011)". The ADRs are authoritative; this
-> report is the original rationale.
+> **Status:** **M0–M8.1 complete** — including an **Identity + multi-tenancy** milestone (ADR-0010:
+> always-on auth + Postgres RLS), a **Pre-M8 hardening** pass, and the **M8.1 multi-agent graph**
+> (planner → researcher → critic + durable human gate, ADR-0012), all shipped. **M8.2 is next**
+> (tiered verification ladder + bounded schema-repair + accuracy-mode).
+> **Note (orchestration engine):** this report recommended **LangGraph**. ADR-0011 briefly chose a
+> hand-rolled typed graph instead (rejecting LangGraph on dependency weight), but **ADR-0012
+> superseded ADR-0011 and adopted LangGraph** as the orchestration engine — so this report's original
+> "LangGraph" recommendation now holds. The load-bearing invariant: LangGraph orchestrates only;
+> graph nodes call PersonalAI's own `ModelProvider` and `ToolGateway` seams directly (no LangChain
+> model/tool abstractions). The ADRs are authoritative.
 
 | M | Milestone | What ships | Seam established | Additive guarantee | Owner agent | Status |
 |---|---|---|---|---|---|---|
@@ -560,7 +563,8 @@ Each milestone is shippable, builds on the previous, and **exercises a seam** so
 | **M6** | **Single-agent loop + tools** | Hand-rolled streaming agent loop (ADR-0008): autonomous tool calling through the gateway, **streamed reasoning + answer**, tool calls parsed from the provider stream (Ollama + OpenAI); per-message **Details** (`meta.trace`); built-in **web_search** (DuckDuckGo); per-chat Activity + App logs; context-usage meter; rename chats | Agent seam, message-contract seam | Add MCP sources / roles later behind the same gateway | agentic-ai-architect | done |
 | **M7** | **MCP plug-in/out + verification** | Local/third-party MCP servers via the gateway; MCP verification workflow; per-scope enable/disable; sandbox tiers (ADR-0007), incl. the Microsoft Playwright MCP goal | Tool seam hardened for external code | Plug/unplug tools without redeploy | agentic-ai-architect | done |
 | **IAM** | **Identity + multi-tenancy** | Always-on auth + Postgres RLS tenant isolation; `IdentityProvider`/`SessionStore`/`KeyProvider`(planned) ports; argon2id + cookie sessions + CSRF; `app_mode` local/hosted (ADR-0010) | Auth + tenant-isolation seam | New IdP (OIDC) = drop-in adapter | ciso-security-auditor, backend, db | done |
-| **M8** | **Multi-agent + selective verification** | Role-specialized agents (researcher/critic); **tiered verification** (schema-always → conditional LLM-judge → ground-truth → human) for factuality/anti-hallucination; `accuracy mode` toggle; a **hand-rolled typed graph** (ADR-0011, **not** LangGraph) above the same gateway/provider seams | Agent seam at scale | New roles/critics are additive nodes | agentic-ai-architect | next |
+| **M8.1** | **Multi-agent graph** | Role-specialized **LangGraph** graph (planner → researcher → critic → finalize) above the same gateway/provider seams (ADR-0012); **durable human approval gate** (tenant-scoped checkpointer, Postgres RLS) with SSE `plan`/`critique`/`approval_request` frames + a `/resume` endpoint; color-coded agent trace in the UI | Agent seam at scale | New roles/critics are additive nodes | agentic-ai-architect | done |
+| **M8.2** | **Selective verification** | **Tiered verification ladder** (schema-always → conditional LLM-judge → ground-truth → human) for factuality/anti-hallucination; **bounded schema-repair**; `accuracy mode` toggle (`PERSONALAI_AGENT_ACCURACY_MODE`) | Verification seam | New critics/verifiers are additive nodes | agentic-ai-architect | next |
 | **M9** | **Multimodal** | Vision routing; **faster-whisper** STT; **Piper** TTS; optional image gen | Modality seam at scale | Each modality = a handler, no core change | ollama-llm-agent, ui-developer | planned |
 | **M10** | **Browser extension** | MV3, minimal perms, explicit capture, authenticated localhost messaging | New client behind existing gateway contract | Extension is just another authenticated client | chrome-extension-architect/developer | planned |
 | **M11** | **KAG / graph memory (graph upgrade of M4)** | Hybrid graph+vector retrieval (Postgres + Apache AGE), entity/relationship extraction + resolution, multi-hop; upgrades the long-term memory to a knowledge graph | Reuses retrieval + storage + memory seams | Pure add-on; vector RAG + semantic memory untouched | database-architect, agentic-ai-architect | planned |
