@@ -375,7 +375,7 @@ export function Chat({
           })),
         (message) => {
           // Surface backend errors in the assistant bubble instead of silently ending the turn.
-          acc = (acc ? acc + "\n\n" : "") + `⚠️ ${message}`;
+          acc = (acc ? acc + "\n\n" : "") + `**Error:** ${message}`;
           patchChat(key, (s) => ({
             ...s,
             messages: [...history, { role: "assistant", content: acc }],
