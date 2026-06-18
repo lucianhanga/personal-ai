@@ -1502,6 +1502,7 @@ dependencies = [
     { name = "personalai-provider-openai" },
     { name = "personalai-storage-postgres" },
     { name = "personalai-tool-builtin" },
+    { name = "python-dotenv" },
     { name = "python-multipart" },
     { name = "uvicorn" },
 ]
@@ -1517,6 +1518,7 @@ requires-dist = [
     { name = "personalai-provider-openai", editable = "providers/openai_compat" },
     { name = "personalai-storage-postgres", editable = "storage/postgres" },
     { name = "personalai-tool-builtin", editable = "tools/builtin" },
+    { name = "python-dotenv", specifier = ">=1.0" },
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
