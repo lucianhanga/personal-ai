@@ -214,6 +214,12 @@ class MemoryUpdate(BaseModel):
     text: str
 
 
+class EgressAllow(BaseModel):
+    """Request body for allowing a single egress host (interactive allow-on-deny)."""
+
+    host: str
+
+
 class GrantIn(BaseModel):
     """A permission grant supplied with a tool invocation."""
 
@@ -1166,6 +1172,33 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         storage = _require_storage()
         saved = await storage.settings.upsert(body)
         return StructuredResult(ok=True, data={"settings": saved.model_dump()})
+
+    @app.post(
+        "/api/v1/settings/egress/allow",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def allow_egress_host(body: EgressAllow) -> StructuredResult:
+        # Interactive allow-on-deny: add one host to the tenant's allowlist and enable egress, so a
+        # blocked outbound request can be permitted with one click (then the user re-sends). The
+        # host must be a bare hostname (no scheme/path/whitespace) -- same rule as the Network panel.
+        host = body.host.strip().lower()
+        if not host or "://" in host or "/" in host or any(c.isspace() for c in host):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="host must be a bare hostname (no scheme, path, or spaces)",
+            )
+        storage = _require_storage()
+        current = await storage.settings.get()
+        base: CoreConfig = app.state.config
+        existing = current.allowed_egress_hosts
+        if existing is None:
+            existing = base.allowed_egress_hosts  # inherit the boot allowlist before extending it
+        merged = tuple(dict.fromkeys([*existing, host]))  # dedupe, preserve order
+        saved = await storage.settings.upsert(
+            current.model_copy(update={"egress_enabled": True, "allowed_egress_hosts": merged})
+        )
+        return StructuredResult(ok=True, data={"settings": saved.model_dump(), "host": host})
 
     @app.get(
         "/api/v1/agents/config",

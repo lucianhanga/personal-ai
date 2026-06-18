@@ -482,6 +482,24 @@ export async function saveSettings(
   return body.data!.settings;
 }
 
+/** Allow one egress host (interactive allow-on-deny): adds it to the allowlist + enables egress. */
+export async function allowEgressHost(token: string, host: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/settings/egress/allow`, {
+    method: "POST",
+    credentials: CREDS,
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ host }),
+  });
+  if (!res.ok) throw new Error(`allow host failed: ${res.status}`);
+}
+
+/** The blocked host from an egress-denied tool error, or null if it isn't an egress denial. */
+export function blockedEgressHost(error: string | null | undefined): string | null {
+  if (!error || !/egress/i.test(error)) return null;
+  const m = error.match(/host '([^']+)'/) ?? error.match(/attempted host: ([^);]+)/);
+  return m ? m[1].trim() : null;
+}
+
 // Per-tenant multi-agent graph config (#290). One entry per agent the tenant has customized; a null
 // prompt inherits the default, disabled_tools lists the tools that agent must not use.
 export interface AgentConfigEntry {

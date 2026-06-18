@@ -146,6 +146,35 @@ test("hints when documents exist but RAG is off", async () => {
   expect(screen.getByTestId("rag-hint")).toBeInTheDocument();
 });
 
+test("offers to allow a host blocked by egress, then adds it on click", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta, _c, onToolStep) => {
+    onToolStep?.({
+      phase: "result",
+      tool: "web_search",
+      ok: false,
+      error: "egress blocked: host 'html.duckduckgo.com' is not in the egress allowlist ('a.com',)",
+    });
+    onDelta("I couldn't reach the web.");
+  });
+  const allow = vi.spyOn(api, "allowEgressHost").mockResolvedValue();
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "search the web" } });
+  fireEvent.click(screen.getByTestId("send"));
+
+  await waitFor(() =>
+    expect(screen.getByTestId("egress-block-banner")).toHaveTextContent("html.duckduckgo.com"),
+  );
+  fireEvent.click(screen.getByTestId("egress-allow-btn"));
+  await waitFor(() => expect(allow).toHaveBeenCalledWith("demo", "html.duckduckgo.com"));
+  await waitFor(() => expect(screen.getByTestId("egress-allowed-banner")).toBeInTheDocument());
+});
+
 test("renders citations returned with a RAG answer", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);

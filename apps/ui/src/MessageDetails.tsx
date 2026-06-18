@@ -85,8 +85,8 @@ export function MessageDetails({
             paddingLeft: "0.6rem",
             borderLeft: "2px solid rgba(127,127,127,0.3)",
             color: "#555",
-            // Compact running window (~5 lines); scroll inside to read the full reasoning.
-            maxHeight: "7.5em",
+            // Running window (~15 lines); scroll inside to read the full reasoning.
+            maxHeight: "15em",
             overflowY: "auto",
           }}
         >

@@ -90,6 +90,38 @@ def test_saved_default_model_surfaces_in_models_endpoint() -> None:
         assert after == "qwen3:14b"  # /models now reflects the persisted per-tenant default
 
 
+def test_egress_allow_host_adds_and_enables() -> None:
+    # Interactive allow-on-deny: one click adds a host to the allowlist and turns egress on.
+    app = create_app(bootstrap(config=CoreConfig(app_mode="hosted")))
+    with TestClient(app, base_url="https://testserver") as user:
+        _signup_login(user, f"u-{uuid.uuid4().hex[:8]}@example.com")
+
+        r = user.post(
+            "/api/v1/settings/egress/allow", headers=_csrf(user), json={"host": "Example.COM"}
+        )
+        assert r.status_code == 200
+        saved = r.json()["data"]["settings"]
+        assert saved["egress_enabled"] is True
+        assert "example.com" in saved["allowed_egress_hosts"]  # normalized + added
+
+        # A second host extends the allowlist (and the first is still there).
+        user.post(
+            "/api/v1/settings/egress/allow",
+            headers=_csrf(user),
+            json={"host": "files.example.org"},
+        )
+        hosts = set(
+            user.get("/api/v1/settings").json()["data"]["settings"]["allowed_egress_hosts"]
+        )
+        assert {"example.com", "files.example.org"} <= hosts
+
+        # A non-bare host is rejected.
+        bad = user.post(
+            "/api/v1/settings/egress/allow", headers=_csrf(user), json={"host": "http://evil/x"}
+        )
+        assert bad.status_code == 400
+
+
 def test_settings_are_isolated_between_tenants() -> None:
     app = create_app(bootstrap(config=CoreConfig(app_mode="hosted")))
     with TestClient(app, base_url="https://testserver") as alice:
