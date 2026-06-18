@@ -160,6 +160,41 @@ def test_prompt_overrides_reach_planner_and_critic() -> None:
     assert any("You are the researcher" in s for s in rec.system_prompts)
 
 
+class _CriticRevises(FakeModelProvider):
+    """Researcher gives a wrong answer; the critic flags it (its review sees 'Draft answer')."""
+
+    def __init__(self) -> None:
+        super().__init__(name="rev")
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        last = request.messages[-1].content if request.messages else ""
+        if "Draft answer to review" in last:
+            return GenerationResult(
+                text="REVISE: the capital is Canberra, not Sydney.", model=request.model
+            )
+        return GenerationResult(text="The capital of Australia is Sydney.", model=request.model)
+
+
+def test_critic_revise_appends_a_visible_reviewer_note() -> None:
+    # #290: a critic that finds a material problem appends a "Reviewer" note to the answer (streamed
+    # and persisted), so the review is not merely decorative.
+    events = _drain(
+        messages=[ChatMessage(Role.USER, "capital of australia?")],
+        provider=_CriticRevises(),
+        model="m",
+        gateway=_gateway(),
+        tools=[],
+    )
+    critique = next(e for e in events if e.type == "critique")
+    assert (critique.text or "").startswith("REVISE")
+    # The correction is surfaced as a visible answer delta...
+    note = next((e for e in events if e.type == "answer" and "Reviewer" in (e.answer or "")), None)
+    assert note is not None
+    # ...and the terminal answer includes it.
+    final = next(e for e in events if e.type == "final")
+    assert "Reviewer" in (final.answer or "") and "Canberra" in (final.answer or "")
+
+
 def test_human_gate_suspends_then_resumes_durably() -> None:
     # M8.1c: with a checkpointer the graph suspends at the human gate (approval_request, no final);
     # resuming on the SAME checkpointer continues to the final (durable interrupt/resume).

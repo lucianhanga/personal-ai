@@ -52,8 +52,10 @@ TOOL_USING_AGENTS: frozenset[str] = frozenset({"researcher"})
 # override replaces the default for that agent; an empty/unset override falls back to these.
 DEFAULT_AGENT_PROMPTS: dict[str, str] = {
     "planner": (
-        "You are the planner. In 1-3 short bullet points, outline how to answer the user's "
-        "request. Be concise; do not answer the request itself, only plan the approach."
+        "You are the planner. A researcher agent with web search and other tools will carry out "
+        "your plan, so assume live data IS reachable. In 1-3 short bullet points, outline how to "
+        "answer the user's request (what to look up, which tools to use). Be concise; do not "
+        "answer the request yourself, and do not claim a lack of tools or data access."
     ),
     "researcher": (
         "You are the researcher. Carry out the plan to answer the user's request, calling the "
@@ -61,9 +63,13 @@ DEFAULT_AGENT_PROMPTS: dict[str, str] = {
         "your knowledge are insufficient, say so plainly rather than guessing."
     ),
     "critic": (
-        "You are the critic. Briefly review the assistant's answer against the user's request: "
-        "note any gaps, errors, or unsupported claims in 1-3 short sentences. Do not rewrite the "
-        "answer."
+        "You are the critic reviewing a draft answer that a researcher agent ALREADY produced "
+        "using live tools and web data. The user's request and the draft are given. Do NOT claim "
+        "any lack of data or real-time access (the researcher had it), and never add generic "
+        "disclaimers. Only flag concrete, material problems you can actually identify: factual "
+        "errors, arithmetic mistakes, internal contradictions, or claims that don't address the "
+        "request. Reply with exactly 'OK' on one line if the draft is sound, or 'REVISE:' followed "
+        "by one specific correction sentence."
     ),
 }
 
@@ -157,14 +163,28 @@ def _build_graph(
         return {"answer": answer, "usage": usage}
 
     async def critic(state: GraphState) -> dict[str, Any]:
+        # The draft goes in a USER message, not an ASSISTANT one: with the draft as an assistant
+        # turn the model treats the conversation as finished and replies empty (the "critic did
+        # nothing" bug). As a user-posed review task it actually critiques.
+        answer = state.get("answer", "")
         review = [
             ChatMessage(Role.SYSTEM, agent_prompts["critic"]),
             *messages,
-            ChatMessage(Role.ASSISTANT, state.get("answer", "")),
+            ChatMessage(Role.USER, f"Draft answer to review:\n\n{answer}"),
         ]
-        critique = await _generate_text(provider, model, review)
-        get_stream_writer()(AgentEvent(type="critique", text=critique))
-        return {"critique": critique}
+        raw = (await _generate_text(provider, model, review)).strip()
+        writer = get_stream_writer()
+        writer(AgentEvent(type="critique", text=raw or "OK"))
+        # When the critic flags a material problem, surface its correction in the visible answer so
+        # the review isn't merely decorative: the researcher's answer already streamed, so append a
+        # short "Reviewer" note (streamed as an answer delta, hence shown and persisted).
+        if raw.upper().startswith("REVISE"):
+            note = raw.split(":", 1)[1].strip() if ":" in raw else raw
+            if note:
+                appended = f"\n\n— Reviewer: {note}"
+                writer(AgentEvent(type="answer", answer=appended))
+                return {"critique": raw, "answer": answer + appended}
+        return {"critique": raw}
 
     async def human_gate(state: GraphState) -> dict[str, Any]:
         # Durable suspend: interrupt() raises on the first pass (checkpoint persisted) and returns
