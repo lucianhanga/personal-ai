@@ -16,6 +16,7 @@ const EMPTY: TenantSettings = {
   embed_provider: null,
   embed_model: null,
   openai_base_url: null,
+  agent_mode: null,
   agent_graph_enabled: null,
   agent_human_gate: null,
   agent_accuracy_mode: null,
@@ -32,8 +33,9 @@ const DEFAULTS: TenantSettingsDefaults = {
   ollama_num_ctx: 32768,
   ollama_keep_alive: "30m",
   embed_provider: "ollama",
-  embed_model: "mxbai-embed-large",
+  embed_model: "qwen3-embedding:0.6b",
   openai_base_url: "https://api.openai.com/v1",
+  agent_mode: "single",
   agent_graph_enabled: false,
   agent_human_gate: false,
   agent_accuracy_mode: "standard",
@@ -76,23 +78,23 @@ test("editing a field saves only the override", async () => {
   await waitFor(() => expect(screen.getByTestId("preferences-saved")).toBeInTheDocument());
 });
 
-test("the multi-agent toggle is tri-state (default/on/off)", async () => {
+test("the accuracy-mode enum is tri-state (default/standard/accurate)", async () => {
   mockLoad();
-  const save = vi.spyOn(api, "saveSettings").mockResolvedValue({ ...EMPTY, agent_graph_enabled: true });
+  const save = vi.spyOn(api, "saveSettings").mockResolvedValue({ ...EMPTY, agent_accuracy_mode: "accurate" });
   render(<Preferences token="demo" />);
-  await waitFor(() => expect(screen.getByTestId("preferences-agent_graph_enabled")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByTestId("preferences-agent_accuracy_mode")).toBeInTheDocument());
 
-  fireEvent.change(screen.getByTestId("preferences-agent_graph_enabled"), {
-    target: { value: "on" },
+  fireEvent.change(screen.getByTestId("preferences-agent_accuracy_mode"), {
+    target: { value: "accurate" },
   });
   fireEvent.click(screen.getByTestId("preferences-save"));
   await waitFor(() =>
-    expect(save).toHaveBeenCalledWith("demo", { ...EMPTY, agent_graph_enabled: true }),
+    expect(save).toHaveBeenCalledWith("demo", { ...EMPTY, agent_accuracy_mode: "accurate" }),
   );
 });
 
 test("reset clears every override back to null", async () => {
-  mockLoad({ ...EMPTY, default_model: "qwen3:14b", agent_graph_enabled: true });
+  mockLoad({ ...EMPTY, default_model: "qwen3:14b", agent_accuracy_mode: "accurate" });
   const save = vi.spyOn(api, "saveSettings").mockResolvedValue(EMPTY);
   render(<Preferences token="demo" />);
   await waitFor(() =>

@@ -40,9 +40,8 @@ const GROUPS: Group[] = [
   },
   {
     title: "Agent",
+    note: "Agent mode, prompts, and per-agent tools are configured in the Agents panel.",
     fields: [
-      { key: "agent_graph_enabled", label: "Multi-agent graph", kind: "bool" },
-      { key: "agent_human_gate", label: "Human approval gate", kind: "bool" },
       { key: "agent_accuracy_mode", label: "Accuracy mode", kind: "enum", options: ["standard", "accurate"] },
       { key: "agent_max_iterations", label: "Max tool iterations", kind: "number" },
     ],

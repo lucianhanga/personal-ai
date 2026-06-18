@@ -1,6 +1,7 @@
 import type { Dispatch, SetStateAction } from "react";
 
 import type { DocumentInfo } from "./api";
+import { Agents } from "./Agents";
 import { McpPanel } from "./McpPanel";
 import { Memory } from "./Memory";
 import { Preferences } from "./Preferences";
@@ -31,6 +32,8 @@ interface SettingsAccordionProps {
   setShowMcp: Dispatch<SetStateAction<boolean>>;
   showPreferences: boolean;
   setShowPreferences: Dispatch<SetStateAction<boolean>>;
+  showAgents: boolean;
+  setShowAgents: Dispatch<SetStateAction<boolean>>;
 }
 
 const ROW: React.CSSProperties = {
@@ -188,6 +191,17 @@ export function SettingsAccordion(props: SettingsAccordionProps): React.ReactEle
             </span>
           </div>
           {props.showPreferences && <Preferences token={token} />}
+
+          {/* Line 7: Agents (agentic mode + per-agent prompts/tools) */}
+          <div data-testid="settings-agents" style={ROW}>
+            <button data-testid="agents-show" onClick={() => props.setShowAgents((v) => !v)}>
+              {props.showAgents ? "Hide agents" : "Agents"}
+            </button>
+            <span style={{ marginLeft: "auto", color: "#888" }}>
+              Agentic mode + per-agent prompts/tools
+            </span>
+          </div>
+          {props.showAgents && <Agents token={token} />}
         </div>
       )}
     </div>

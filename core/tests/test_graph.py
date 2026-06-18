@@ -131,6 +131,35 @@ def test_researcher_tool_steps_flow_and_usage_reaches_final() -> None:
     assert events[-1].usage == {"total_tokens": 7}  # usage from run_agent's final reaches the end
 
 
+class _Recorder(FakeModelProvider):
+    """Records the system prompts each node sends, to assert prompt overrides reach the nodes."""
+
+    def __init__(self) -> None:
+        super().__init__(name="rec")
+        self.system_prompts: list[str] = []
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        self.system_prompts += [m.content for m in request.messages if m.role == Role.SYSTEM]
+        return GenerationResult(text="ok", model=request.model)
+
+
+def test_prompt_overrides_reach_planner_and_critic() -> None:
+    # #290: per-agent prompt overrides replace the defaults in the planner/critic (and researcher).
+    rec = _Recorder()
+    _drain(
+        messages=[ChatMessage(Role.USER, "hi")],
+        provider=rec,
+        model="m",
+        gateway=_gateway(),
+        tools=[],
+        prompts={"planner": "CUSTOM PLANNER", "critic": "CUSTOM CRITIC"},
+    )
+    assert any("CUSTOM PLANNER" in s for s in rec.system_prompts)
+    assert any("CUSTOM CRITIC" in s for s in rec.system_prompts)
+    # An unset agent (researcher) still gets its built-in default prompt.
+    assert any("You are the researcher" in s for s in rec.system_prompts)
+
+
 def test_human_gate_suspends_then_resumes_durably() -> None:
     # M8.1c: with a checkpointer the graph suspends at the human gate (approval_request, no final);
     # resuming on the SAME checkpointer continues to the final (durable interrupt/resume).

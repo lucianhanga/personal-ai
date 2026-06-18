@@ -23,6 +23,7 @@ _FIELDS = (
     "embed_provider",
     "embed_model",
     "openai_base_url",
+    "agent_mode",
     "agent_graph_enabled",
     "agent_human_gate",
     "agent_accuracy_mode",

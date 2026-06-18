@@ -79,3 +79,22 @@ def test_effective_config_overlays_only_non_null_overrides() -> None:
 def test_effective_config_no_overrides_returns_base() -> None:
     base = CoreConfig()
     assert effective_config(base, TenantSettings()) is base
+
+
+def test_agent_mode_default_is_single() -> None:
+    assert CoreConfig().agent_mode == "single"
+
+
+def test_agent_mode_from_env() -> None:
+    assert CoreConfig.from_env({"PERSONALAI_AGENT_MODE": "multi"}).agent_mode == "multi"
+
+
+def test_legacy_graph_flag_upgrades_mode_to_multi() -> None:
+    # Back-compat (#290): AGENT_GRAPH_ENABLED with no explicit AGENT_MODE selects the graph.
+    cfg = CoreConfig.from_env({"PERSONALAI_AGENT_GRAPH_ENABLED": "true"})
+    assert cfg.agent_mode == "multi"
+    # An explicit mode wins over the legacy flag.
+    cfg2 = CoreConfig.from_env(
+        {"PERSONALAI_AGENT_GRAPH_ENABLED": "true", "PERSONALAI_AGENT_MODE": "single"}
+    )
+    assert cfg2.agent_mode == "single"

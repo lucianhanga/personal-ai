@@ -1,5 +1,6 @@
 """PostgreSQL + pgvector storage adapters for PersonalAI."""
 
+from personalai_storage_postgres.agent_config_store import PgAgentConfigStore
 from personalai_storage_postgres.conversation_store import (
     Conversation,
     Message,
@@ -26,6 +27,7 @@ __all__ = [
     "Conversation",
     "Document",
     "Message",
+    "PgAgentConfigStore",
     "PgConversationStore",
     "PgDocumentStore",
     "PgMemoryStore",

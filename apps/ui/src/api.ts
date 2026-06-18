@@ -433,6 +433,7 @@ export interface TenantSettings {
   embed_provider: "ollama" | "openai_compat" | null;
   embed_model: string | null;
   openai_base_url: string | null;
+  agent_mode: "single" | "multi" | "custom" | null;
   agent_graph_enabled: boolean | null;
   agent_human_gate: boolean | null;
   agent_accuracy_mode: "standard" | "accurate" | null;
@@ -477,6 +478,56 @@ export async function saveSettings(
   if (!res.ok) throw new Error(`save settings failed: ${res.status}`);
   const body = (await res.json()) as { data?: { settings: TenantSettings } };
   return body.data!.settings;
+}
+
+// Per-tenant multi-agent graph config (#290). One entry per agent the tenant has customized; a null
+// prompt inherits the default, disabled_tools lists the tools that agent must not use.
+export interface AgentConfigEntry {
+  name: string;
+  prompt: string | null;
+  disabled_tools: string[];
+}
+
+export interface AgentGraphConfig {
+  agents: AgentConfigEntry[];
+}
+
+export interface AgentRosterEntry {
+  name: string;
+  uses_tools: boolean;
+}
+
+/** The saved overrides plus the server-side roster, default prompts, and available tool names. */
+export interface AgentConfigView {
+  config: AgentGraphConfig;
+  defaults: Record<string, string>;
+  agents: AgentRosterEntry[];
+  available_tools: string[];
+}
+
+/** The tenant's multi-agent graph config: saved overrides + defaults + roster + available tools. */
+export async function fetchAgentConfig(token: string): Promise<AgentConfigView> {
+  const res = await fetch(`${API_BASE}/api/v1/agents/config`, {
+    headers: authHeaders(token),
+    credentials: CREDS,
+  });
+  if (!res.ok) throw new Error(`fetch agent config failed: ${res.status}`);
+  return ((await res.json()) as { data?: AgentConfigView }).data!;
+}
+
+/** Replace the tenant's agent overrides (full overwrite). */
+export async function saveAgentConfig(
+  token: string,
+  config: AgentGraphConfig,
+): Promise<AgentGraphConfig> {
+  const res = await fetch(`${API_BASE}/api/v1/agents/config`, {
+    method: "PUT",
+    credentials: CREDS,
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) throw new Error(`save agent config failed: ${res.status}`);
+  return ((await res.json()) as { data?: { config: AgentGraphConfig } }).data!.config;
 }
 
 /** Bulk import a standard `mcpServers` map (merge + connect each live). Returns the updated list. */

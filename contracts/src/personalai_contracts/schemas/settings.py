@@ -32,6 +32,10 @@ class TenantSettings(StrictModel):
     openai_base_url: str | None = Field(default=None, min_length=1, max_length=500)
 
     # --- Agent (M8) ---
+    # Agentic mode (#290): "single" = single-agent loop, "multi" = planner/researcher/critic graph,
+    # "custom" = user-defined agents (reserved/future). Supersedes agent_graph_enabled as the
+    # user-facing control; agent_graph_enabled is kept for backward-compatible env config.
+    agent_mode: Literal["single", "multi", "custom"] | None = None
     agent_graph_enabled: bool | None = None
     agent_human_gate: bool | None = None
     agent_accuracy_mode: Literal["standard", "accurate"] | None = None

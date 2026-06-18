@@ -17,12 +17,12 @@ Topology: **planner -> researcher -> critic -> [human_gate] -> finalize -> END**
 - finalize: emits the single terminal ``final``.
 
 Keeping :func:`run_graph`'s signature stable is the contract that ``apps/backend/.../turn.py`` and
-the SSE mapping rely on; the ``agent_graph_enabled`` flag selects this graph over the single loop.
+the SSE mapping rely on; ``agent_mode == "multi"`` (#290) selects this graph over the single loop.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -42,14 +42,39 @@ from personalai_contracts.schemas.tools import Permission
 from personalai_core.agent import AgentEvent, run_agent
 from personalai_core.gateway import RegisteredTool, ToolGateway
 
-_PLANNER_PROMPT = (
-    "You are the planner. In 1-3 short bullet points, outline how to answer the user's request. "
-    "Be concise; do not answer the request itself, only plan the approach."
-)
-_CRITIC_PROMPT = (
-    "You are the critic. Briefly review the assistant's answer against the user's request: note "
-    "any gaps, errors, or unsupported claims in 1-3 short sentences. Do not rewrite the answer."
-)
+# The ordered roster of configurable agents in the multi-agent graph (#290). Only the researcher
+# uses tools (it runs the single-agent loop); planner and critic are deliberately tool-free.
+AGENT_NAMES: tuple[str, ...] = ("planner", "researcher", "critic")
+TOOL_USING_AGENTS: frozenset[str] = frozenset({"researcher"})
+
+# Default system prompt per agent. Exposed (not private) so the backend can echo them to the UI as
+# the editable defaults (#290), exactly like CoreConfig defaults for settings. A tenant's saved
+# override replaces the default for that agent; an empty/unset override falls back to these.
+DEFAULT_AGENT_PROMPTS: dict[str, str] = {
+    "planner": (
+        "You are the planner. In 1-3 short bullet points, outline how to answer the user's "
+        "request. Be concise; do not answer the request itself, only plan the approach."
+    ),
+    "researcher": (
+        "You are the researcher. Carry out the plan to answer the user's request, calling the "
+        "available tools when they help. Ground every claim in what you find; if the tools and "
+        "your knowledge are insufficient, say so plainly rather than guessing."
+    ),
+    "critic": (
+        "You are the critic. Briefly review the assistant's answer against the user's request: "
+        "note any gaps, errors, or unsupported claims in 1-3 short sentences. Do not rewrite the "
+        "answer."
+    ),
+}
+
+
+def resolve_prompts(overrides: Mapping[str, str] | None) -> dict[str, str]:
+    """Overlay a tenant's non-empty prompt overrides onto :data:`DEFAULT_AGENT_PROMPTS` (#290)."""
+    resolved = dict(DEFAULT_AGENT_PROMPTS)
+    for name, prompt in (overrides or {}).items():
+        if name in resolved and prompt.strip():
+            resolved[name] = prompt
+    return resolved
 
 
 class GraphState(TypedDict, total=False):
@@ -90,13 +115,16 @@ def _build_graph(
     think: bool | None,
     max_iterations: int,
     checkpointer: BaseCheckpointSaver[Any] | None,
+    prompts: Mapping[str, str] | None = None,
 ) -> Any:
     """Compile the graph. With a ``checkpointer`` a human_gate (interrupt) is inserted before
-    finalize, enabling durable interrupt/resume."""
+    finalize, enabling durable interrupt/resume. ``prompts`` overrides per-agent system prompts
+    (#290); missing entries fall back to :data:`DEFAULT_AGENT_PROMPTS`."""
+    agent_prompts = resolve_prompts(prompts)
 
     async def planner(state: GraphState) -> dict[str, Any]:
         plan = await _generate_text(
-            provider, model, [ChatMessage(Role.SYSTEM, _PLANNER_PROMPT), *messages]
+            provider, model, [ChatMessage(Role.SYSTEM, agent_prompts["planner"]), *messages]
         )
         get_stream_writer()(AgentEvent(type="plan", text=plan))
         return {"plan": plan}
@@ -106,7 +134,7 @@ def _build_graph(
         # to the stream; swallows run_agent's own `final` and takes the complete answer + usage from
         # it, so the graph emits ONE final (from finalize) and the critic sees the full answer.
         writer = get_stream_writer()
-        convo = list(messages)
+        convo = [ChatMessage(Role.SYSTEM, agent_prompts["researcher"]), *messages]
         if state.get("plan"):
             convo.append(ChatMessage(Role.SYSTEM, f"Plan to follow:\n{state['plan']}"))
         answer, usage = "", {}
@@ -130,7 +158,7 @@ def _build_graph(
 
     async def critic(state: GraphState) -> dict[str, Any]:
         review = [
-            ChatMessage(Role.SYSTEM, _CRITIC_PROMPT),
+            ChatMessage(Role.SYSTEM, agent_prompts["critic"]),
             *messages,
             ChatMessage(Role.ASSISTANT, state.get("answer", "")),
         ]
@@ -189,6 +217,7 @@ async def run_graph(
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     thread_id: str | None = None,
     resume: Any | None = None,
+    prompts: Mapping[str, str] | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Drive the LangGraph agent graph, yielding ordered :class:`AgentEvent`s.
 
@@ -209,6 +238,7 @@ async def run_graph(
         think=think,
         max_iterations=max_iterations,
         checkpointer=checkpointer,
+        prompts=prompts,
     )
     if checkpointer is None:
         async for ev in graph.astream({"context": context}, stream_mode="custom"):

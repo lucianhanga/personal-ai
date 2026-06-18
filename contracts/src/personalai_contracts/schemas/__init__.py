@@ -5,6 +5,7 @@ interchange) is generated from these models into ``schemas/json/`` and shared wi
 bindings under ``packages/contracts``.
 """
 
+from personalai_contracts.schemas.agents import AgentConfig, AgentGraphConfig
 from personalai_contracts.schemas.base import (
     SemVer,
     StrictModel,
@@ -36,6 +37,9 @@ from personalai_contracts.schemas.tools import (
 )
 
 __all__ = [
+    # agents
+    "AgentConfig",
+    "AgentGraphConfig",
     # base
     "SemVer",
     "StrictModel",

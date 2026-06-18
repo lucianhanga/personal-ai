@@ -47,9 +47,17 @@ from personalai_contracts.ports import (
     Role,
     ToolCall,
 )
-from personalai_contracts.schemas import ErrorInfo, StructuredResult, TenantSettings
+from personalai_contracts.schemas import (
+    AgentGraphConfig,
+    ErrorInfo,
+    StructuredResult,
+    TenantSettings,
+)
 from personalai_contracts.schemas.tools import Permission, PermissionType
 from personalai_core import (
+    AGENT_NAMES,
+    DEFAULT_AGENT_PROMPTS,
+    TOOL_USING_AGENTS,
     CoreConfig,
     RegistryError,
     VectorRetriever,
@@ -64,6 +72,7 @@ from personalai_core.security import assert_egress_allowed, current_conversation
 from personalai_modality_files import UnsupportedFileTypeError
 from personalai_storage_postgres import (
     Conversation,
+    PgAgentConfigStore,
     PgConversationStore,
     PgDocumentStore,
     PgMemoryStore,
@@ -88,6 +97,7 @@ class Storage:
     conversations: PgConversationStore
     memories: PgMemoryStore
     settings: PgSettingsStore
+    agent_config: PgAgentConfigStore
 
 
 class HealthResponse(BaseModel):
@@ -286,6 +296,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 conversations=PgConversationStore(querier),
                 memories=PgMemoryStore(querier),
                 settings=PgSettingsStore(querier),
+                agent_config=PgAgentConfigStore(querier),
             )
             # Unit-of-work: TenantDb.acquire(tenant_id) yields a tenant-bound connection in ONE
             # transaction, so multiple store ops commit/roll back together (M8 agent writes; A3).
@@ -590,13 +601,26 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         config = await _effective_config()
         provider = _resolve_provider(req.provider)
 
+        # Agentic mode (#290): "multi" selects the planner/researcher/critic graph; otherwise the
+        # single-agent loop. Per-tenant agent config (prompt overrides + the researcher's disabled
+        # tools) is loaded only for the graph path -- single-agent mode uses all tools and no agent
+        # personas.
+        graph_enabled = config.agent_mode == "multi"
+        agent_cfg = (
+            await app.state.storage.agent_config.get()
+            if graph_enabled and app.state.storage is not None
+            else AgentGraphConfig()
+        )
+        agent_prompts = agent_cfg.prompt_overrides()
+        researcher_disabled = agent_cfg.disabled_tools("researcher")
+
         # Durable human gate (M8.1c): active only when the graph is enabled, the gate is on, and a
         # DB is available for the tenant-scoped checkpoint. thread_id = a fresh run id the client
         # uses to resume. The checkpointer is bound to THIS request's tenant (RLS), so a run is only
         # ever resumable by its owner.
         sec = current_security.get()
         gate_on = (
-            config.agent_graph_enabled
+            graph_enabled
             and config.agent_human_gate
             and app.state.tenant_db is not None
             and sec is not None
@@ -681,8 +705,13 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
 
                 # Tools get their declared permissions; high-risk still needs approve_tools and
                 # egress is enforced by the gateway. (Built once; run_turn ignores them off-path.)
+                # In graph mode, drop the tools the researcher has been disabled from using (#290).
                 registries: Registries = app.state.bootstrap.registries
                 tool_list = [registries.tools.get(n) for n in registries.tools.names()]
+                if graph_enabled and researcher_disabled:
+                    tool_list = [
+                        rt for rt in tool_list if rt.manifest.name not in researcher_disabled
+                    ]
                 grants = [p for rt in tool_list for p in rt.manifest.permissions]
                 try:
                     # Orchestration lives in run_turn (FastAPI-independent, fake-testable); the
@@ -697,7 +726,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                             grants=grants,
                             gateway=app.state.bootstrap.gateway,
                             max_iterations=config.agent_max_iterations,
-                            graph_enabled=config.agent_graph_enabled,
+                            graph_enabled=graph_enabled,
+                            agent_prompts=agent_prompts,
                             context=_agent_context(req.conversation_id),
                             checkpointer=checkpointer,
                             thread_id=run_id,
@@ -1123,6 +1153,49 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         storage = _require_storage()
         saved = await storage.settings.upsert(body)
         return StructuredResult(ok=True, data={"settings": saved.model_dump()})
+
+    @app.get(
+        "/api/v1/agents/config",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def get_agent_config() -> StructuredResult:
+        # The multi-agent graph config (#290): the tenant's saved overrides, the default prompts to
+        # show where a prompt is unset, the agent roster (which agents use tools), and the available
+        # tool/MCP names the researcher can be allowed/denied.
+        storage = _require_storage()
+        saved = await storage.agent_config.get()
+        registries: Registries = app.state.bootstrap.registries
+        return StructuredResult(
+            ok=True,
+            data={
+                "config": saved.model_dump(),
+                "defaults": dict(DEFAULT_AGENT_PROMPTS),
+                "agents": [
+                    {"name": name, "uses_tools": name in TOOL_USING_AGENTS}
+                    for name in AGENT_NAMES
+                ],
+                "available_tools": list(registries.tools.names()),
+            },
+        )
+
+    @app.put(
+        "/api/v1/agents/config",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def put_agent_config(body: AgentGraphConfig) -> StructuredResult:
+        # Full overwrite of this tenant's agent overrides. Unknown agent names are rejected so a
+        # typo can't silently no-op; only the known graph agents are configurable.
+        unknown = {a.name for a in body.agents} - set(AGENT_NAMES)
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"unknown agent(s): {', '.join(sorted(unknown))}",
+            )
+        storage = _require_storage()
+        saved = await storage.agent_config.upsert(body)
+        return StructuredResult(ok=True, data={"config": saved.model_dump()})
 
     @app.get(
         "/api/v1/tools", response_model=StructuredResult, dependencies=[Depends(require_context)]

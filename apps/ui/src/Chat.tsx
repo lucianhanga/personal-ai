@@ -96,6 +96,7 @@ export function Chat({
   const [showAppLogs, setShowAppLogs] = useState(false);
   const [showMcp, setShowMcp] = useState(false);
   const [showPreferences, setShowPreferences] = useState(false);
+  const [showAgents, setShowAgents] = useState(false);
   const [showMcpActivity, setShowMcpActivity] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chatsCollapsed, setChatsCollapsed] = useState(false);
@@ -546,6 +547,8 @@ export function Chat({
         setShowMcp={setShowMcp}
         showPreferences={showPreferences}
         setShowPreferences={setShowPreferences}
+        showAgents={showAgents}
+        setShowAgents={setShowAgents}
       />
 
       {/* Row 3: workspace — chats (1/6) | chat (3/6) | logs (2/6). */}

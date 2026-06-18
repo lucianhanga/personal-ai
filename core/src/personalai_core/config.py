@@ -28,6 +28,7 @@ _ENV_FIELDS = {
     "MCP_CONFIG": "mcp_config_path",
     "AGENT_MAX_ITERATIONS": "agent_max_iterations",
     "AGENT_TIMEOUT_SECONDS": "agent_timeout_seconds",
+    "AGENT_MODE": "agent_mode",
     "AGENT_GRAPH_ENABLED": "agent_graph_enabled",
     "AGENT_HUMAN_GATE": "agent_human_gate",
     "AGENT_ACCURACY_MODE": "agent_accuracy_mode",
@@ -121,6 +122,11 @@ class CoreConfig(StrictModel):
     # default off keeps the single-agent loop. accuracy_mode drives the verification-ladder depth
     # ("standard"/"accurate"). Security gates (approval, egress, tenant) are NEVER accuracy-gated.
     agent_graph_enabled: bool = False
+    # Agentic mode (#290): "single" = single-agent loop, "multi" = the planner/researcher/critic
+    # graph, "custom" = user-defined agents (reserved/future). The user-facing control; the chat
+    # path drives graph selection off this. agent_graph_enabled stays as the legacy env flag
+    # (from_env upgrades the mode to "multi" when it is set and no mode is given).
+    agent_mode: str = "single"
     # M8.1c (ADR-0012): when the graph is enabled, also suspend each turn at a durable human gate
     # (after the critic) for approve/reject before finalizing. Requires the graph; default off so
     # the normal flow finalizes without a gate. The checkpoint is tenant-scoped (RLS) via TenantDb.
@@ -194,6 +200,10 @@ class CoreConfig(StrictModel):
                 values[field_name] = tuple(o.strip() for o in raw.split(",") if o.strip())
             else:
                 values[field_name] = raw
+        # Back-compat (#290): the legacy AGENT_GRAPH_ENABLED flag maps to agent_mode="multi" when no
+        # explicit AGENT_MODE is given, so existing env config keeps selecting the graph.
+        if "agent_mode" not in values and values.get("agent_graph_enabled") is True:
+            values["agent_mode"] = "multi"
         return cls.model_validate(values)
 
 

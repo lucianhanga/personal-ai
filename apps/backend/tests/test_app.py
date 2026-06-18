@@ -328,9 +328,9 @@ def test_chat_empty_completion_emits_notice() -> None:
 
 
 def test_chat_with_graph_enabled_streams_plan_answer_critique() -> None:
-    # M8.1b: with agent_graph_enabled the tool path runs the planner -> researcher -> critic graph,
-    # so the stream carries plan + critique steps around the answer (in addition to the done frame).
-    config = CoreConfig(auth_token=TOKEN, agent_graph_enabled=True)
+    # M8.1b/#290: with agent_mode="multi" the tool path runs the planner -> researcher -> critic
+    # graph, so the stream carries plan + critique steps around the answer (plus the done frame).
+    config = CoreConfig(auth_token=TOKEN, agent_mode="multi")
     boot = bootstrap(config=config)
     boot.registries.model_providers.register("fake", FakeModelProvider(name="fake"), overwrite=True)
     client = TestClient(create_app(boot))
