@@ -86,6 +86,46 @@ def test_agent_calls_tool_then_answers() -> None:
     assert events[-1].answer == "The answer is 437."
 
 
+class _NarratingScripted(FakeModelProvider):
+    """Turn 1 narrates its tool use AND calls a tool; turn 2 gives the final answer."""
+
+    def __init__(self) -> None:
+        super().__init__(name="narrate")
+        self._n = 0
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        self._n += 1
+        if self._n == 1:
+            return GenerationResult(
+                text="Let me calculate that for you.",
+                model=request.model,
+                tool_calls=[ToolCallRequest(name="calculator", arguments={"expression": "23*19"})],
+            )
+        return GenerationResult(text="The answer is 437.", model=request.model)
+
+
+def test_tool_turn_narration_becomes_reasoning_not_answer() -> None:
+    # A turn that calls a tool is the model narrating ("let me…"); that text must land in reasoning,
+    # not the answer. Only the final turn's text is the answer.
+    async def _run() -> list[AgentEvent]:
+        return [
+            ev
+            async for ev in run_agent(
+                messages=[ChatMessage(Role.USER, "what is 23*19?")],
+                provider=_NarratingScripted(),
+                model="m",
+                gateway=_gateway(),
+                tools=[RegisteredTool(CALC, _Calc())],
+            )
+        ]
+
+    events = asyncio.run(_run())
+    assert [e.type for e in events] == ["reasoning", "tool_call", "tool_result", "answer", "final"]
+    assert events[0].thinking == "Let me calculate that for you."
+    answer = "".join(e.answer or "" for e in events if e.type == "answer")
+    assert answer == "The answer is 437." and "Let me calculate" not in answer
+
+
 def test_agent_answers_directly_without_tools() -> None:
     async def _run() -> list[AgentEvent]:
         return [

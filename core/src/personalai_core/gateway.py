@@ -12,8 +12,9 @@ later). Untrusted MCP servers (M7) run out-of-process by protocol and plug in he
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import jsonschema
 
@@ -27,6 +28,22 @@ from personalai_core.security.egress import EgressBlockedError
 EgressCheck = Callable[[str], None]
 
 _APPROVAL_RISKS = frozenset({RiskLevel.HIGH, RiskLevel.CRITICAL})
+
+
+def _coerce_arg_names(args: Mapping[str, Any], schema: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Best-effort fix for a model that mislabels ONE argument (e.g. sends ``input`` for a tool
+    whose required parameter is ``query``). When exactly one required property is missing and
+    exactly one supplied key is not in the schema, rename that key to the missing one. Returns the
+    corrected args, or None when the heuristic doesn't clearly apply (then the call is rejected)."""
+    props = schema.get("properties") or {}
+    required = schema.get("required") or []
+    missing = [r for r in required if r not in args]
+    extra = [k for k in args if k not in props]
+    if len(missing) == 1 and len(extra) == 1:
+        fixed = {k: v for k, v in args.items() if k != extra[0]}
+        fixed[missing[0]] = args[extra[0]]
+        return fixed
+    return None
 
 
 @dataclass(frozen=True)
@@ -98,10 +115,29 @@ class ToolGateway:
             if not _is_granted(permission, grants):
                 return deny(f"permission not granted: {permission.type.value}:{permission.scope}")
         if manifest.inputs:
+            schema = dict(manifest.inputs)
             try:
-                jsonschema.validate(dict(call.args), dict(manifest.inputs))
+                jsonschema.validate(dict(call.args), schema)
             except jsonschema.ValidationError as exc:
-                return deny(f"invalid input: {exc.message}")
+                # Auto-fix the common "model used a synonym for one argument" case (e.g. `input`
+                # for the required `query`); otherwise deny with a list of the valid parameters so
+                # the model can self-correct on its next turn.
+                coerced = _coerce_arg_names(dict(call.args), schema)
+                if coerced is not None:
+                    try:
+                        jsonschema.validate(coerced, schema)
+                        call = ToolCall(call.tool, call.version, coerced)
+                    except jsonschema.ValidationError:
+                        coerced = None
+                if coerced is None:
+                    props = schema.get("properties") or {}
+                    required = set(schema.get("required") or [])
+                    if props:
+                        spec = ", ".join(
+                            f"{k}{' (required)' if k in required else ''}" for k in props
+                        )
+                        return deny(f"invalid input: {exc.message}. valid parameters: {spec}")
+                    return deny(f"invalid input: {exc.message}")
         for host in manifest.egress:
             try:
                 self._egress(host)

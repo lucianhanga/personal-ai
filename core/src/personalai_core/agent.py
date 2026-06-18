@@ -118,8 +118,10 @@ async def run_agent(
     text = ""
     usage: Mapping[str, int] = {}
     for _ in range(max_iterations):
-        # Stream each model turn so reasoning and the answer arrive token-by-token; tool calls are
-        # parsed from the stream. Reasoning is emitted in order, before this turn's tool calls.
+        # Buffer this turn's text and classify it only once the turn ends: a turn that also requests
+        # tools is the model narrating its tool use ("let me search…"), NOT the answer — emitting it
+        # as the answer pollutes the reply with intermediate chatter, especially if the loop never
+        # reaches a clean final turn. Reasoning still streams in order.
         text = ""
         tool_calls: list[ToolCallRequest] = []
         async for chunk in provider.stream(
@@ -129,19 +131,22 @@ async def run_agent(
                 yield AgentEvent(type="reasoning", thinking=chunk.thinking)
             if chunk.delta:
                 text += chunk.delta
-                yield AgentEvent(type="answer", answer=chunk.delta)
             if chunk.tool_calls:
                 tool_calls = list(chunk.tool_calls)
             if chunk.usage:
                 usage = chunk.usage
 
         if not tool_calls:
+            # Final turn: this text is the answer for the user.
+            if text:
+                yield AgentEvent(type="answer", answer=text)
             yield AgentEvent(type="final", answer=text, usage=dict(usage))
             return
 
-        # Echo the assistant's (possibly empty) turn, then each tool result as a TOOL-role message
-        # so the model sees the call was answered (native protocol) and produces a final reply.
+        # This turn called tools: its text is tool-use narration, not the answer. Surface it as
+        # reasoning so it joins the trace, and echo it to the model as the assistant turn.
         if text.strip():
+            yield AgentEvent(type="reasoning", thinking=text)
             convo.append(ChatMessage(Role.ASSISTANT, text))
         for call in tool_calls:
             yield AgentEvent(type="tool_call", tool=call.name, args=dict(call.arguments))

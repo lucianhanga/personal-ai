@@ -125,6 +125,23 @@ def test_invalid_input_rejected() -> None:
     assert not result.ok and "invalid input" in (result.error or "")
 
 
+def test_invalid_input_error_lists_valid_parameters() -> None:
+    # The error names the valid parameters so the model can fix a wrong argument name next turn.
+    # Empty args can't be auto-coerced (no single mislabeled key), so the call is denied.
+    gw, _ = _gateway(RegisteredTool(_manifest(inputs=_STR_SCHEMA, risk=RiskLevel.LOW), _Echo()))
+    result = _run(gw.invoke(ToolCall("echo", "1.0.0", {})))  # missing required `x`, nothing to rename
+    assert not result.ok
+    assert "valid parameters: x (required)" in (result.error or "")
+
+
+def test_single_mislabeled_arg_is_auto_coerced() -> None:
+    # A model sent `input` for the required `x`; the gateway renames the one extra key and runs the
+    # tool (the handler sees the corrected name), instead of failing the call.
+    gw, _ = _gateway(RegisteredTool(_manifest(inputs=_STR_SCHEMA, risk=RiskLevel.LOW), _Echo()))
+    result = _run(gw.invoke(ToolCall("echo", "1.0.0", {"input": "hello"})))
+    assert result.ok and result.output == {"echo": "hello"}
+
+
 def test_egress_blocked_denies() -> None:
     gw, _ = _gateway(
         RegisteredTool(_manifest(egress=["evil.example"], risk=RiskLevel.LOW), _Echo()),
