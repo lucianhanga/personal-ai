@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from personalai_contracts.ports.storage import VectorMatch, VectorRecord
 from personalai_storage_postgres.db import TENANT_ID_SQL, Querier
 
-# Embedding dimension of the default embedding model (mxbai-embed-large).
+# Embedding dimension of the default embedding model (qwen3-embedding:0.6b).
 VECTOR_DIM = 1024
 
 

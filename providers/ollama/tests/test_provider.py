@@ -65,7 +65,7 @@ def test_capabilities_embedding_model() -> None:
             json={"capabilities": ["embedding"], "model_info": {"general.architecture": "bert"}},
         )
     )
-    caps = run(lambda p: p.capabilities("mxbai-embed-large"))
+    caps = run(lambda p: p.capabilities("qwen3-embedding:0.6b"))
     assert caps.embeddings is True
     assert caps.text is False
     assert caps.max_context_tokens is None
@@ -257,10 +257,10 @@ def test_generate_forwards_think_flag_and_captures_thinking() -> None:
 def test_embed_returns_vectors_and_dimensions() -> None:
     respx.post(f"{BASE}/api/embed").mock(
         return_value=httpx.Response(
-            200, json={"model": "mxbai-embed-large", "embeddings": [[0.1, 0.2, 0.3]]}
+            200, json={"model": "qwen3-embedding:0.6b", "embeddings": [[0.1, 0.2, 0.3]]}
         )
     )
-    result = run(lambda p: p.embed(["hello"], "mxbai-embed-large"))
+    result = run(lambda p: p.embed(["hello"], "qwen3-embedding:0.6b"))
     assert result.dimensions == 3
     assert result.vectors == [[0.1, 0.2, 0.3]]
 
@@ -269,7 +269,7 @@ def test_embed_returns_vectors_and_dimensions() -> None:
 def test_list_models_combines_tags_and_capabilities() -> None:
     respx.get(f"{BASE}/api/tags").mock(
         return_value=httpx.Response(
-            200, json={"models": [{"name": "qwen3:8b"}, {"name": "mxbai-embed-large"}, {}]}
+            200, json={"models": [{"name": "qwen3:8b"}, {"name": "qwen3-embedding:0.6b"}, {}]}
         )
     )
     respx.post(f"{BASE}/api/show").mock(
@@ -281,7 +281,7 @@ def test_list_models_combines_tags_and_capabilities() -> None:
     models = run(lambda p: p.list_models())
     assert [m.name for m in models] == [
         "qwen3:8b",
-        "mxbai-embed-large",
+        "qwen3-embedding:0.6b",
     ]  # entry without name skipped
     assert models[0].capabilities.tool_calling is True
     assert models[1].capabilities.embeddings is True

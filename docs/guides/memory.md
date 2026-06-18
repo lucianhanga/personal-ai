@@ -57,7 +57,7 @@ Start a chat with the **incognito** switch (or `POST /api/v1/conversations {"inc
 | `PERSONALAI_STM_SUMMARIZE` | `true` | enable the short-term rolling summary |
 | `PERSONALAI_MEMORY_ENABLED` | `true` | extract long-term memories after a turn |
 | `PERSONALAI_MEMORY_TOP_K` | `5` | memories injected when `use_memory` is on |
-| `PERSONALAI_EMBED_MODEL` | `mxbai-embed-large` | embeddings for memory (1024-dim) |
+| `PERSONALAI_EMBED_MODEL` | `qwen3-embedding:0.6b` | embeddings for memory (1024-dim) |
 
 ## How it relates to RAG and KAG
 

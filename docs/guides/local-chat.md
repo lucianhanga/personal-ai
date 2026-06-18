@@ -115,7 +115,7 @@ chat-model weights + chat-model KV cache + embedding model (RAG/memory) + your o
 If it doesn't fit, Ollama **evicts** models to make room, and a chat model + the embedding model can
 **ping-pong** (each request reloads the other), which feels like the app is hanging. Rule of thumb:
 **pick a model and context size that fit alongside the embedding model** (`PERSONALAI_EMBED_MODEL`,
-default `mxbai-embed-large`) **and** your other workloads — don't size the chat model to the full
+default `qwen3-embedding:0.6b`) **and** your other workloads — don't size the chat model to the full
 machine.
 
 ### Troubleshooting: "model won't load" / appears to hang
