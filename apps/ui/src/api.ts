@@ -441,6 +441,8 @@ export interface TenantSettings {
   memory_enabled: boolean | null;
   grounding_enabled: boolean | null;
   max_upload_bytes: number | null;
+  egress_enabled: boolean | null;
+  allowed_egress_hosts: string[] | null;
 }
 
 // The defaults the backend would apply for any field left null (echoed from the boot CoreConfig),

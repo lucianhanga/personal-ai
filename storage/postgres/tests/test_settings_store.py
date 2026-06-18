@@ -59,12 +59,17 @@ def test_settings_round_trip_and_partial_inherit() -> None:
                         agent_graph_enabled=True,
                         agent_max_iterations=12,
                         grounding_enabled=False,
+                        egress_enabled=True,
+                        allowed_egress_hosts=("api.example.com", "files.example.org"),
                     )
                 )
                 assert saved.default_model == "qwen3:14b"
                 assert saved.agent_graph_enabled is True
                 assert saved.agent_max_iterations == 12
                 assert saved.grounding_enabled is False
+                # The text[] allowlist round-trips back as a tuple.
+                assert saved.egress_enabled is True
+                assert saved.allowed_egress_hosts == ("api.example.com", "files.example.org")
                 # Unset fields stay None (inherit the deployment default).
                 assert saved.ollama_host is None
                 assert saved.memory_enabled is None

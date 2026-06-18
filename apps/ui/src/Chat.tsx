@@ -28,7 +28,7 @@ import {
 } from "./api";
 import { ChatsPanel } from "./ChatsPanel";
 import { MessageList } from "./MessageList";
-import { SettingsAccordion } from "./SettingsAccordion";
+import { SettingsView } from "./SettingsView";
 import { SidePanel } from "./SidePanel";
 
 // Key for the not-yet-persisted "new" chat (before its conversation id exists).
@@ -95,14 +95,10 @@ export function Chat({
   // over-deliberate and appear to hang. "Off"/"Full" remain selectable.
   const [reasoning, setReasoning] = useState<"off" | "brief" | "full">("brief");
   const [incognito, setIncognito] = useState(false);
-  const [showSettings, setShowSettings] = useState(true);
-  const [showMemory, setShowMemory] = useState(false);
-  const [showTools, setShowTools] = useState(false);
+  // Two-view navigation: the chat workspace vs the full-width Settings view (#290 redesign).
+  const [tab, setTab] = useState<"chat" | "settings">("chat");
   const [showLog, setShowLog] = useState(false);
   const [showAppLogs, setShowAppLogs] = useState(false);
-  const [showMcp, setShowMcp] = useState(false);
-  const [showPreferences, setShowPreferences] = useState(false);
-  const [showAgents, setShowAgents] = useState(false);
   const [showMcpActivity, setShowMcpActivity] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chatsCollapsed, setChatsCollapsed] = useState(false);
@@ -492,6 +488,30 @@ export function Chat({
         }}
       >
         <h1 style={{ margin: 0, fontSize: "1.3rem" }}>Personal AI</h1>
+        {/* Chat | Settings view switch (two-tab navigation). */}
+        <div role="tablist" aria-label="view" style={{ display: "flex", gap: "0.25rem" }}>
+          {(["chat", "settings"] as const).map((v) => (
+            <button
+              key={v}
+              role="tab"
+              aria-selected={tab === v}
+              aria-current={tab === v ? "page" : undefined}
+              data-testid={`nav-${v}`}
+              onClick={() => setTab(v)}
+              style={{
+                padding: "0.25rem 0.6rem",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                fontSize: "0.9rem",
+                fontWeight: tab === v ? 600 : 400,
+                borderBottom: tab === v ? "2px solid #1a7f37" : "2px solid transparent",
+              }}
+            >
+              {v === "chat" ? "Chat" : "Settings"}
+            </button>
+          ))}
+        </div>
         {/* Backend health as a color dot + label (green ok, red down, amber checking). */}
         <span
           data-testid="backend-status"
@@ -511,86 +531,66 @@ export function Chat({
           />
           {statusLabel}
         </span>
-        <label htmlFor="model" style={{ marginLeft: "auto", fontSize: "0.85rem", color: "#555" }}>
-          Model
-        </label>
-        <select
-          id="model"
-          data-testid="model-select"
-          value={model}
-          onChange={(e) => onModelChange(e.target.value)}
-        >
-          {models.map((m) => (
-            <option key={m.name} value={m.name}>
-              {m.name}
-            </option>
-          ))}
-        </select>
-        {/* The provider selector only appears when more than one is configured (local-first: usually
-            just Ollama, so it stays out of the way). */}
-        {providers.length > 1 && (
-          <select
-            data-testid="provider-select"
-            aria-label="provider"
-            value={provider}
-            onChange={(e) => setProvider(e.target.value)}
-          >
-            {providers.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-        )}
-        {selected && (
-          <span data-testid="model-caps" style={{ fontSize: "0.8rem", color: "#555" }}>
-            {[
-              selected.local ? "local" : "remote",
-              selected.capabilities.vision && "vision",
-              selected.capabilities.tool_calling && "tools",
-              selected.capabilities.thinking && "thinking",
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </span>
+        {/* Model selection is a Chat-view concern (per-turn); hidden on the Settings view. */}
+        {tab === "chat" && (
+          <>
+            <label htmlFor="model" style={{ marginLeft: "auto", fontSize: "0.85rem", color: "#555" }}>
+              Model
+            </label>
+            <select
+              id="model"
+              data-testid="model-select"
+              value={model}
+              onChange={(e) => onModelChange(e.target.value)}
+            >
+              {models.map((m) => (
+                <option key={m.name} value={m.name}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+            {/* The provider selector only appears when more than one is configured (local-first:
+                usually just Ollama, so it stays out of the way). */}
+            {providers.length > 1 && (
+              <select
+                data-testid="provider-select"
+                aria-label="provider"
+                value={provider}
+                onChange={(e) => setProvider(e.target.value)}
+              >
+                {providers.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            )}
+            {selected && (
+              <span data-testid="model-caps" style={{ fontSize: "0.8rem", color: "#555" }}>
+                {[
+                  selected.local ? "local" : "remote",
+                  selected.capabilities.vision && "vision",
+                  selected.capabilities.tool_calling && "tools",
+                  selected.capabilities.thinking && "thinking",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            )}
+          </>
         )}
       </header>
 
-      {/* Row 2: global settings (collapsible accordion). */}
-      <SettingsAccordion
-        token={token}
-        onToken={onToken}
-        showSettings={showSettings}
-        setShowSettings={setShowSettings}
-        files={files}
-        uploading={uploading}
-        onUpload={(f) => void onUpload(f)}
-        useRag={useRag}
-        setUseRag={setUseRag}
-        showTools={showTools}
-        setShowTools={setShowTools}
-        useTools={useTools}
-        setUseTools={setUseTools}
-        approveTools={approveTools}
-        setApproveTools={setApproveTools}
-        showMemory={showMemory}
-        setShowMemory={setShowMemory}
-        useMemory={useMemory}
-        setUseMemory={setUseMemory}
-        reasoning={reasoning}
-        setReasoning={setReasoning}
-        showMcp={showMcp}
-        setShowMcp={setShowMcp}
-        showPreferences={showPreferences}
-        setShowPreferences={setShowPreferences}
-        showAgents={showAgents}
-        setShowAgents={setShowAgents}
-      />
-
-      {/* Row 3: workspace — chats (1/6) | chat (3/6) | logs (2/6). Always shown: in local mode
-          there is no token (zero-login), and in hosted mode the App gates on the session, so the
-          workspace must not depend on a bearer token. */}
-      {
+      {tab === "settings" ? (
+        <SettingsView
+          token={token}
+          onToken={onToken}
+          files={files}
+          uploading={uploading}
+          onUpload={(f) => void onUpload(f)}
+          onDelete={(id) => void onDelete(id)}
+        />
+      ) : (
         <div
           data-testid="workspace"
           style={{
@@ -627,26 +627,6 @@ export function Chat({
             data-testid="chat-col"
             style={{ flex: 3, minWidth: 0, display: "flex", flexDirection: "column", gap: "0.5rem" }}
           >
-            {files.length > 0 && (
-              <ul
-                data-testid="file-list"
-                style={{ margin: 0, paddingLeft: "1rem", fontSize: "0.8rem" }}
-              >
-                {files.map((f) => (
-                  <li key={f.id} data-testid="file-item">
-                    {f.name} <span style={{ color: "#888" }}>({f.chunk_count} chunks)</span>{" "}
-                    <button
-                      data-testid={`delete-${f.id}`}
-                      onClick={() => void onDelete(f.id)}
-                      style={{ fontSize: "0.75rem" }}
-                    >
-                      remove
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-
             <MessageList
               messages={messages}
               trace={trace}
@@ -707,6 +687,79 @@ export function Chat({
               </p>
             )}
 
+            {/* Per-session controls strip: these are per-turn toggles, kept next to the composer. */}
+            <div
+              data-testid="session-controls"
+              style={{
+                display: "flex",
+                gap: "0.75rem",
+                alignItems: "center",
+                flexWrap: "wrap",
+                fontSize: "0.85rem",
+                borderTop: "1px solid #eee",
+                paddingTop: "0.4rem",
+              }}
+            >
+              <label>
+                <input
+                  data-testid="rag-toggle"
+                  type="checkbox"
+                  checked={useRag}
+                  onChange={(e) => setUseRag(e.target.checked)}
+                />{" "}
+                Use my documents
+              </label>
+              <label>
+                <input
+                  data-testid="tools-toggle"
+                  type="checkbox"
+                  checked={useTools}
+                  onChange={(e) => setUseTools(e.target.checked)}
+                />{" "}
+                Use tools
+              </label>
+              {useTools && (
+                <label title="Allow high-risk tools (e.g. http_fetch) to run this session">
+                  <input
+                    data-testid="approve-tools-toggle"
+                    type="checkbox"
+                    checked={approveTools}
+                    onChange={(e) => setApproveTools(e.target.checked)}
+                  />{" "}
+                  approve high-risk
+                </label>
+              )}
+              <label>
+                <input
+                  data-testid="memory-toggle"
+                  type="checkbox"
+                  checked={useMemory}
+                  onChange={(e) => setUseMemory(e.target.checked)}
+                />{" "}
+                Use my memory
+              </label>
+              <label
+                style={{ marginLeft: "auto" }}
+                title="How much the model thinks before answering. Off = none; Brief = concise; Full = think freely (slower)."
+              >
+                Reasoning{" "}
+                <select
+                  data-testid="reasoning-select"
+                  value={reasoning}
+                  onChange={(e) => setReasoning(e.target.value as "off" | "brief" | "full")}
+                >
+                  <option value="off">Off</option>
+                  <option value="brief">Brief</option>
+                  <option value="full">Full</option>
+                </select>
+              </label>
+            </div>
+            {files.length > 0 && !useRag && (
+              <span data-testid="rag-hint" style={{ color: "#b06f00", fontSize: "0.8rem" }}>
+                Not using your documents — turn on “Use my documents” to ground answers.
+              </span>
+            )}
+
             <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-end" }}>
               <textarea
                 data-testid="composer"
@@ -749,7 +802,7 @@ export function Chat({
             setShowMcpActivity={setShowMcpActivity}
           />
         </div>
-      }
+      )}
 
       <p data-testid="security-note" style={{ color: "#555", fontSize: "0.8rem" }}>
         Local-first: network egress is disabled by default; remote providers are opt-in.

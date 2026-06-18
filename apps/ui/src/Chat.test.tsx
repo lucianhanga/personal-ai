@@ -108,6 +108,8 @@ test("uploads a document, lists it, and enables RAG", async () => {
   const upload = vi.spyOn(api, "uploadFile").mockResolvedValue(DOC);
 
   render(<Chat token="demo" />);
+  // Upload lives in Settings > Documents (the default settings section).
+  fireEvent.click(await screen.findByTestId("nav-settings"));
   await waitFor(() => expect(screen.getByTestId("file-input")).toBeInTheDocument());
 
   const file = new File(["hi"], "geo.txt", { type: "text/plain" });
@@ -115,6 +117,8 @@ test("uploads a document, lists it, and enables RAG", async () => {
 
   await waitFor(() => expect(upload).toHaveBeenCalled());
   await waitFor(() => expect(screen.getByTestId("file-list")).toHaveTextContent("geo.txt"));
+  // Back on the chat view, RAG was auto-enabled now that a document exists.
+  fireEvent.click(screen.getByTestId("nav-chat"));
   expect(screen.getByTestId("rag-toggle")).toBeChecked();
 });
 
@@ -124,9 +128,11 @@ test("defaults 'Use my documents' on when documents already exist", async () => 
   vi.spyOn(api, "fetchFiles").mockResolvedValue([DOC]);
 
   render(<Chat token="demo" />);
-  await waitFor(() => expect(screen.getByTestId("file-list")).toHaveTextContent("geo.txt"));
-  expect(screen.getByTestId("rag-toggle")).toBeChecked();
+  await waitFor(() => expect(screen.getByTestId("rag-toggle")).toBeChecked());
   expect(screen.queryByTestId("rag-hint")).toBeNull();
+  // The document is listed under Settings > Documents.
+  fireEvent.click(screen.getByTestId("nav-settings"));
+  await waitFor(() => expect(screen.getByTestId("file-list")).toHaveTextContent("geo.txt"));
 });
 
 test("hints when documents exist but RAG is off", async () => {
@@ -246,28 +252,29 @@ test("renders tool steps when the agent uses tools", async () => {
 });
 
 
-test("toggles default on and the settings accordion collapses", async () => {
+test("per-session toggles default on; the Chat/Settings tabs switch views", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
 
   render(<Chat token="demo" />);
-  await waitFor(() => expect(screen.getByTestId("settings-documents")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByTestId("session-controls")).toBeInTheDocument());
 
+  // Per-session toggles live in the strip above the composer and default on.
   expect(screen.getByTestId("rag-toggle")).toBeChecked();
   expect(screen.getByTestId("memory-toggle")).toBeChecked();
   expect(screen.getByTestId("tools-toggle")).toBeChecked();
   expect(screen.getByTestId("approve-tools-toggle")).toBeChecked();
-  expect((screen.getByTestId("reasoning-select") as HTMLSelectElement).value).toBe("brief"); // default
-  // Grouped lines incl. MCP (in Settings, not the sidebar).
-  expect(screen.getByTestId("settings-tools")).toBeInTheDocument();
-  expect(screen.getByTestId("settings-memory")).toBeInTheDocument();
-  expect(screen.getByTestId("settings-mcp")).toBeInTheDocument();
+  expect((screen.getByTestId("reasoning-select") as HTMLSelectElement).value).toBe("brief");
 
-  // Accordion collapses and re-expands.
-  fireEvent.click(screen.getByTestId("settings-toggle"));
-  await waitFor(() => expect(screen.queryByTestId("settings-documents")).toBeNull());
-  fireEvent.click(screen.getByTestId("settings-toggle"));
-  await waitFor(() => expect(screen.getByTestId("settings-documents")).toBeInTheDocument());
+  // Switch to the Settings view: the section nav appears and the chat workspace is hidden.
+  fireEvent.click(screen.getByTestId("nav-settings"));
+  await waitFor(() => expect(screen.getByTestId("settings-view")).toBeInTheDocument());
+  expect(screen.getByTestId("settings-nav")).toBeInTheDocument();
+  expect(screen.queryByTestId("workspace")).toBeNull();
+
+  // Back to Chat.
+  fireEvent.click(screen.getByTestId("nav-chat"));
+  await waitFor(() => expect(screen.getByTestId("workspace")).toBeInTheDocument());
 });
 
 
@@ -412,8 +419,6 @@ test("collapses and expands the panel sidebar", async () => {
 
   render(<Chat token="demo" />);
   await waitFor(() => expect(screen.getByTestId("side-panel")).toBeInTheDocument());
-  // Panel buttons live in the sidebar.
-  expect(screen.getByTestId("memory-show")).toBeInTheDocument();
 
   // Collapse -> sidebar gone, chat takes full width.
   fireEvent.click(screen.getByTestId("side-toggle"));

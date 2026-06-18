@@ -68,7 +68,13 @@ from personalai_core import (
     summarize,
 )
 from personalai_core.registries import Registries
-from personalai_core.security import assert_egress_allowed, current_conversation, current_security
+from personalai_core.security import (
+    assert_egress_allowed,
+    current_conversation,
+    current_egress,
+    current_security,
+    effective_egress_config,
+)
 from personalai_modality_files import UnsupportedFileTypeError
 from personalai_storage_postgres import (
     Conversation,
@@ -338,7 +344,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     app.state.mcp_manager = McpManager(
         boot.registries,
         _mcp_config_path(boot.config),
-        egress_guard=lambda host: assert_egress_allowed(boot.config, host),
+        egress_guard=lambda host: assert_egress_allowed(effective_egress_config(boot.config), host),
     )
     app.state.bg_tasks = set()  # fire-and-forget background tasks (e.g. memory extraction)
 
@@ -691,6 +697,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             # Tag tool-audit + app-log entries produced during this turn with the active chat,
             # so the UI can show per-conversation history (reset when the stream ends).
             cv_token = current_conversation.set(req.conversation_id)
+            # Enforce this tenant's effective egress for in-process tools this turn (#290).
+            eg_token = current_egress.set(config)
             try:
                 if citations:
                     yield f"event: citations\ndata: {json.dumps(citations)}\n\n".encode()
@@ -854,6 +862,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                         )
             finally:
                 current_conversation.reset(cv_token)
+                current_egress.reset(eg_token)
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 

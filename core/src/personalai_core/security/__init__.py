@@ -12,7 +12,12 @@ from personalai_core.security.audit import (
     current_security,
     require_security,
 )
-from personalai_core.security.egress import EgressBlockedError, assert_egress_allowed
+from personalai_core.security.egress import (
+    EgressBlockedError,
+    assert_egress_allowed,
+    current_egress,
+    effective_egress_config,
+)
 from personalai_core.security.redaction import REDACTED, redact
 
 __all__ = [
@@ -23,7 +28,9 @@ __all__ = [
     "SecurityContextError",
     "assert_egress_allowed",
     "current_conversation",
+    "current_egress",
     "current_security",
+    "effective_egress_config",
     "redact",
     "require_security",
 ]

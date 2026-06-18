@@ -24,6 +24,8 @@ const SETTINGS: TenantSettings = {
   memory_enabled: null,
   grounding_enabled: null,
   max_upload_bytes: null,
+  egress_enabled: null,
+  allowed_egress_hosts: null,
 };
 
 const VIEW: AgentConfigView = {

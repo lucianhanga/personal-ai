@@ -55,12 +55,12 @@ const GROUPS: Group[] = [
     ],
   },
   {
-    title: "Provider (advanced)",
-    note: "Endpoint/embedding changes apply after the next backend restart.",
+    title: "Document indexing engine (advanced)",
+    note: "How documents are embedded for search — not the chat model (that's in the top bar). Changing this re-defines indexing; existing documents were embedded with the current setting, so you may need to re-upload them. Endpoint changes apply after a backend restart.",
     fields: [
       { key: "ollama_host", label: "Ollama host", kind: "text" },
-      { key: "embed_provider", label: "Embedding provider", kind: "enum", options: ["ollama", "openai_compat"] },
-      { key: "embed_model", label: "Embedding model", kind: "text" },
+      { key: "embed_provider", label: "Index provider", kind: "enum", options: ["ollama", "openai_compat"] },
+      { key: "embed_model", label: "Index embedding (advanced)", kind: "text" },
       { key: "openai_base_url", label: "OpenAI base URL", kind: "text" },
     ],
   },

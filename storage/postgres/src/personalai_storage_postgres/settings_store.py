@@ -31,6 +31,8 @@ _FIELDS = (
     "memory_enabled",
     "grounding_enabled",
     "max_upload_bytes",
+    "egress_enabled",
+    "allowed_egress_hosts",
 )
 _COLS = ", ".join(_FIELDS)
 
@@ -48,7 +50,8 @@ class PgSettingsStore:
 
     async def upsert(self, settings: TenantSettings) -> TenantSettings:
         """Replace the bound tenant's settings row (full overwrite) and return the stored value."""
-        values = [getattr(settings, f) for f in _FIELDS]
+        # asyncpg encodes a Python list (not tuple) to a Postgres array (allowed_egress_hosts).
+        values = [_array_safe(getattr(settings, f)) for f in _FIELDS]
         # $1..$N are the field values; tenant_id comes from the RLS GUC (coalesce expression).
         placeholders = ", ".join(f"${i}" for i in range(1, len(_FIELDS) + 1))
         assignments = ", ".join(f"{f} = EXCLUDED.{f}" for f in _FIELDS)
@@ -63,5 +66,11 @@ class PgSettingsStore:
         return _to_settings(row)
 
 
+def _array_safe(value: object) -> object:
+    """Tuples -> lists so asyncpg encodes them as Postgres arrays; everything else unchanged."""
+    return list(value) if isinstance(value, tuple) else value
+
+
 def _to_settings(row: asyncpg.Record) -> TenantSettings:
+    # text[] columns come back as Python lists; pydantic coerces them to the tuple fields.
     return TenantSettings(**{f: row[f] for f in _FIELDS})

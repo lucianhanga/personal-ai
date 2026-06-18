@@ -24,6 +24,8 @@ const EMPTY: TenantSettings = {
   memory_enabled: null,
   grounding_enabled: null,
   max_upload_bytes: null,
+  egress_enabled: null,
+  allowed_egress_hosts: null,
 };
 
 const DEFAULTS: TenantSettingsDefaults = {
@@ -43,6 +45,8 @@ const DEFAULTS: TenantSettingsDefaults = {
   memory_enabled: true,
   grounding_enabled: true,
   max_upload_bytes: 10000000,
+  egress_enabled: false,
+  allowed_egress_hosts: [],
 };
 
 function mockLoad(settings: TenantSettings = EMPTY): void {

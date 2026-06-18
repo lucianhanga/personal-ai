@@ -8,9 +8,22 @@ the system local-first by default.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
+
 from personalai_core.config import CoreConfig
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+# Per-request egress override (#290 UI redesign): the chat path sets this to the request tenant's
+# effective config so the egress guard honors per-tenant egress settings; unset falls back to the
+# boot config (e.g. background/health checks). Holding the whole CoreConfig keeps the guard's
+# semantics (enabled + allowlist + allow_any) intact.
+current_egress: ContextVar[CoreConfig | None] = ContextVar("current_egress", default=None)
+
+
+def effective_egress_config(boot_config: CoreConfig) -> CoreConfig:
+    """The egress config to enforce now: the per-request override if set, else ``boot_config``."""
+    return current_egress.get() or boot_config
 
 
 class EgressBlockedError(Exception):

@@ -45,3 +45,10 @@ class TenantSettings(StrictModel):
     memory_enabled: bool | None = None
     grounding_enabled: bool | None = None
     max_upload_bytes: int | None = Field(default=None, ge=1, le=1_000_000_000)
+
+    # --- Network egress (security-sensitive) ---
+    # When egress_enabled is on, outbound calls from in-process tools are permitted only to hosts in
+    # allowed_egress_hosts (empty = fail-closed, deny all). None on either inherits the deployment
+    # default. Hosts are bare lowercase hostnames (no scheme/path).
+    egress_enabled: bool | None = None
+    allowed_egress_hosts: tuple[str, ...] | None = None

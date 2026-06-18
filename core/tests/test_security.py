@@ -170,3 +170,26 @@ def test_require_security_is_fail_closed() -> None:
         assert require_security() is ctx
     finally:
         current_security.reset(token)
+
+
+def test_effective_egress_config_uses_contextvar_override() -> None:
+    # #290: the per-request contextvar override drives the decision; unset falls back to boot.
+    from personalai_core.security import current_egress, effective_egress_config
+
+    boot = CoreConfig()  # egress disabled
+    assert effective_egress_config(boot) is boot  # no override -> boot config
+
+    override = CoreConfig(egress_enabled=True, allowed_egress_hosts=("api.example.com",))
+    token = current_egress.set(override)
+    try:
+        eff = effective_egress_config(boot)
+        assert eff is override
+        # With the override in effect, the allow-listed host passes and others fail closed.
+        assert_egress_allowed(eff, host="api.example.com")
+        with pytest.raises(EgressBlockedError):
+            assert_egress_allowed(eff, host="evil.example.com")
+    finally:
+        current_egress.reset(token)
+    # After reset, the boot (disabled) config denies again.
+    with pytest.raises(EgressBlockedError):
+        assert_egress_allowed(effective_egress_config(boot), host="api.example.com")
