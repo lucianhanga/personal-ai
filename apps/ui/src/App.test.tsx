@@ -60,11 +60,11 @@ test("shows not reachable when the backend fails", async () => {
   );
 });
 
-test("renders the local provider badge and the security note", async () => {
+test("renders the backend status and the security note", async () => {
   mockFetch(() => new Response(JSON.stringify({ status: "ok" }), { status: 200 }));
   render(<App />);
   // Chat renders after the session resolves (the app gates on /auth/session/me now).
-  expect(await screen.findByTestId("provider-badge")).toHaveTextContent("Local");
+  expect(await screen.findByTestId("backend-status")).toBeInTheDocument();
   expect(screen.getByTestId("security-note")).toHaveTextContent(/egress is disabled/i);
 });
 

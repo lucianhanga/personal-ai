@@ -34,6 +34,7 @@ interface SettingsAccordionProps {
   setShowPreferences: Dispatch<SetStateAction<boolean>>;
   showAgents: boolean;
   setShowAgents: Dispatch<SetStateAction<boolean>>;
+  onToken?: (value: string) => void;
 }
 
 const ROW: React.CSSProperties = {
@@ -65,7 +66,7 @@ export function SettingsAccordion(props: SettingsAccordionProps): React.ReactEle
           fontWeight: 600,
         }}
       >
-        {showSettings ? "▾" : "▸"} Settings
+        {showSettings ? "[-]" : "[+]"} Settings
       </button>
       {showSettings && (
         <div
@@ -190,7 +191,7 @@ export function SettingsAccordion(props: SettingsAccordionProps): React.ReactEle
               Saved defaults (model, agent, behavior)
             </span>
           </div>
-          {props.showPreferences && <Preferences token={token} />}
+          {props.showPreferences && <Preferences token={token} onToken={props.onToken} />}
 
           {/* Line 7: Agents (agentic mode + per-agent prompts/tools) */}
           <div data-testid="settings-agents" style={ROW}>

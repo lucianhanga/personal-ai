@@ -433,8 +433,10 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         response_model=StructuredResult,
         dependencies=[Depends(require_context)],
     )
-    def api_providers() -> StructuredResult:
-        config: CoreConfig = app.state.config
+    async def api_providers() -> StructuredResult:
+        # Seed the top-bar provider selector from the tenant's persisted default (#290 redesign),
+        # so the single source of truth for the active provider round-trips through /settings.
+        config = await _effective_config()
         registries: Registries = app.state.bootstrap.registries
         return StructuredResult(
             ok=True,
@@ -448,7 +450,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         "/api/v1/models", response_model=StructuredResult, dependencies=[Depends(require_context)]
     )
     async def api_models(provider: str | None = None) -> StructuredResult:
-        config: CoreConfig = app.state.config
+        # default_model seeds the top-bar model selector from the tenant's persisted default
+        # (#290 redesign): the selector is the single source of truth and writes back via /settings.
+        config = await _effective_config()
         resolved = _resolve_provider(provider)
         try:
             descriptors = await resolved.list_models()

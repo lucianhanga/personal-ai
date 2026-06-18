@@ -52,28 +52,31 @@ function mockLoad(settings: TenantSettings = EMPTY): void {
 test("shows the deployment default as the placeholder when unset", async () => {
   mockLoad();
   render(<Preferences token="demo" />);
+  // The model field moved to the top bar; ollama_host is a representative remaining text field.
   await waitFor(() =>
-    expect(screen.getByTestId("preferences-default_model")).toHaveAttribute(
+    expect(screen.getByTestId("preferences-ollama_host")).toHaveAttribute(
       "placeholder",
-      "qwen3.6:35b-a3b",
+      "http://127.0.0.1:11434",
     ),
   );
 });
 
 test("editing a field saves only the override", async () => {
   mockLoad();
-  const save = vi.spyOn(api, "saveSettings").mockResolvedValue({ ...EMPTY, default_model: "qwen3:14b" });
+  const save = vi
+    .spyOn(api, "saveSettings")
+    .mockResolvedValue({ ...EMPTY, ollama_host: "http://gpu:11434" });
   render(<Preferences token="demo" />);
-  await waitFor(() => expect(screen.getByTestId("preferences-default_model")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByTestId("preferences-ollama_host")).toBeInTheDocument());
 
-  fireEvent.change(screen.getByTestId("preferences-default_model"), {
-    target: { value: "qwen3:14b" },
+  fireEvent.change(screen.getByTestId("preferences-ollama_host"), {
+    target: { value: "http://gpu:11434" },
   });
   expect(screen.getByTestId("preferences-dirty")).toBeInTheDocument();
 
   fireEvent.click(screen.getByTestId("preferences-save"));
   await waitFor(() =>
-    expect(save).toHaveBeenCalledWith("demo", { ...EMPTY, default_model: "qwen3:14b" }),
+    expect(save).toHaveBeenCalledWith("demo", { ...EMPTY, ollama_host: "http://gpu:11434" }),
   );
   await waitFor(() => expect(screen.getByTestId("preferences-saved")).toBeInTheDocument());
 });
@@ -94,11 +97,11 @@ test("the accuracy-mode enum is tri-state (default/standard/accurate)", async ()
 });
 
 test("reset clears every override back to null", async () => {
-  mockLoad({ ...EMPTY, default_model: "qwen3:14b", agent_accuracy_mode: "accurate" });
+  mockLoad({ ...EMPTY, ollama_host: "http://gpu:11434", agent_accuracy_mode: "accurate" });
   const save = vi.spyOn(api, "saveSettings").mockResolvedValue(EMPTY);
   render(<Preferences token="demo" />);
   await waitFor(() =>
-    expect(screen.getByTestId("preferences-default_model")).toHaveValue("qwen3:14b"),
+    expect(screen.getByTestId("preferences-ollama_host")).toHaveValue("http://gpu:11434"),
   );
 
   fireEvent.click(screen.getByTestId("preferences-reset"));

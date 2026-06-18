@@ -76,6 +76,20 @@ def test_settings_get_defaults_then_round_trip() -> None:
         assert reloaded["agent_graph_enabled"] is True
 
 
+def test_saved_default_model_surfaces_in_models_endpoint() -> None:
+    # The top-bar model selector is seeded from /api/v1/models' default_model, which now reflects
+    # the tenant's persisted default (the redesign's single source of truth, saved via /settings).
+    app = create_app(bootstrap(config=CoreConfig(app_mode="hosted")))
+    with TestClient(app, base_url="https://testserver") as user:
+        _signup_login(user, f"u-{uuid.uuid4().hex[:8]}@example.com")
+        before = user.get("/api/v1/models").json()["data"]["default_model"]
+        assert before == CoreConfig().default_model  # boot default until the tenant saves one
+
+        user.put("/api/v1/settings", headers=_csrf(user), json={"default_model": "qwen3:14b"})
+        after = user.get("/api/v1/models").json()["data"]["default_model"]
+        assert after == "qwen3:14b"  # /models now reflects the persisted per-tenant default
+
+
 def test_settings_are_isolated_between_tenants() -> None:
     app = create_app(bootstrap(config=CoreConfig(app_mode="hosted")))
     with TestClient(app, base_url="https://testserver") as alice:

@@ -10,8 +10,10 @@ import {
   fetchMemories,
   fetchModels,
   fetchProviders,
+  fetchSettings,
   renameConversation,
   resumeChat,
+  saveSettings,
   streamChat,
   uploadFile,
   type ApprovalRequest,
@@ -20,6 +22,7 @@ import {
   type ConversationSummary,
   type DocumentInfo,
   type ModelInfo,
+  type TenantSettings,
   type TraceItem,
   type UsageInfo,
 } from "./api";
@@ -79,6 +82,9 @@ export function Chat({
   const [provider, setProvider] = useState<string>("");
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [model, setModel] = useState<string>("");
+  // The tenant's saved settings, loaded once. The top-bar model selector is the single source of
+  // truth and writes the chosen model back here as the persisted default, so it survives reloads.
+  const settingsRef = useRef<TenantSettings | null>(null);
   const [files, setFiles] = useState<DocumentInfo[]>([]);
   const [useRag, setUseRag] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -149,6 +155,33 @@ export function Chat({
       active = false;
     };
   }, [token, provider]);
+
+  // Load the saved settings once so the model selector can persist the chosen default. If storage
+  // is unavailable (no DB), persistence is silently skipped and selection stays session-only.
+  useEffect(() => {
+    fetchSettings(token)
+      .then(({ settings }) => {
+        settingsRef.current = settings;
+      })
+      .catch(() => {
+        settingsRef.current = null;
+      });
+  }, [token]);
+
+  // Persist the chosen model as the tenant default (best-effort; the selection still applies this
+  // session even if the write fails). Merges into the loaded settings so other fields are preserved.
+  function persistDefaultModel(name: string): void {
+    const base = settingsRef.current;
+    if (base === null || name === "") return;
+    const next: TenantSettings = { ...base, default_model: name };
+    settingsRef.current = next;
+    void saveSettings(token, next).catch(() => undefined);
+  }
+
+  function onModelChange(name: string): void {
+    setModel(name);
+    persistDefaultModel(name);
+  }
 
   useEffect(() => {
     let active = true;
@@ -459,47 +492,33 @@ export function Chat({
         }}
       >
         <h1 style={{ margin: 0, fontSize: "1.3rem" }}>Personal AI</h1>
+        {/* Backend health as a color dot + label (green ok, red down, amber checking). */}
         <span
           data-testid="backend-status"
           data-status={status}
-          style={{ fontSize: "0.85rem", color: "#555" }}
+          title={statusLabel}
+          style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", fontSize: "0.85rem", color: "#555" }}
         >
+          <span
+            aria-hidden
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background:
+                status === "connected" ? "#1a7f37" : status === "loading" ? "#b06f00" : "#b00",
+            }}
+          />
           {statusLabel}
         </span>
-        <span data-testid="provider-badge" style={{ fontSize: "0.85rem", color: "#555" }}>
-          Local
-        </span>
-        <label style={{ fontSize: "0.85rem" }}>
-          Token:{" "}
-          <input
-            data-testid="token-input"
-            type="password"
-            value={token}
-            placeholder="PERSONALAI_AUTH_TOKEN"
-            onChange={(e) => onToken?.(e.target.value)}
-          />
+        <label htmlFor="model" style={{ marginLeft: "auto", fontSize: "0.85rem", color: "#555" }}>
+          Model
         </label>
-        <label htmlFor="provider" style={{ marginLeft: "auto" }}>
-          Provider:
-        </label>
-        <select
-          id="provider"
-          data-testid="provider-select"
-          value={provider}
-          onChange={(e) => setProvider(e.target.value)}
-        >
-          {providers.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
-        <label htmlFor="model">Model:</label>
         <select
           id="model"
           data-testid="model-select"
           value={model}
-          onChange={(e) => setModel(e.target.value)}
+          onChange={(e) => onModelChange(e.target.value)}
         >
           {models.map((m) => (
             <option key={m.name} value={m.name}>
@@ -507,6 +526,22 @@ export function Chat({
             </option>
           ))}
         </select>
+        {/* The provider selector only appears when more than one is configured (local-first: usually
+            just Ollama, so it stays out of the way). */}
+        {providers.length > 1 && (
+          <select
+            data-testid="provider-select"
+            aria-label="provider"
+            value={provider}
+            onChange={(e) => setProvider(e.target.value)}
+          >
+            {providers.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+        )}
         {selected && (
           <span data-testid="model-caps" style={{ fontSize: "0.8rem", color: "#555" }}>
             {[
@@ -524,6 +559,7 @@ export function Chat({
       {/* Row 2: global settings (collapsible accordion). */}
       <SettingsAccordion
         token={token}
+        onToken={onToken}
         showSettings={showSettings}
         setShowSettings={setShowSettings}
         files={files}
@@ -551,8 +587,10 @@ export function Chat({
         setShowAgents={setShowAgents}
       />
 
-      {/* Row 3: workspace — chats (1/6) | chat (3/6) | logs (2/6). */}
-      {token ? (
+      {/* Row 3: workspace — chats (1/6) | chat (3/6) | logs (2/6). Always shown: in local mode
+          there is no token (zero-login), and in hosted mode the App gates on the session, so the
+          workspace must not depend on a bearer token. */}
+      {
         <div
           data-testid="workspace"
           style={{
@@ -669,18 +707,28 @@ export function Chat({
               </p>
             )}
 
-            <div style={{ display: "flex", gap: "0.5rem" }}>
-              <input
+            <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-end" }}>
+              <textarea
                 data-testid="composer"
-                style={{ flex: 1 }}
+                rows={4}
+                style={{ flex: 1, resize: "vertical", font: "inherit", padding: "0.4rem" }}
                 value={input}
-                placeholder="Type a message..."
+                placeholder="Type a message...  (Enter to send, Shift+Enter for a new line)"
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") void send();
+                  // Enter sends; Shift+Enter inserts a newline. Ignore Enter mid-IME composition
+                  // (e.g. Japanese/Chinese input) so committing a candidate doesn't send.
+                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    void send();
+                  }
                 }}
               />
-              <button data-testid="send" onClick={() => void send()} disabled={busy || !model}>
+              <button
+                data-testid="send"
+                onClick={() => void send()}
+                disabled={busy || !model || input.trim() === ""}
+              >
                 {busy ? "..." : "Send"}
               </button>
             </div>
@@ -701,11 +749,7 @@ export function Chat({
             setShowMcpActivity={setShowMcpActivity}
           />
         </div>
-      ) : (
-        <p data-testid="need-token" style={{ color: "#888" }}>
-          Enter your backend API token to start chatting.
-        </p>
-      )}
+      }
 
       <p data-testid="security-note" style={{ color: "#555", fontSize: "0.8rem" }}>
         Local-first: network egress is disabled by default; remote providers are opt-in.

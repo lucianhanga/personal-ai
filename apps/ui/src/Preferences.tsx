@@ -32,8 +32,8 @@ interface Group {
 const GROUPS: Group[] = [
   {
     title: "Model",
+    note: "The active model is chosen in the top bar (it persists as your default).",
     fields: [
-      { key: "default_model", label: "Default model", kind: "text" },
       { key: "ollama_num_ctx", label: "Ollama context window", kind: "number" },
       { key: "ollama_keep_alive", label: "Ollama keep-alive", kind: "text", help: '"30m", "-1"' },
     ],
@@ -56,9 +56,8 @@ const GROUPS: Group[] = [
   },
   {
     title: "Provider (advanced)",
-    note: "Provider/endpoint changes apply after the next backend restart.",
+    note: "Endpoint/embedding changes apply after the next backend restart.",
     fields: [
-      { key: "model_provider", label: "Model provider", kind: "enum", options: ["ollama", "openai_compat"] },
       { key: "ollama_host", label: "Ollama host", kind: "text" },
       { key: "embed_provider", label: "Embedding provider", kind: "enum", options: ["ollama", "openai_compat"] },
       { key: "embed_model", label: "Embedding model", kind: "text" },
@@ -75,7 +74,13 @@ const ROW: React.CSSProperties = {
 };
 
 /** Edit the tenant's preference settings (#289). Blank fields inherit the deployment default. */
-export function Preferences({ token }: { token: string }): React.ReactElement {
+export function Preferences({
+  token,
+  onToken,
+}: {
+  token: string;
+  onToken?: (value: string) => void;
+}): React.ReactElement {
   const [draft, setDraft] = useState<TenantSettings | null>(null);
   const [defaults, setDefaults] = useState<TenantSettingsDefaults | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -198,6 +203,31 @@ export function Preferences({ token }: { token: string }): React.ReactElement {
           ))}
         </fieldset>
       ))}
+
+      {/* API token: only relevant for a backend that requires a bearer token (protected/remote
+          deployments). Local zero-login and hosted cookie sessions don't need it. Kept here, out of
+          the top bar, since it is a connection credential rather than a per-turn control. */}
+      {onToken && (
+        <fieldset
+          data-testid="preferences-group-Connection"
+          style={{ border: "1px solid #eee", borderRadius: 6, margin: "0 0 0.5rem", padding: "0.5rem" }}
+        >
+          <legend style={{ fontSize: "0.8rem", color: "#555" }}>Connection</legend>
+          <label style={ROW}>
+            <span style={{ flex: 1, fontSize: "0.85rem" }}>
+              API token
+              <span style={{ color: "#888" }}> (only if the backend requires one)</span>
+            </span>
+            <input
+              data-testid="preferences-api-token"
+              type="password"
+              placeholder="PERSONALAI_AUTH_TOKEN"
+              value={token}
+              onChange={(e) => onToken(e.target.value)}
+            />
+          </label>
+        </fieldset>
+      )}
     </section>
   );
 }
