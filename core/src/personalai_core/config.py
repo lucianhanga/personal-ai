@@ -12,6 +12,7 @@ from collections.abc import Mapping
 
 from pydantic import Field
 
+from personalai_contracts.schemas import TenantSettings
 from personalai_contracts.schemas.base import StrictModel
 
 _ENV_PREFIX = "PERSONALAI_"
@@ -135,7 +136,7 @@ class CoreConfig(StrictModel):
     # default is generous to avoid pool-exhaustion stalls.
     db_pool_max_size: int = 20
     embed_provider: str = "ollama"
-    embed_model: str = "mxbai-embed-large"
+    embed_model: str = "qwen3-embedding:0.6b"
     max_upload_bytes: int = 10_000_000
     # Hard ceiling on any request body (DoS guard); exceeds max_upload_bytes + multipart overhead.
     max_request_bytes: int = 12_000_000
@@ -194,3 +195,15 @@ class CoreConfig(StrictModel):
             else:
                 values[field_name] = raw
         return cls.model_validate(values)
+
+
+def effective_config(base: CoreConfig, overrides: TenantSettings) -> CoreConfig:
+    """Overlay a tenant's non-null preference overrides (#289) onto the boot-time ``base`` config.
+
+    ``TenantSettings`` field names match ``CoreConfig`` exactly, and a ``None`` override means
+    "inherit the deployment default", so the overlay is a plain copy of the non-null values. Returns
+    ``base`` unchanged when there is nothing to override (the common no-saved-settings case)."""
+    update = overrides.model_dump(exclude_none=True)
+    if not update:
+        return base
+    return base.model_copy(update=update)

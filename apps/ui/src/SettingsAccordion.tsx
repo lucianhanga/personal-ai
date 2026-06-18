@@ -3,6 +3,7 @@ import type { Dispatch, SetStateAction } from "react";
 import type { DocumentInfo } from "./api";
 import { McpPanel } from "./McpPanel";
 import { Memory } from "./Memory";
+import { Preferences } from "./Preferences";
 import { Tools } from "./Tools";
 
 interface SettingsAccordionProps {
@@ -28,6 +29,8 @@ interface SettingsAccordionProps {
   setReasoning: Dispatch<SetStateAction<"off" | "brief" | "full">>;
   showMcp: boolean;
   setShowMcp: Dispatch<SetStateAction<boolean>>;
+  showPreferences: boolean;
+  setShowPreferences: Dispatch<SetStateAction<boolean>>;
 }
 
 const ROW: React.CSSProperties = {
@@ -171,6 +174,20 @@ export function SettingsAccordion(props: SettingsAccordionProps): React.ReactEle
             <span style={{ marginLeft: "auto", color: "#888" }}>MCP servers (tool sources)</span>
           </div>
           {props.showMcp && <McpPanel token={token} />}
+
+          {/* Line 6: Preferences (per-tenant defaults: model, agent, behavior) */}
+          <div data-testid="settings-preferences" style={ROW}>
+            <button
+              data-testid="preferences-show"
+              onClick={() => props.setShowPreferences((v) => !v)}
+            >
+              {props.showPreferences ? "Hide preferences" : "Preferences"}
+            </button>
+            <span style={{ marginLeft: "auto", color: "#888" }}>
+              Saved defaults (model, agent, behavior)
+            </span>
+          </div>
+          {props.showPreferences && <Preferences token={token} />}
         </div>
       )}
     </div>

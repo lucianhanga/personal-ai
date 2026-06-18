@@ -24,6 +24,7 @@ from personalai_contracts.schemas.registry import (
     SchemaValidationError,
     default_registry,
 )
+from personalai_contracts.schemas.settings import TenantSettings
 from personalai_contracts.schemas.tools import (
     Integrity,
     Permission,
@@ -54,6 +55,8 @@ __all__ = [
     "SchemaRegistry",
     "SchemaValidationError",
     "default_registry",
+    # settings
+    "TenantSettings",
     # tools
     "Integrity",
     "Permission",

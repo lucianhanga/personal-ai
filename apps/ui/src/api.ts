@@ -422,6 +422,63 @@ export async function upsertMcpServer(
   return body.data!.server!;
 }
 
+// Per-tenant preference settings (#289). Every field is optional: null means "inherit the
+// deployment default". Field names mirror the backend CoreConfig so the overlay is a plain copy.
+export interface TenantSettings {
+  model_provider: "ollama" | "openai_compat" | null;
+  default_model: string | null;
+  ollama_host: string | null;
+  ollama_num_ctx: number | null;
+  ollama_keep_alive: string | null;
+  embed_provider: "ollama" | "openai_compat" | null;
+  embed_model: string | null;
+  openai_base_url: string | null;
+  agent_graph_enabled: boolean | null;
+  agent_human_gate: boolean | null;
+  agent_accuracy_mode: "standard" | "accurate" | null;
+  agent_max_iterations: number | null;
+  memory_enabled: boolean | null;
+  grounding_enabled: boolean | null;
+  max_upload_bytes: number | null;
+}
+
+// The defaults the backend would apply for any field left null (echoed from the boot CoreConfig),
+// so the UI can show the effective value as a placeholder.
+export type TenantSettingsDefaults = {
+  [K in keyof TenantSettings]: NonNullable<TenantSettings[K]>;
+};
+
+/** The request tenant's saved overrides plus the deployment defaults for the unset fields. */
+export async function fetchSettings(
+  token: string,
+): Promise<{ settings: TenantSettings; defaults: TenantSettingsDefaults }> {
+  const res = await fetch(`${API_BASE}/api/v1/settings`, {
+    headers: authHeaders(token),
+    credentials: CREDS,
+  });
+  if (!res.ok) throw new Error(`fetch settings failed: ${res.status}`);
+  const body = (await res.json()) as {
+    data?: { settings: TenantSettings; defaults: TenantSettingsDefaults };
+  };
+  return body.data!;
+}
+
+/** Replace the tenant's overrides (full overwrite; null/omitted fields restore the default). */
+export async function saveSettings(
+  token: string,
+  settings: TenantSettings,
+): Promise<TenantSettings> {
+  const res = await fetch(`${API_BASE}/api/v1/settings`, {
+    method: "PUT",
+    credentials: CREDS,
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) throw new Error(`save settings failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { settings: TenantSettings } };
+  return body.data!.settings;
+}
+
 /** Bulk import a standard `mcpServers` map (merge + connect each live). Returns the updated list. */
 export async function importMcpServers(
   token: string,

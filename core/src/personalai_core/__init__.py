@@ -6,7 +6,7 @@ and resolve them by name at the composition root.
 """
 
 from personalai_core.agent import AgentEvent, run_agent
-from personalai_core.config import CoreConfig
+from personalai_core.config import CoreConfig, effective_config
 from personalai_core.gateway import InProcessExecutor, RegisteredTool, ToolGateway
 from personalai_core.graph import GraphState, run_graph
 from personalai_core.memory import split_recent, summarize
@@ -29,6 +29,7 @@ __all__ = [
     "ToolGateway",
     "VectorRetriever",
     "__version__",
+    "effective_config",
     "extract_facts",
     "run_agent",
     "run_graph",

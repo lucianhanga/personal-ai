@@ -47,12 +47,13 @@ from personalai_contracts.ports import (
     Role,
     ToolCall,
 )
-from personalai_contracts.schemas import ErrorInfo, StructuredResult
+from personalai_contracts.schemas import ErrorInfo, StructuredResult, TenantSettings
 from personalai_contracts.schemas.tools import Permission, PermissionType
 from personalai_core import (
     CoreConfig,
     RegistryError,
     VectorRetriever,
+    effective_config,
     recall,
     remember,
     split_recent,
@@ -66,6 +67,7 @@ from personalai_storage_postgres import (
     PgConversationStore,
     PgDocumentStore,
     PgMemoryStore,
+    PgSettingsStore,
     PgVectorRepository,
     TenantCheckpointSaver,
     TenantDb,
@@ -85,6 +87,7 @@ class Storage:
     documents: PgDocumentStore
     conversations: PgConversationStore
     memories: PgMemoryStore
+    settings: PgSettingsStore
 
 
 class HealthResponse(BaseModel):
@@ -282,6 +285,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 documents=PgDocumentStore(querier),
                 conversations=PgConversationStore(querier),
                 memories=PgMemoryStore(querier),
+                settings=PgSettingsStore(querier),
             )
             # Unit-of-work: TenantDb.acquire(tenant_id) yields a tenant-bound connection in ONE
             # transaction, so multiple store ops commit/roll back together (M8 agent writes; A3).
@@ -570,9 +574,20 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         }
         return f"event: usage\ndata: {json.dumps(payload)}\n\n".encode()
 
+    async def _effective_config() -> CoreConfig:
+        """Boot config overlaid with the request tenant's saved preference settings (#289).
+
+        Loaded through the tenant-bound store so a tenant only ever sees its own overrides (RLS).
+        Falls back to the boot config when no database is configured/reachable."""
+        base: CoreConfig = app.state.config
+        storage: Storage | None = app.state.storage
+        if storage is None:
+            return base
+        return effective_config(base, await storage.settings.get())
+
     @app.post("/api/v1/chat", dependencies=[Depends(require_context)])
     async def chat(req: ChatRequest) -> StreamingResponse:
-        config: CoreConfig = app.state.config
+        config = await _effective_config()
         provider = _resolve_provider(req.provider)
 
         # Durable human gate (M8.1c): active only when the graph is enabled, the gate is on, and a
@@ -1080,6 +1095,34 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         storage = _require_storage()
         await storage.memories.clear()
         return StructuredResult(ok=True, data={"cleared": True})
+
+    @app.get(
+        "/api/v1/settings",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def get_settings() -> StructuredResult:
+        # The request tenant's saved preference overrides (#289). NULL fields = inherit the
+        # deployment default; `defaults` echoes those so the UI can show the effective value.
+        storage = _require_storage()
+        saved = await storage.settings.get()
+        base: CoreConfig = app.state.config
+        defaults = {f: getattr(base, f) for f in saved.model_fields}
+        return StructuredResult(
+            ok=True, data={"settings": saved.model_dump(), "defaults": defaults}
+        )
+
+    @app.put(
+        "/api/v1/settings",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def put_settings(body: TenantSettings) -> StructuredResult:
+        # Full overwrite of this tenant's overrides; omitting a field (or sending null) restores the
+        # default for it. Validation (bounds, enums) is enforced by the TenantSettings contract.
+        storage = _require_storage()
+        saved = await storage.settings.upsert(body)
+        return StructuredResult(ok=True, data={"settings": saved.model_dump()})
 
     @app.get(
         "/api/v1/tools", response_model=StructuredResult, dependencies=[Depends(require_context)]

@@ -9,6 +9,7 @@ from personalai_storage_postgres.db import apply_migrations, create_pool
 from personalai_storage_postgres.document_store import Document, PgDocumentStore
 from personalai_storage_postgres.memory_store import PgMemoryStore
 from personalai_storage_postgres.session_store import PgSessionStore
+from personalai_storage_postgres.settings_store import PgSettingsStore
 from personalai_storage_postgres.tenant_checkpoint_saver import TenantCheckpointSaver
 from personalai_storage_postgres.tenant_db import TenantDb
 from personalai_storage_postgres.tenant_store import (
@@ -29,6 +30,7 @@ __all__ = [
     "PgDocumentStore",
     "PgMemoryStore",
     "PgSessionStore",
+    "PgSettingsStore",
     "PgTenantStore",
     "PgVectorRepository",
     "Subject",
