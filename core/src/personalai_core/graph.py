@@ -59,8 +59,11 @@ DEFAULT_AGENT_PROMPTS: dict[str, str] = {
     ),
     "researcher": (
         "You are the researcher. Carry out the plan to answer the user's request, calling the "
-        "available tools when they help. Ground every claim in what you find; if the tools and "
-        "your knowledge are insufficient, say so plainly rather than guessing."
+        "available tools when they help. Ground every claim in what you find. Always finish with a "
+        "complete answer addressed to the user; NEVER end your turn with 'let me…', 'I'll…', or a "
+        "description of further steps — either call the tool you mean to use, or give the final "
+        "answer now. If the tools and your knowledge are insufficient, state plainly what you "
+        "found and what is missing instead of guessing."
     ),
     "critic": (
         "You are the critic reviewing a draft answer that a researcher agent ALREADY produced "

@@ -34,9 +34,10 @@ MAX_TOOL_RESULT_CHARS = 4000
 
 # Used to force a final answer once the tool budget is exhausted (see run_agent).
 _FORCE_ANSWER = (
-    "You have reached the tool-use limit. Answer the user now using the information already "
-    "gathered above; do not call any more tools. If it is insufficient, say what you found and "
-    "what is still missing."
+    "You have reached the tool-use limit. Write the final answer to the user NOW from the "
+    "information already gathered; do not call any more tools and do not say 'let me…' or describe "
+    "further steps. If the information is insufficient, state plainly what you found and what is "
+    "still missing."
 )
 
 
