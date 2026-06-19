@@ -747,12 +747,13 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 # Ordered timeline of reasoning + tool steps, exactly as they happen.
                 trace: list[dict[str, Any]] = []
 
-                def _add_reasoning(text: str) -> None:
-                    # Merge consecutive reasoning deltas into one item; keep order otherwise.
-                    if trace and trace[-1]["kind"] == "reasoning":
+                def _add_text(kind: str, text: str) -> None:
+                    # Merge consecutive same-kind streamed deltas (reasoning/plan/critique) into one
+                    # trace item; otherwise append a new one in order.
+                    if trace and trace[-1].get("kind") == kind and "text" in trace[-1]:
                         trace[-1]["text"] += text
                     else:
-                        trace.append({"kind": "reasoning", "text": text})
+                        trace.append({"kind": kind, "text": text})
 
                 # Tools get their declared permissions; high-risk still needs approve_tools and
                 # egress is enforced by the gateway. (Built once; run_turn ignores them off-path.)
@@ -784,13 +785,19 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                             thread_id=run_id,
                         ):
                             if ev.kind == "reasoning":
-                                _add_reasoning(ev.text)
+                                _add_text("reasoning", ev.text)
                                 yield f"data: {json.dumps({'thinking': ev.text})}\n\n".encode()
                             elif ev.kind == "answer":
                                 answer += ev.text
                                 frame = {"delta": ev.text, "done": False}
                                 yield f"data: {json.dumps(frame)}\n\n".encode()
                             elif ev.kind == "tool":
+                                # A tool call means any answer text streamed so far this turn was
+                                # tool-use narration (kept in the trace as reasoning), not the
+                                # answer -> drop it from the persisted answer (the UI clears its
+                                # display on the same event). The final turn has no tool call.
+                                if ev.phase == "call":
+                                    answer = ""
                                 trace.append(
                                     {
                                         "kind": f"tool_{ev.phase}",  # tool_call | tool_result
@@ -811,8 +818,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                                 }
                                 yield f"event: tool\ndata: {json.dumps(payload)}\n\n".encode()
                             elif ev.kind in ("plan", "critique"):
-                                # M8 multi-node graph steps: into the ordered trace + a live frame.
-                                trace.append({"kind": ev.kind, "text": ev.text})
+                                # M8 multi-node graph steps stream as deltas: merge in the trace,
+                                # forward each delta as a live frame.
+                                _add_text(ev.kind, ev.text)
                                 step = {"kind": ev.kind, "text": ev.text}
                                 yield f"event: {ev.kind}\ndata: {json.dumps(step)}\n\n".encode()
                             elif ev.kind == "approval_request":

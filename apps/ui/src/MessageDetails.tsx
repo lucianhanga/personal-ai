@@ -13,6 +13,27 @@ const TRACE = {
   err: "#b00020", // red
 } as const;
 
+// Very faded per-agent backgrounds so each contributor's lines are easy to delimit in the trace.
+const TRACE_BG: Record<string, string> = {
+  reasoning: "#f3f4f6", // researcher (gray)
+  plan: "#eef4ff", // planner (blue)
+  critique: "#fcf7ea", // critic (amber)
+  tool_call: "#f6f0fe", // tool (violet)
+  tool_result: "#f6f0fe",
+  verification: "#eef4ff",
+};
+
+function rowStyle(kind: string, extra?: React.CSSProperties): React.CSSProperties {
+  return {
+    background: TRACE_BG[kind] ?? "transparent",
+    borderRadius: 3,
+    padding: "1px 5px",
+    margin: "1px 0",
+    whiteSpace: "pre-wrap",
+    ...extra,
+  };
+}
+
 /** A small bold, colored agent/step label that prefixes each trace line. */
 function Tag({ color, children }: { color: string; children: React.ReactNode }): React.ReactElement {
   return <span style={{ color, fontWeight: 600 }}>{children}</span>;
@@ -72,7 +93,7 @@ export function MessageDetails({
     .join(" · ");
 
   return (
-    <div data-testid="msg-details" style={{ fontSize: "0.75rem", margin: "0.2rem 0" }}>
+    <div data-testid="msg-details" style={{ fontSize: "0.85rem", margin: "0.2rem 0" }}>
       <button
         data-testid="details-toggle"
         onClick={() => setOpen((o) => !o)}
@@ -89,26 +110,22 @@ export function MessageDetails({
             paddingLeft: "0.6rem",
             borderLeft: "2px solid rgba(127,127,127,0.3)",
             color: "#555",
-            // Running window (~15 lines); scroll inside to read the full reasoning.
-            maxHeight: "15em",
+            // Running window (~20 lines); scroll inside to read the full reasoning.
+            maxHeight: "20em",
             overflowY: "auto",
           }}
         >
           {items.map((t, k) => {
             if (t.kind === "reasoning") {
               return (
-                <div
-                  key={k}
-                  data-testid="details-thinking"
-                  style={{ whiteSpace: "pre-wrap", margin: "2px 0" }}
-                >
+                <div key={k} data-testid="details-thinking" style={rowStyle("reasoning")}>
                   <Tag color={TRACE.researcher}>Thinking</Tag> {t.text}
                 </div>
               );
             }
             if (t.kind === "tool_call") {
               return (
-                <div key={k}>
+                <div key={k} style={rowStyle("tool_call")}>
                   <Tag color={TRACE.tool}>Tool</Tag> {t.tool}({JSON.stringify(t.args ?? {})})
                 </div>
               );
@@ -116,7 +133,7 @@ export function MessageDetails({
             if (t.kind === "tool_result") {
               const host = t.ok ? null : blockedEgressHost(t.error);
               return (
-                <div key={k} style={{ color: t.ok ? TRACE.ok : TRACE.err }}>
+                <div key={k} style={rowStyle("tool_result", { color: t.ok ? TRACE.ok : TRACE.err })}>
                   <Tag color={t.ok ? TRACE.ok : TRACE.err}>Result</Tag> {t.tool}:{" "}
                   {t.ok ? "ok" : `error: ${t.error}`}
                   {host &&
@@ -146,14 +163,14 @@ export function MessageDetails({
             }
             if (t.kind === "plan") {
               return (
-                <div key={k} data-testid="details-plan" style={{ whiteSpace: "pre-wrap" }}>
+                <div key={k} data-testid="details-plan" style={rowStyle("plan")}>
                   <Tag color={TRACE.planner}>Planner</Tag>: {t.text}
                 </div>
               );
             }
             if (t.kind === "critique") {
               return (
-                <div key={k} data-testid="details-critique" style={{ whiteSpace: "pre-wrap" }}>
+                <div key={k} data-testid="details-critique" style={rowStyle("critique")}>
                   <Tag color={TRACE.critic}>Critic</Tag>
                   {t.role ? ` (${t.role})` : ""}: {t.text}
                 </div>
@@ -165,7 +182,7 @@ export function MessageDetails({
                 <div
                   key={k}
                   data-testid="details-verification"
-                  style={{ color: pass ? TRACE.ok : TRACE.err }}
+                  style={rowStyle("verification", { color: pass ? TRACE.ok : TRACE.err })}
                 >
                   <Tag color={pass ? TRACE.ok : TRACE.err}>
                     Verify{t.verdict ? ` (${t.verdict})` : ""}
@@ -176,7 +193,7 @@ export function MessageDetails({
             }
             // Generic fallback so any future trace kind renders instead of breaking the UI.
             return (
-              <div key={k} data-testid="details-other" style={{ whiteSpace: "pre-wrap" }}>
+              <div key={k} data-testid="details-other" style={rowStyle(t.kind)}>
                 <Tag color={TRACE.researcher}>{t.kind}</Tag>
                 {t.text ? `: ${t.text}` : ""}
               </div>

@@ -104,9 +104,10 @@ class _NarratingScripted(FakeModelProvider):
         return GenerationResult(text="The answer is 437.", model=request.model)
 
 
-def test_tool_turn_narration_becomes_reasoning_not_answer() -> None:
-    # A turn that calls a tool is the model narrating ("let me…"); that text must land in reasoning,
-    # not the answer. Only the final turn's text is the answer.
+def test_tool_turn_narration_is_preserved_as_reasoning() -> None:
+    # A turn that calls a tool is the model narrating ("let me…"). The narration streams (the
+    # consumer drops it from the answer on the tool_call) and is also re-emitted as reasoning so it
+    # lands in the trace. The final answer is the post-tool turn's text.
     async def _run() -> list[AgentEvent]:
         return [
             ev
@@ -120,10 +121,14 @@ def test_tool_turn_narration_becomes_reasoning_not_answer() -> None:
         ]
 
     events = asyncio.run(_run())
-    assert [e.type for e in events] == ["reasoning", "tool_call", "tool_result", "answer", "final"]
-    assert events[0].thinking == "Let me calculate that for you."
-    answer = "".join(e.answer or "" for e in events if e.type == "answer")
-    assert answer == "The answer is 437." and "Let me calculate" not in answer
+    # The narration is preserved as a reasoning event.
+    reasoning = next(e for e in events if e.type == "reasoning")
+    assert reasoning.thinking == "Let me calculate that for you."
+    # Exactly one tool call (the consumer resets the answer on it).
+    assert sum(1 for e in events if e.type == "tool_call") == 1
+    # The final answer is the post-tool turn's text, not the narration.
+    final = next(e for e in events if e.type == "final")
+    assert final.answer == "The answer is 437."
 
 
 def test_agent_answers_directly_without_tools() -> None:

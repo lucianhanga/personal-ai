@@ -60,11 +60,14 @@ const EMPTY_CHAT: ChatState = {
   pending: null,
 };
 
-/** Append a trace item in order, merging consecutive reasoning deltas into one item. */
+// These kinds stream as deltas; consecutive same-kind items are merged into one.
+const STREAMING_KINDS = new Set(["reasoning", "plan", "critique"]);
+
+/** Append a trace item in order, merging consecutive streamed deltas (reasoning/plan/critique). */
 function appendTrace(list: TraceItem[] | undefined, item: TraceItem): TraceItem[] {
   const next = [...(list ?? [])];
   const last = next[next.length - 1];
-  if (item.kind === "reasoning" && last?.kind === "reasoning") {
+  if (STREAMING_KINDS.has(item.kind) && last?.kind === item.kind) {
     next[next.length - 1] = { ...last, text: (last.text ?? "") + (item.text ?? "") };
   } else {
     next.push(item);
@@ -390,7 +393,17 @@ export function Chat({
           patchChat(key, (s) => ({ ...s, messages: [...history, { role: "assistant", content: acc }] }));
         },
         (cites) => patchChat(key, (s) => ({ ...s, citations: { ...s.citations, [assistantIndex]: cites } })),
-        (step) =>
+        (step) => {
+          // A tool call means the answer text streamed so far this turn was tool-use narration
+          // (it's kept in the trace as reasoning); drop it from the answer bubble. The final turn
+          // has no tool call, so its streamed answer stays.
+          if (step.phase === "call") {
+            acc = "";
+            patchChat(key, (s) => ({
+              ...s,
+              messages: [...history, { role: "assistant", content: "" }],
+            }));
+          }
           patchChat(key, (s) => ({
             ...s,
             trace: {
@@ -404,7 +417,8 @@ export function Chat({
                 error: step.error,
               }),
             },
-          })),
+          }));
+        },
         (u) => patchChat(key, (s) => ({ ...s, usage: u })),
         (delta) =>
           patchChat(key, (s) => ({

@@ -22,7 +22,7 @@ the SSE mapping rely on; ``agent_mode == "multi"`` (#290) selects this graph ove
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -98,16 +98,21 @@ class GraphState(TypedDict, total=False):
     decision: str
 
 
-async def _generate_text(
-    provider: ModelProvider, model: str, messages: Sequence[ChatMessage]
+async def _stream_text(
+    provider: ModelProvider,
+    model: str,
+    messages: Sequence[ChatMessage],
+    emit: Callable[[str], None],
 ) -> str:
-    """One tool-free, reasoning-off model call returning the concatenated answer text."""
+    """A tool-free, reasoning-off model call. Calls ``emit(delta)`` for each delta so the planner/
+    critic stream like the researcher, and returns the full concatenated text."""
     text = ""
     async for chunk in provider.stream(
         GenerationRequest(messages=messages, model=model, think=False)
     ):
         if chunk.delta:
             text += chunk.delta
+            emit(chunk.delta)
     return text
 
 
@@ -131,10 +136,13 @@ def _build_graph(
     agent_prompts = resolve_prompts(prompts)
 
     async def planner(state: GraphState) -> dict[str, Any]:
-        plan = await _generate_text(
-            provider, model, [ChatMessage(Role.SYSTEM, agent_prompts["planner"]), *messages]
+        writer = get_stream_writer()
+        plan = await _stream_text(
+            provider,
+            model,
+            [ChatMessage(Role.SYSTEM, agent_prompts["planner"]), *messages],
+            lambda d: writer(AgentEvent(type="plan", text=d)),
         )
-        get_stream_writer()(AgentEvent(type="plan", text=plan))
         return {"plan": plan}
 
     async def researcher(state: GraphState) -> dict[str, Any]:
@@ -175,10 +183,16 @@ def _build_graph(
             *messages,
             ChatMessage(Role.USER, f"Draft answer to review:\n\n{answer}"),
         ]
-        critique = (await _generate_text(provider, model, review)).strip()
-        # The critique belongs to the reasoning trace only — it must NOT modify the answer. The
+        writer = get_stream_writer()
+        # The critique streams to the reasoning trace only — it must NOT modify the answer. The
         # finalized answer stays the agents' result; their review/discussion shows in the panel.
-        get_stream_writer()(AgentEvent(type="critique", text=critique or "Looks sound."))
+        critique = (
+            await _stream_text(
+                provider, model, review, lambda d: writer(AgentEvent(type="critique", text=d))
+            )
+        ).strip()
+        if not critique:
+            writer(AgentEvent(type="critique", text="Looks sound."))
         return {"critique": critique}
 
     async def human_gate(state: GraphState) -> dict[str, Any]:

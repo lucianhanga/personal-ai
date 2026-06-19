@@ -86,9 +86,10 @@ def test_empty_plan_skips_injection_and_streams_no_answer() -> None:
         gateway=_gateway(),
         tools=[],
     )
-    # No answer delta (empty), but plan + critique steps + the terminal final still flow.
-    assert [e.type for e in events] == ["plan", "critique", "final"]
-    assert events[0].text == ""
+    # An empty planner streams nothing (no plan step); the critic falls back to "Looks sound.",
+    # and the terminal final still flows.
+    assert [e.type for e in events] == ["critique", "final"]
+    assert events[0].text == "Looks sound."
     assert events[-1].usage == {}
 
 
