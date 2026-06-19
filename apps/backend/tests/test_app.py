@@ -442,3 +442,35 @@ def test_context_breakdown_summarizes_non_empty_components() -> None:
     assert labels["Grounding"]["chars"] == 100
     assert labels["Documents"]["count"] == 2 and labels["Documents"]["chars"] == 100
     assert bd["total_chars"] == 200
+
+
+def test_followup_adds_an_interpreted_request_to_the_context() -> None:
+    # Option A: a follow-up (prior turn exists) is contextualized into a standalone "Interpreted
+    # request" that anchors retrieval/tools and shows up in the context breakdown.
+    client = _app_with_provider("fake", FakeModelProvider(name="fake"))
+    body = {
+        "messages": [
+            {"role": "user", "content": "weather in munich?"},
+            {"role": "assistant", "content": "It's sunny."},
+            {"role": "user", "content": "and tomorrow?"},
+        ],
+        "provider": "fake",
+    }
+    with client.stream(
+        "POST", "/api/v1/chat", headers={"Authorization": f"Bearer {TOKEN}"}, json=body
+    ) as resp:
+        assert resp.status_code == 200
+        text = "".join(resp.iter_text())
+    assert "Interpreted request" in text  # the standalone query was added
+
+
+def test_single_question_skips_the_interpreted_request() -> None:
+    # A first/only question is already standalone -> no extra rewrite call, no interpreted-request.
+    client = _app_with_provider("fake", FakeModelProvider(name="fake"))
+    body = {"messages": [{"role": "user", "content": "weather in munich?"}], "provider": "fake"}
+    with client.stream(
+        "POST", "/api/v1/chat", headers={"Authorization": f"Bearer {TOKEN}"}, json=body
+    ) as resp:
+        assert resp.status_code == 200
+        text = "".join(resp.iter_text())
+    assert "Interpreted request" not in text

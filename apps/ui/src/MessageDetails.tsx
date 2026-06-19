@@ -1,26 +1,27 @@
 import { useEffect, useRef, useState } from "react";
 
+import { AGENT_BG, AGENT_FG } from "./agentColors";
 import { blockedEgressHost, type ToolStep, type TraceItem } from "./api";
 
-// Color code for the agent-flow trace (no emoji, per project convention): distinct hues per agent,
-// and green=success / red=failure for results + verification.
+// Color code for the agent-flow trace (no emoji, per project convention): shared per-agent hues
+// (so the Agents config matches), plus tool violet and green/red for results + verification.
 const TRACE = {
-  planner: "#2563eb", // blue
-  researcher: "#6b7280", // gray (reasoning)
+  planner: AGENT_FG.planner,
+  researcher: AGENT_FG.researcher,
   tool: "#7c3aed", // violet
-  critic: "#b8860b", // amber
+  critic: AGENT_FG.critic,
   ok: "#1a7f37", // green
   err: "#b00020", // red
 } as const;
 
 // Very faded per-agent backgrounds so each contributor's lines are easy to delimit in the trace.
 const TRACE_BG: Record<string, string> = {
-  reasoning: "#f3f4f6", // researcher (gray)
-  plan: "#eef4ff", // planner (blue)
-  critique: "#fcf7ea", // critic (amber)
+  reasoning: AGENT_BG.researcher,
+  plan: AGENT_BG.planner,
+  critique: AGENT_BG.critic,
   tool_call: "#f6f0fe", // tool (violet)
   tool_result: "#f6f0fe",
-  verification: "#eef4ff",
+  verification: AGENT_BG.planner,
 };
 
 function rowStyle(kind: string, extra?: React.CSSProperties): React.CSSProperties {

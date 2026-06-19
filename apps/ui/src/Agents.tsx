@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { AGENT_BG, AGENT_FG } from "./agentColors";
 import {
   fetchAgentConfig,
   fetchSettings,
@@ -212,9 +213,23 @@ export function Agents({ token }: { token: string }): React.ReactElement {
             <fieldset
               key={a.name}
               data-testid={`agents-card-${a.name}`}
-              style={{ border: "1px solid #eee", borderRadius: 6, margin: "0.5rem 0", padding: "0.5rem" }}
+              style={{
+                // Same per-agent color code as the reasoning pane (faded bg + accent border/legend).
+                border: `1px solid ${AGENT_FG[a.name] ?? "#ccc"}33`,
+                background: AGENT_BG[a.name] ?? "transparent",
+                borderRadius: 6,
+                margin: "0.5rem 0",
+                padding: "0.5rem",
+              }}
             >
-              <legend style={{ fontSize: "0.8rem", color: "#555", textTransform: "capitalize" }}>
+              <legend
+                style={{
+                  fontSize: "0.8rem",
+                  fontWeight: 600,
+                  color: AGENT_FG[a.name] ?? "#555",
+                  textTransform: "capitalize",
+                }}
+              >
                 {a.name}
               </legend>
               <textarea
