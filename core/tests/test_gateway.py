@@ -120,9 +120,54 @@ def test_high_risk_requires_approval() -> None:
 
 
 def test_invalid_input_rejected() -> None:
+    # A non-coercible mismatch (a list where a string is wanted) is still rejected.
     gw, _ = _gateway(RegisteredTool(_manifest(inputs=_STR_SCHEMA, risk=RiskLevel.LOW), _Echo()))
-    result = _run(gw.invoke(ToolCall("echo", "1.0.0", {"x": 123})))  # x must be string
+    result = _run(gw.invoke(ToolCall("echo", "1.0.0", {"x": ["not", "a", "string"]})))
     assert not result.ok and "invalid input" in (result.error or "")
+
+
+def test_number_for_string_arg_is_coerced() -> None:
+    # The model sent a number where the tool wants a string; coerce to "123" and run.
+    gw, _ = _gateway(RegisteredTool(_manifest(inputs=_STR_SCHEMA, risk=RiskLevel.LOW), _Echo()))
+    result = _run(gw.invoke(ToolCall("echo", "1.0.0", {"x": 123})))
+    assert result.ok and result.output == {"echo": "123"}
+
+
+_ARRAY_SCHEMA = {
+    "type": "object",
+    "properties": {"urls": {"type": "array", "items": {"type": "string"}}},
+    "required": ["urls"],
+}
+
+
+class _EchoUrls:
+    name = "echo"
+
+    async def invoke(self, call: ToolCall) -> ToolResult:
+        return ToolResult(ok=True, output={"urls": call.args.get("urls")})
+
+
+def test_scalar_for_array_arg_is_wrapped() -> None:
+    # The model sent a single value where the tool wants an array (e.g. tavily_extract `urls`).
+    tool = RegisteredTool(_manifest(inputs=_ARRAY_SCHEMA, risk=RiskLevel.LOW), _EchoUrls())
+    gw, _ = _gateway(tool)
+    result = _run(gw.invoke(ToolCall("echo", "1.0.0", {"urls": "http://x"})))
+    assert result.ok and result.output == {"urls": ["http://x"]}
+
+
+_ENUM_SCHEMA = {
+    "type": "object",
+    "properties": {"x": {"type": "string"}, "depth": {"enum": ["basic", "advanced"]}},
+    "required": ["x"],
+}
+
+
+def test_enum_violation_error_lists_allowed_values() -> None:
+    # An enum value can't be safely guessed; deny but tell the model the allowed values.
+    gw, _ = _gateway(RegisteredTool(_manifest(inputs=_ENUM_SCHEMA, risk=RiskLevel.LOW), _Echo()))
+    result = _run(gw.invoke(ToolCall("echo", "1.0.0", {"x": "q", "depth": "deep"})))
+    assert not result.ok
+    assert "depth must be one of: basic, advanced" in (result.error or "")
 
 
 def test_invalid_input_error_lists_valid_parameters() -> None:
