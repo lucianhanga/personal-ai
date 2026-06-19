@@ -143,6 +143,19 @@ export interface UsageInfo {
   context_limit: number | null;
 }
 
+// What was assembled into the model's context this turn (grounding, documents, memory, ...), so the
+// user can see the composition and approximate size as the question is asked.
+export interface ContextItem {
+  label: string;
+  count: number;
+  chars: number;
+}
+
+export interface ContextBreakdown {
+  items: ContextItem[];
+  total_chars: number;
+}
+
 export interface McpServer {
   name: string;
   command: string;
@@ -732,6 +745,7 @@ export async function streamChat(
   onError?: (message: string) => void,
   onApproval?: (req: ApprovalRequest) => void,
   onAgentStep?: (step: { kind: "plan" | "critique"; text: string }) => void,
+  onContext?: (context: ContextBreakdown) => void,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/chat`, {
     method: "POST",
@@ -763,6 +777,7 @@ export async function streamChat(
     } catch {
       return; // skip a malformed/partial frame rather than aborting the whole stream
     }
+    if (event === "context") return onContext?.(parsed as ContextBreakdown);
     if (event === "citations") return onCitations?.(parsed as Citation[]);
     if (event === "tool") return onToolStep?.(parsed as ToolStep);
     if (event === "plan" || event === "critique") {

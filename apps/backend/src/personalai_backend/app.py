@@ -17,7 +17,7 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -238,6 +238,20 @@ class ToolInvokeRequest(BaseModel):
 
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _context_breakdown(groups: Sequence[tuple[str, Sequence[ChatMessage]]]) -> dict[str, Any]:
+    """Summarize what goes into the model's context this turn (grounding, documents, memory, ...),
+    so the UI can show the composition and approximate size as the question is asked (#290)."""
+    items: list[dict[str, Any]] = []
+    total = 0
+    for label, msgs in groups:
+        if not msgs:
+            continue
+        chars = sum(len(m.content) for m in msgs)
+        total += chars
+        items.append({"label": label, "count": len(msgs), "chars": chars})
+    return {"items": items, "total_chars": total}
 
 # Grounding/anti-hallucination instruction (config.grounding_enabled). Balanced so it curbs
 # fabrication on factual questions without flattening creative/opinion requests.
@@ -692,6 +706,16 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             model=req.model or config.default_model,
             think=think_effective,
         )
+        # What's going into the context this turn, for the UI's context view (#290).
+        context_breakdown = _context_breakdown(
+            [
+                ("Grounding", grounding_messages),
+                ("Reasoning hint", brief_messages),
+                ("Documents", context_messages),
+                ("Memory", memory_messages),
+                ("Conversation + your message", stm_messages),
+            ]
+        )
 
         # Persist the user turn now (if a conversation is targeted and storage is available).
         if persist_id is not None and storage is not None and last_user is not None:
@@ -706,6 +730,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             # Enforce this tenant's effective egress for in-process tools this turn (#290).
             eg_token = current_egress.set(config)
             try:
+                # Surface the context composition up front (before tokens stream), so the user sees
+                # what was assembled for this question even as the agents add to it.
+                yield f"event: context\ndata: {json.dumps(context_breakdown)}\n\n".encode()
                 if citations:
                     yield f"event: citations\ndata: {json.dumps(citations)}\n\n".encode()
                 answer = ""
@@ -1181,7 +1208,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     async def allow_egress_host(body: EgressAllow) -> StructuredResult:
         # Interactive allow-on-deny: add one host to the tenant's allowlist and enable egress, so a
         # blocked outbound request can be permitted with one click (then the user re-sends). The
-        # host must be a bare hostname (no scheme/path/whitespace) -- same rule as the Network panel.
+        # host must be a bare hostname (no scheme/path/whitespace), same as the Network panel.
         host = body.host.strip().lower()
         if not host or "://" in host or "/" in host or any(c.isspace() for c in host):
             raise HTTPException(

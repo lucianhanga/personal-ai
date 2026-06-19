@@ -223,7 +223,7 @@ test("shows conversations and lazily creates one on first send", async () => {
   await waitFor(() =>
     expect(stream).toHaveBeenCalledWith(
       expect.objectContaining({ conversationId: "c2" }),
-      ...Array(8).fill(expect.any(Function)),
+      ...Array(9).fill(expect.any(Function)),
     ),
   );
 });
@@ -388,7 +388,7 @@ test("the chosen reasoning amount is sent to the chat request", async () => {
   await waitFor(() =>
     expect(stream).toHaveBeenCalledWith(
       expect.objectContaining({ reasoning: "brief", think: true }),
-      ...Array(8).fill(expect.any(Function)),
+      ...Array(9).fill(expect.any(Function)),
     ),
   );
 
@@ -399,7 +399,7 @@ test("the chosen reasoning amount is sent to the chat request", async () => {
   await waitFor(() =>
     expect(stream).toHaveBeenCalledWith(
       expect.objectContaining({ reasoning: "off", think: false }),
-      ...Array(8).fill(expect.any(Function)),
+      ...Array(9).fill(expect.any(Function)),
     ),
   );
 });

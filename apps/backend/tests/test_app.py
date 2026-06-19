@@ -423,3 +423,22 @@ def test_resume_without_db_is_503() -> None:
     )
     resp = client.post("/api/v1/chat/some-run/resume", json={"decision": "approve"})
     assert resp.status_code == 503
+
+
+def test_context_breakdown_summarizes_non_empty_components() -> None:
+    # The context view (#290) lists each non-empty component with its size; empties are skipped.
+    from personalai_backend.app import _context_breakdown
+    from personalai_contracts.ports import ChatMessage, Role
+
+    bd = _context_breakdown(
+        [
+            ("Grounding", [ChatMessage(Role.SYSTEM, "x" * 100)]),
+            ("Empty", []),
+            ("Documents", [ChatMessage(Role.SYSTEM, "y" * 50), ChatMessage(Role.SYSTEM, "z" * 50)]),
+        ]
+    )
+    labels = {i["label"]: i for i in bd["items"]}
+    assert "Empty" not in labels
+    assert labels["Grounding"]["chars"] == 100
+    assert labels["Documents"]["count"] == 2 and labels["Documents"]["chars"] == 100
+    assert bd["total_chars"] == 200

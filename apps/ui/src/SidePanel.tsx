@@ -1,38 +1,35 @@
 import type { Dispatch, SetStateAction } from "react";
 
-import type { UsageInfo } from "./api";
+import type { ContextBreakdown, UsageInfo } from "./api";
 import { AppLogs } from "./AppLogs";
 import { ContextMeter } from "./ContextMeter";
-import { McpActivity } from "./McpActivity";
 import { ToolLog } from "./ToolLog";
 
 interface SidePanelProps {
   token: string;
   conversationId: string | null;
   usage: UsageInfo | null;
+  context: ContextBreakdown | null;
   collapsed: boolean;
   setCollapsed: Dispatch<SetStateAction<boolean>>;
   showLog: boolean;
   setShowLog: Dispatch<SetStateAction<boolean>>;
   showAppLogs: boolean;
   setShowAppLogs: Dispatch<SetStateAction<boolean>>;
-  showMcpActivity: boolean;
-  setShowMcpActivity: Dispatch<SetStateAction<boolean>>;
 }
 
-/** Right column: collapsible logs / MCP activity / context-usage panels. */
+/** Right column: collapsible activity / app-logs / context panels. */
 export function SidePanel({
   token,
   conversationId,
   usage,
+  context,
   collapsed,
   setCollapsed,
   showLog,
   setShowLog,
   showAppLogs,
   setShowAppLogs,
-  showMcpActivity,
-  setShowMcpActivity,
 }: SidePanelProps): React.ReactElement {
   if (collapsed) {
     return (
@@ -59,9 +56,6 @@ export function SidePanel({
         <button data-testid="applogs-show" onClick={() => setShowAppLogs((v) => !v)}>
           {showAppLogs ? "Hide app logs" : "App logs"}
         </button>
-        <button data-testid="mcp-activity-show" onClick={() => setShowMcpActivity((v) => !v)}>
-          {showMcpActivity ? "Hide MCP" : "MCP"}
-        </button>
         <button
           data-testid="side-toggle"
           onClick={() => setCollapsed(true)}
@@ -72,15 +66,14 @@ export function SidePanel({
         </button>
       </div>
 
-      {usage && <ContextMeter usage={usage} />}
+      {(context || usage) && <ContextMeter usage={usage} context={context} />}
 
       {showLog && <ToolLog token={token} conversationId={conversationId} />}
       {showAppLogs && <AppLogs token={token} conversationId={conversationId} />}
-      {showMcpActivity && <McpActivity token={token} />}
 
-      {!showLog && !showAppLogs && !showMcpActivity && !usage && (
+      {!showLog && !showAppLogs && !context && !usage && (
         <p data-testid="side-hint" style={{ color: "#888", fontSize: "0.8rem" }}>
-          Open a panel above to view logs, MCP activity, or context usage.
+          Open a panel above to view activity or app logs; the context appears here as you chat.
         </p>
       )}
     </aside>

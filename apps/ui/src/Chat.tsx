@@ -21,6 +21,7 @@ import {
   type ApprovalRequest,
   type ChatMessage,
   type Citation,
+  type ContextBreakdown,
   type ConversationSummary,
   type DocumentInfo,
   type ModelInfo,
@@ -43,6 +44,8 @@ interface ChatState {
   // Ordered reasoning + tool-step timeline per assistant message index.
   trace: Record<number, TraceItem[]>;
   usage: UsageInfo | null;
+  // The context composition assembled for the latest turn (what went into the prompt).
+  context: ContextBreakdown | null;
   busy: boolean;
   // Set when a turn is suspended at the durable human gate (M8.1c), awaiting approve/reject.
   pending: ApprovalRequest | null;
@@ -53,6 +56,7 @@ const EMPTY_CHAT: ChatState = {
   citations: {},
   trace: {},
   usage: null,
+  context: null,
   busy: false,
   pending: null,
 };
@@ -104,7 +108,6 @@ export function Chat({
   const [allowedHost, setAllowedHost] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [showAppLogs, setShowAppLogs] = useState(false);
-  const [showMcpActivity, setShowMcpActivity] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chatsCollapsed, setChatsCollapsed] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -121,7 +124,7 @@ export function Chat({
 
   const activeKey = activeId ?? NEW_CHAT;
   const view = chats[activeKey] ?? EMPTY_CHAT;
-  const { messages, citations, trace, usage, busy, pending } = view;
+  const { messages, citations, trace, usage, context, busy, pending } = view;
 
   const patchChat = (key: string, fn: (s: ChatState) => ChatState): void => {
     setChats((prev) => ({ ...prev, [key]: fn(prev[key] ?? EMPTY_CHAT) }));
@@ -453,6 +456,8 @@ export function Chat({
               }),
             },
           })),
+        // The context composition for this turn, shown in the side panel as the question is asked.
+        (ctx) => patchChat(key, (s) => ({ ...s, context: ctx })),
       );
       if (persistence) setConversations(await fetchConversations(token));
     } catch (e: unknown) {
@@ -847,14 +852,13 @@ export function Chat({
             token={token}
             conversationId={activeId}
             usage={usage}
+            context={context}
             collapsed={sidebarCollapsed}
             setCollapsed={setSidebarCollapsed}
             showLog={showLog}
             setShowLog={setShowLog}
             showAppLogs={showAppLogs}
             setShowAppLogs={setShowAppLogs}
-            showMcpActivity={showMcpActivity}
-            setShowMcpActivity={setShowMcpActivity}
           />
         </div>
       )}
