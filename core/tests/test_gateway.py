@@ -129,7 +129,7 @@ def test_invalid_input_error_lists_valid_parameters() -> None:
     # The error names the valid parameters so the model can fix a wrong argument name next turn.
     # Empty args can't be auto-coerced (no single mislabeled key), so the call is denied.
     gw, _ = _gateway(RegisteredTool(_manifest(inputs=_STR_SCHEMA, risk=RiskLevel.LOW), _Echo()))
-    result = _run(gw.invoke(ToolCall("echo", "1.0.0", {})))  # missing required `x`, nothing to rename
+    result = _run(gw.invoke(ToolCall("echo", "1.0.0", {})))  # missing `x`, nothing to rename
     assert not result.ok
     assert "valid parameters: x (required)" in (result.error or "")
 

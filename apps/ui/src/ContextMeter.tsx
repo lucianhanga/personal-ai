@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import type { ContextBreakdown, UsageInfo } from "./api";
 
 const fmt = (n: number): string => n.toLocaleString();
@@ -19,6 +21,8 @@ export function ContextMeter({
   const pct = limit ? Math.min(100, Math.round((prompt / limit) * 100)) : null;
   // Green under 70%, amber under 90%, red at/over 90%.
   const color = pct === null ? BAR : pct < 70 ? "#2a9d4a" : pct < 90 ? "#b06f00" : "#b00";
+  // Which composition row's token overlay is showing (on hover).
+  const [hovered, setHovered] = useState<string | null>(null);
 
   return (
     <div
@@ -34,18 +38,51 @@ export function ContextMeter({
             const share = context.total_chars
               ? Math.round((it.chars / context.total_chars) * 100)
               : 0;
+            const tokens = approxTokens(it.chars);
             return (
-              <div key={it.label} data-testid="context-item" style={{ marginBottom: 3 }}>
+              <div
+                key={it.label}
+                data-testid="context-item"
+                onMouseEnter={() => setHovered(it.label)}
+                onMouseLeave={() => setHovered((h) => (h === it.label ? null : h))}
+                style={{ marginBottom: 3, position: "relative", cursor: "default" }}
+              >
                 <div style={{ display: "flex", justifyContent: "space-between" }}>
                   <span>
                     {it.label}
                     {it.count > 1 ? ` (${it.count})` : ""}
                   </span>
-                  <span style={{ color: "#888" }}>~{fmt(approxTokens(it.chars))} tok</span>
+                  <span style={{ color: "#888" }}>~{fmt(tokens)} tok</span>
                 </div>
                 <div style={{ height: 4, borderRadius: 3, background: "rgba(127,127,127,0.15)" }}>
                   <div style={{ width: `${share}%`, height: "100%", background: BAR, borderRadius: 3 }} />
                 </div>
+                {hovered === it.label && (
+                  <div
+                    data-testid="context-tooltip"
+                    role="tooltip"
+                    style={{
+                      position: "absolute",
+                      zIndex: 20,
+                      top: "100%",
+                      left: 0,
+                      marginTop: 3,
+                      background: "#1f2937",
+                      color: "#fff",
+                      borderRadius: 4,
+                      padding: "0.35rem 0.5rem",
+                      fontSize: "0.72rem",
+                      whiteSpace: "nowrap",
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+                    }}
+                  >
+                    <strong>
+                      {it.label}
+                      {it.count > 1 ? ` (${it.count} parts)` : ""}
+                    </strong>
+                    <br />~{fmt(tokens)} tokens · {fmt(it.chars)} chars · {share}% of context
+                  </div>
+                )}
               </div>
             );
           })}

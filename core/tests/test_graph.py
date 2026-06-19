@@ -175,9 +175,9 @@ class _CriticRevises(FakeModelProvider):
         return GenerationResult(text="The capital of Australia is Sydney.", model=request.model)
 
 
-def test_critic_revise_appends_a_visible_reviewer_note() -> None:
-    # #290: a critic that finds a material problem appends a "Reviewer" note to the answer (streamed
-    # and persisted), so the review is not merely decorative.
+def test_critic_review_goes_to_the_trace_not_the_answer() -> None:
+    # #290: the critic's review is a critique step (reasoning panel) and must NOT modify the answer:
+    # only the agents' final result is shown; their discussion stays in the trace.
     events = _drain(
         messages=[ChatMessage(Role.USER, "capital of australia?")],
         provider=_CriticRevises(),
@@ -186,13 +186,12 @@ def test_critic_revise_appends_a_visible_reviewer_note() -> None:
         tools=[],
     )
     critique = next(e for e in events if e.type == "critique")
-    assert (critique.text or "").startswith("REVISE")
-    # The correction is surfaced as a visible answer delta...
-    note = next((e for e in events if e.type == "answer" and "Reviewer" in (e.answer or "")), None)
-    assert note is not None
-    # ...and the terminal answer includes it.
+    assert "Canberra" in (critique.text or "")
+    # No "Reviewer" note leaks into the answer stream.
+    assert not any("Reviewer" in (e.answer or "") for e in events if e.type == "answer")
+    # The terminal answer is the researcher's answer, unchanged by the critic.
     final = next(e for e in events if e.type == "final")
-    assert "Reviewer" in (final.answer or "") and "Canberra" in (final.answer or "")
+    assert final.answer == "The capital of Australia is Sydney."
 
 
 def test_human_gate_suspends_then_resumes_durably() -> None:

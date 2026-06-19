@@ -64,12 +64,11 @@ DEFAULT_AGENT_PROMPTS: dict[str, str] = {
     ),
     "critic": (
         "You are the critic reviewing a draft answer that a researcher agent ALREADY produced "
-        "using live tools and web data. The user's request and the draft are given. Do NOT claim "
-        "any lack of data or real-time access (the researcher had it), and never add generic "
-        "disclaimers. Only flag concrete, material problems you can actually identify: factual "
-        "errors, arithmetic mistakes, internal contradictions, or claims that don't address the "
-        "request. Reply with exactly 'OK' on one line if the draft is sound, or 'REVISE:' followed "
-        "by one specific correction sentence."
+        "using live tools and current data (the current date is provided in context). Do NOT "
+        "claim any lack of data or real-time access, and do NOT dismiss recent dates or facts as "
+        "'fabricated' or 'hallucinated' — trust them. In 1-2 short sentences, note any genuine, "
+        "concrete problem (a real factual error, arithmetic mistake, or contradiction), or state "
+        "that the answer looks sound. Do not rewrite the answer."
     ),
 }
 
@@ -165,26 +164,19 @@ def _build_graph(
     async def critic(state: GraphState) -> dict[str, Any]:
         # The draft goes in a USER message, not an ASSISTANT one: with the draft as an assistant
         # turn the model treats the conversation as finished and replies empty (the "critic did
-        # nothing" bug). As a user-posed review task it actually critiques.
+        # nothing" bug). As a user-posed review task it actually critiques. ``messages`` already
+        # carries the current date (injected by the caller), so the critic is date-aware.
         answer = state.get("answer", "")
         review = [
             ChatMessage(Role.SYSTEM, agent_prompts["critic"]),
             *messages,
             ChatMessage(Role.USER, f"Draft answer to review:\n\n{answer}"),
         ]
-        raw = (await _generate_text(provider, model, review)).strip()
-        writer = get_stream_writer()
-        writer(AgentEvent(type="critique", text=raw or "OK"))
-        # When the critic flags a material problem, surface its correction in the visible answer so
-        # the review isn't merely decorative: the researcher's answer already streamed, so append a
-        # short "Reviewer" note (streamed as an answer delta, hence shown and persisted).
-        if raw.upper().startswith("REVISE"):
-            note = raw.split(":", 1)[1].strip() if ":" in raw else raw
-            if note:
-                appended = f"\n\n— Reviewer: {note}"
-                writer(AgentEvent(type="answer", answer=appended))
-                return {"critique": raw, "answer": answer + appended}
-        return {"critique": raw}
+        critique = (await _generate_text(provider, model, review)).strip()
+        # The critique belongs to the reasoning trace only — it must NOT modify the answer. The
+        # finalized answer stays the agents' result; their review/discussion shows in the panel.
+        get_stream_writer()(AgentEvent(type="critique", text=critique or "Looks sound."))
+        return {"critique": critique}
 
     async def human_gate(state: GraphState) -> dict[str, Any]:
         # Durable suspend: interrupt() raises on the first pass (checkpoint persisted) and returns

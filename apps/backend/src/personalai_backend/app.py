@@ -20,6 +20,7 @@ import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
@@ -695,8 +696,12 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         grounding_messages = (
             [ChatMessage(Role.SYSTEM, _GROUNDING)] if config.grounding_enabled else []
         )
+        # Inject the current date once, up front, so every agent (planner/researcher/critic) and the
+        # single-agent loop are date-aware and don't dismiss recent dates as fabricated.
+        date_messages = [ChatMessage(Role.SYSTEM, f"Today's date is {date.today().isoformat()}.")]
         generation = GenerationRequest(
             messages=[
+                *date_messages,
                 *grounding_messages,
                 *brief_messages,
                 *context_messages,
@@ -709,6 +714,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         # What's going into the context this turn, for the UI's context view (#290).
         context_breakdown = _context_breakdown(
             [
+                ("Today's date", date_messages),
                 ("Grounding", grounding_messages),
                 ("Reasoning hint", brief_messages),
                 ("Documents", context_messages),

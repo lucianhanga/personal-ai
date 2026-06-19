@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, test } from "vitest";
 
 import { ContextMeter } from "./ContextMeter";
@@ -44,4 +44,20 @@ test("shows the context composition breakdown", () => {
   expect(breakdown).toHaveTextContent("Documents (4)");
   expect(breakdown).toHaveTextContent(/Assembled ~\d+ tokens/);
   expect(screen.getAllByTestId("context-item")).toHaveLength(2);
+});
+
+test("shows a token overlay when hovering a context category", () => {
+  render(
+    <ContextMeter
+      usage={null}
+      context={{ items: [{ label: "Documents", count: 4, chars: 1600 }], total_chars: 1600 }}
+    />,
+  );
+  expect(screen.queryByTestId("context-tooltip")).toBeNull();
+  fireEvent.mouseEnter(screen.getByTestId("context-item"));
+  const tip = screen.getByTestId("context-tooltip");
+  expect(tip).toHaveTextContent(/tokens/);
+  expect(tip).toHaveTextContent("1,600 chars");
+  fireEvent.mouseLeave(screen.getByTestId("context-item"));
+  expect(screen.queryByTestId("context-tooltip")).toBeNull();
 });
