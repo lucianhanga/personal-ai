@@ -69,9 +69,11 @@ DEFAULT_AGENT_PROMPTS: dict[str, str] = {
         "You are the critic reviewing a draft answer that a researcher agent ALREADY produced "
         "using live tools and current data (the current date is provided in context). Do NOT "
         "claim any lack of data or real-time access, and do NOT dismiss recent dates or facts as "
-        "'fabricated' or 'hallucinated' — trust them. In 1-2 short sentences, note any genuine, "
-        "concrete problem (a real factual error, arithmetic mistake, or contradiction), or state "
-        "that the answer looks sound. Do not rewrite the answer."
+        "'fabricated' or 'hallucinated' — trust them. Begin your reply with the single word "
+        "REVISE if the draft fails to actually answer the request (e.g. it only says where to "
+        "look, uses a dead/incorrect link, or gives no real data) or is factually wrong; "
+        "otherwise begin with OK. Then add 1-2 short sentences explaining. Do not rewrite the "
+        "answer."
     ),
 }
 
@@ -96,6 +98,14 @@ class GraphState(TypedDict, total=False):
     critique: str
     usage: dict[str, int]
     decision: str
+    # Bounded reflection loop (#290): the critic's verdict ("revise"/"ok") routes back to the
+    # researcher when the answer is materially inadequate; ``attempts`` caps the retries.
+    verdict: str
+    attempts: int
+
+
+# Max researcher passes in the reflection loop: the initial attempt + up to one retry.
+MAX_ATTEMPTS = 2
 
 
 async def _stream_text(
@@ -153,6 +163,16 @@ def _build_graph(
         convo = [ChatMessage(Role.SYSTEM, agent_prompts["researcher"]), *messages]
         if state.get("plan"):
             convo.append(ChatMessage(Role.SYSTEM, f"Plan to follow:\n{state['plan']}"))
+        # On a retry (the critic asked to revise), feed the critique back so this attempt takes a
+        # different path and actually produces the answer.
+        if state.get("attempts", 0) > 0 and state.get("critique"):
+            convo.append(
+                ChatMessage(
+                    Role.SYSTEM,
+                    f"Your previous attempt was judged inadequate: {state['critique']}\n"
+                    "Take a different approach and actually obtain and give the answer.",
+                )
+            )
         answer, usage = "", {}
         async for ev in run_agent(
             messages=convo,
@@ -170,7 +190,7 @@ def _build_graph(
                 usage = dict(ev.usage or {})
                 continue
             writer(ev)
-        return {"answer": answer, "usage": usage}
+        return {"answer": answer, "usage": usage, "attempts": state.get("attempts", 0) + 1}
 
     async def critic(state: GraphState) -> dict[str, Any]:
         # The draft goes in a USER message, not an ASSISTANT one: with the draft as an assistant
@@ -193,7 +213,10 @@ def _build_graph(
         ).strip()
         if not critique:
             writer(AgentEvent(type="critique", text="Looks sound."))
-        return {"critique": critique}
+        # The leading REVISE/OK token routes the reflection loop (back to the researcher on REVISE,
+        # while retries remain); the full critique still shows in the reasoning trace.
+        verdict = "revise" if critique[:6].upper() == "REVISE" else "ok"
+        return {"critique": critique, "verdict": verdict}
 
     async def human_gate(state: GraphState) -> dict[str, Any]:
         # Durable suspend: interrupt() raises on the first pass (checkpoint persisted) and returns
@@ -218,15 +241,25 @@ def _build_graph(
     builder.add_node("researcher", researcher)
     builder.add_node("critic", critic)
     builder.add_node("finalize", finalize)
+    if checkpointer is not None:
+        builder.add_node("human_gate", human_gate)
     builder.add_edge(START, "planner")
     builder.add_edge("planner", "researcher")
     builder.add_edge("researcher", "critic")
+    # Bounded reflection loop: on a "revise" verdict (while retries remain) go back to the
+    # researcher with the critique; otherwise proceed to the gate (if any) and finalize.
+    after_critic = "human_gate" if checkpointer is not None else "finalize"
+
+    def _route_after_critic(state: GraphState) -> str:
+        if state.get("verdict") == "revise" and state.get("attempts", 0) < MAX_ATTEMPTS:
+            return "researcher"
+        return after_critic
+
+    builder.add_conditional_edges(
+        "critic", _route_after_critic, {"researcher": "researcher", after_critic: after_critic}
+    )
     if checkpointer is not None:
-        builder.add_node("human_gate", human_gate)
-        builder.add_edge("critic", "human_gate")
         builder.add_edge("human_gate", "finalize")
-    else:
-        builder.add_edge("critic", "finalize")
     builder.add_edge("finalize", END)
     return builder.compile(checkpointer=checkpointer)
 
