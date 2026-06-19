@@ -509,8 +509,11 @@ export async function allowEgressHost(token: string, host: string): Promise<void
 /** The blocked host from an egress-denied tool error, or null if it isn't an egress denial. */
 export function blockedEgressHost(error: string | null | undefined): string | null {
   if (!error || !/egress/i.test(error)) return null;
-  const m = error.match(/host '([^']+)'/) ?? error.match(/attempted host: ([^);]+)/);
-  return m ? m[1].trim() : null;
+  const m =
+    error.match(/host '([^']+)'/) ?? // "host 'X' is not in the egress allowlist"
+    error.match(/attempted host: ([^);\s]+)/) ?? // "egress is disabled (attempted host: X)"
+    error.match(/for host: (\S+)/); // "egress not allowed for host: X" (http_fetch)
+  return m ? m[1].trim().replace(/[.,;]+$/, "") : null;
 }
 
 // Per-tenant multi-agent graph config (#290). One entry per agent the tenant has customized; a null

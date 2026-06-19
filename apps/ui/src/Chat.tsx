@@ -9,7 +9,6 @@ import {
   fetchFiles,
   fetchMemories,
   allowEgressHost,
-  blockedEgressHost,
   fetchModels,
   fetchProviders,
   fetchSettings,
@@ -103,9 +102,6 @@ export function Chat({
   const [incognito, setIncognito] = useState(false);
   // Two-view navigation: the chat workspace vs the full-width Settings view (#290 redesign).
   const [tab, setTab] = useState<"chat" | "settings">("chat");
-  // A host an outbound tool call was blocked on this turn, offered for one-click allow-on-deny.
-  const [blockedHost, setBlockedHost] = useState<string | null>(null);
-  const [allowedHost, setAllowedHost] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [showAppLogs, setShowAppLogs] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -331,10 +327,9 @@ export function Chat({
   }
 
   async function onAllowHost(host: string): Promise<void> {
+    // Allow-on-deny: add the host to the allowlist (the reasoning-pane prompt shows the outcome).
     try {
       await allowEgressHost(token, host);
-      setBlockedHost(null);
-      setAllowedHost(host);
     } catch (e: unknown) {
       setError(String(e));
     }
@@ -344,8 +339,6 @@ export function Chat({
     const content = input.trim();
     if (!content || !model || view.busy) return;
     setError(null);
-    setBlockedHost(null);
-    setAllowedHost(null);
     setInput("");
 
     const startKey = activeId ?? NEW_CHAT;
@@ -397,12 +390,7 @@ export function Chat({
           patchChat(key, (s) => ({ ...s, messages: [...history, { role: "assistant", content: acc }] }));
         },
         (cites) => patchChat(key, (s) => ({ ...s, citations: { ...s.citations, [assistantIndex]: cites } })),
-        (step) => {
-          // Offer one-click allow-on-deny when an outbound tool call was blocked by egress.
-          if (step.phase === "result" && step.error) {
-            const host = blockedEgressHost(step.error);
-            if (host) setBlockedHost(host);
-          }
+        (step) =>
           patchChat(key, (s) => ({
             ...s,
             trace: {
@@ -416,8 +404,7 @@ export function Chat({
                 error: step.error,
               }),
             },
-          }));
-        },
+          })),
         (u) => patchChat(key, (s) => ({ ...s, usage: u })),
         (delta) =>
           patchChat(key, (s) => ({
@@ -662,6 +649,7 @@ export function Chat({
               busy={busy}
               listRef={listRef}
               onScroll={onMessagesScroll}
+              onAllowHost={(host) => void onAllowHost(host)}
             />
 
             {!atBottom && (
@@ -713,38 +701,6 @@ export function Chat({
               <p data-testid="chat-error" style={{ color: "#b00" }}>
                 {error}
               </p>
-            )}
-
-            {/* Interactive allow-on-deny: an outbound request was blocked; offer to allow the host. */}
-            {blockedHost && (
-              <div
-                data-testid="egress-block-banner"
-                style={{
-                  border: "1px solid #b06f00",
-                  color: "#b06f00",
-                  borderRadius: 6,
-                  padding: "0.5rem",
-                  fontSize: "0.82rem",
-                  display: "flex",
-                  gap: "0.5rem",
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                }}
-              >
-                <span style={{ flex: 1 }}>
-                  Outbound request to <strong>{blockedHost}</strong> was blocked by the egress
-                  allowlist.
-                </span>
-                <button data-testid="egress-allow-btn" onClick={() => void onAllowHost(blockedHost)}>
-                  Allow {blockedHost}
-                </button>
-              </div>
-            )}
-            {allowedHost && (
-              <div data-testid="egress-allowed-banner" style={{ color: "#1a7f37", fontSize: "0.82rem" }}>
-                Allowed <strong>{allowedHost}</strong> and added it to your allowlist — re-send your
-                message to use it.
-              </div>
             )}
 
             {/* Per-session controls strip: these are per-turn toggles, kept next to the composer. */}

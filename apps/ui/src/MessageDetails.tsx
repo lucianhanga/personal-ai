@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import type { ToolStep, TraceItem } from "./api";
+import { blockedEgressHost, type ToolStep, type TraceItem } from "./api";
 
 // Color code for the agent-flow trace (no emoji, per project convention): distinct hues per agent,
 // and green=success / red=failure for results + verification.
@@ -41,13 +41,17 @@ export function MessageDetails({
   steps,
   thinking,
   defaultOpen = false,
+  onAllowHost,
 }: {
   trace?: TraceItem[];
   steps?: ToolStep[];
   thinking?: string | null;
   defaultOpen?: boolean;
+  // Called when the user allows a host an egress-blocked tool tried to reach (allow-on-deny).
+  onAllowHost?: (host: string) => void;
 }): React.ReactElement | null {
   const [open, setOpen] = useState(defaultOpen);
+  const [allowed, setAllowed] = useState<Set<string>>(new Set());
   const bodyRef = useRef<HTMLDivElement>(null);
   const items = trace?.length ? trace : legacyTrace(steps, thinking);
 
@@ -110,10 +114,33 @@ export function MessageDetails({
               );
             }
             if (t.kind === "tool_result") {
+              const host = t.ok ? null : blockedEgressHost(t.error);
               return (
                 <div key={k} style={{ color: t.ok ? TRACE.ok : TRACE.err }}>
                   <Tag color={t.ok ? TRACE.ok : TRACE.err}>Result</Tag> {t.tool}:{" "}
                   {t.ok ? "ok" : `error: ${t.error}`}
+                  {host &&
+                    onAllowHost &&
+                    (allowed.has(host) ? (
+                      <span data-testid="egress-allowed" style={{ color: TRACE.ok }}>
+                        {" "}
+                        — allowed {host}; re-send to use it.
+                      </span>
+                    ) : (
+                      <span style={{ color: "#555" }}>
+                        {" "}
+                        — allow outbound to <strong>{host}</strong> from now on?{" "}
+                        <button
+                          data-testid="egress-allow-btn"
+                          onClick={() => {
+                            setAllowed((a) => new Set(a).add(host));
+                            onAllowHost(host);
+                          }}
+                        >
+                          Allow
+                        </button>
+                      </span>
+                    ))}
                 </div>
               );
             }

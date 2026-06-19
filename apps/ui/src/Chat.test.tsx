@@ -146,17 +146,18 @@ test("hints when documents exist but RAG is off", async () => {
   expect(screen.getByTestId("rag-hint")).toBeInTheDocument();
 });
 
-test("offers to allow a host blocked by egress, then adds it on click", async () => {
+test("offers to allow an egress-blocked host inline in the reasoning pane", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta, _c, onToolStep) => {
+    // http_fetch's egress error format (the one the user hit).
     onToolStep?.({
       phase: "result",
-      tool: "web_search",
+      tool: "http_fetch",
       ok: false,
-      error: "egress blocked: host 'html.duckduckgo.com' is not in the egress allowlist ('a.com',)",
+      error: "egress not allowed for host: api.open-meteo.com",
     });
-    onDelta("I couldn't reach the web.");
+    onDelta("I couldn't reach the weather API.");
   });
   const allow = vi.spyOn(api, "allowEgressHost").mockResolvedValue();
 
@@ -164,15 +165,14 @@ test("offers to allow a host blocked by egress, then adds it on click", async ()
   await waitFor(() =>
     expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
   );
-  fireEvent.change(screen.getByTestId("composer"), { target: { value: "search the web" } });
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "weather?" } });
   fireEvent.click(screen.getByTestId("send"));
 
-  await waitFor(() =>
-    expect(screen.getByTestId("egress-block-banner")).toHaveTextContent("html.duckduckgo.com"),
-  );
-  fireEvent.click(screen.getByTestId("egress-allow-btn"));
-  await waitFor(() => expect(allow).toHaveBeenCalledWith("demo", "html.duckduckgo.com"));
-  await waitFor(() => expect(screen.getByTestId("egress-allowed-banner")).toBeInTheDocument());
+  // The allow prompt is inline in the reasoning pane (Details, open while the turn streams).
+  const btn = await screen.findByTestId("egress-allow-btn");
+  fireEvent.click(btn);
+  await waitFor(() => expect(allow).toHaveBeenCalledWith("demo", "api.open-meteo.com"));
+  await waitFor(() => expect(screen.getByTestId("egress-allowed")).toBeInTheDocument());
 });
 
 test("renders citations returned with a RAG answer", async () => {
