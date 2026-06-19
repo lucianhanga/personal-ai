@@ -30,20 +30,33 @@ EgressCheck = Callable[[str], None]
 _APPROVAL_RISKS = frozenset({RiskLevel.HIGH, RiskLevel.CRITICAL})
 
 
-def _coerce_arg_names(args: Mapping[str, Any], schema: Mapping[str, Any]) -> dict[str, Any] | None:
-    """Best-effort fix for a model that mislabels ONE argument (e.g. sends ``input`` for a tool
-    whose required parameter is ``query``). When exactly one required property is missing and
-    exactly one supplied key is not in the schema, rename that key to the missing one. Returns the
-    corrected args, or None when the heuristic doesn't clearly apply (then the call is rejected)."""
+def _coerce_args(args: Mapping[str, Any], schema: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Best-effort fixes for common model mistakes so a call succeeds instead of being rejected:
+    clamp a numeric argument to the schema's minimum/maximum (e.g. the model asked for max_results=3
+    when the tool requires >=5), and rename a single mislabeled argument (e.g. ``input`` for the
+    required ``query``). Returns the corrected args, or None when nothing clearly applies."""
     props = schema.get("properties") or {}
+    out: dict[str, Any] = dict(args)
+    changed = False
+    # Clamp out-of-range numbers (not bools) to the schema bound.
+    for key, val in list(out.items()):
+        spec = props.get(key)
+        if isinstance(spec, dict) and isinstance(val, int | float) and not isinstance(val, bool):
+            lo, hi = spec.get("minimum"), spec.get("maximum")
+            if isinstance(lo, int | float) and val < lo:
+                out[key] = lo
+                changed = True
+            elif isinstance(hi, int | float) and val > hi:
+                out[key] = hi
+                changed = True
+    # Rename a single mislabeled argument (exactly one required missing + one unknown key).
     required = schema.get("required") or []
-    missing = [r for r in required if r not in args]
-    extra = [k for k in args if k not in props]
+    missing = [r for r in required if r not in out]
+    extra = [k for k in out if k not in props]
     if len(missing) == 1 and len(extra) == 1:
-        fixed = {k: v for k, v in args.items() if k != extra[0]}
-        fixed[missing[0]] = args[extra[0]]
-        return fixed
-    return None
+        out[missing[0]] = out.pop(extra[0])
+        changed = True
+    return out if changed else None
 
 
 @dataclass(frozen=True)
@@ -119,10 +132,10 @@ class ToolGateway:
             try:
                 jsonschema.validate(dict(call.args), schema)
             except jsonschema.ValidationError as exc:
-                # Auto-fix the common "model used a synonym for one argument" case (e.g. `input`
-                # for the required `query`); otherwise deny with a list of the valid parameters so
-                # the model can self-correct on its next turn.
-                coerced = _coerce_arg_names(dict(call.args), schema)
+                # Auto-fix common model slips (a number out of the schema's min/max, or one
+                # mislabeled argument name); otherwise deny with the valid parameters listed so the
+                # model can self-correct on its next turn.
+                coerced = _coerce_args(dict(call.args), schema)
                 if coerced is not None:
                     try:
                         jsonschema.validate(coerced, schema)

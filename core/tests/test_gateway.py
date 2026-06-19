@@ -142,6 +142,29 @@ def test_single_mislabeled_arg_is_auto_coerced() -> None:
     assert result.ok and result.output == {"echo": "hello"}
 
 
+_BOUNDED_SCHEMA = {
+    "type": "object",
+    "properties": {"x": {"type": "string"}, "n": {"type": "integer", "minimum": 5, "maximum": 10}},
+    "required": ["x"],
+}
+
+
+class _EchoN:
+    name = "echo"
+
+    async def invoke(self, call: ToolCall) -> ToolResult:
+        return ToolResult(ok=True, output={"n": call.args.get("n")})
+
+
+def test_out_of_range_number_is_clamped_to_the_schema_bound() -> None:
+    # The model asked for n=3 but the tool requires n>=5; clamp to the minimum and run, rather than
+    # failing the call (mirrors tavily's max_results minimum).
+    tool = RegisteredTool(_manifest(inputs=_BOUNDED_SCHEMA, risk=RiskLevel.LOW), _EchoN())
+    gw, _ = _gateway(tool)
+    result = _run(gw.invoke(ToolCall("echo", "1.0.0", {"x": "q", "n": 3})))
+    assert result.ok and result.output == {"n": 5}
+
+
 def test_egress_blocked_denies() -> None:
     gw, _ = _gateway(
         RegisteredTool(_manifest(egress=["evil.example"], risk=RiskLevel.LOW), _Echo()),
