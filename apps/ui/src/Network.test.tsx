@@ -21,6 +21,7 @@ const SETTINGS: TenantSettings = {
   agent_human_gate: null,
   agent_accuracy_mode: null,
   agent_max_iterations: null,
+  agent_timeout_seconds: null,
   memory_enabled: null,
   grounding_enabled: null,
   max_upload_bytes: null,

@@ -40,6 +40,8 @@ class TenantSettings(StrictModel):
     agent_human_gate: bool | None = None
     agent_accuracy_mode: Literal["standard", "accurate"] | None = None
     agent_max_iterations: int | None = Field(default=None, ge=1, le=50)
+    # Whole-turn wall-clock cap in seconds (E_TIMEOUT on expiry). 30s..1h.
+    agent_timeout_seconds: int | None = Field(default=None, ge=30, le=3600)
 
     # --- Behaviour ---
     memory_enabled: bool | None = None

@@ -44,6 +44,7 @@ const GROUPS: Group[] = [
     fields: [
       { key: "agent_accuracy_mode", label: "Accuracy mode", kind: "enum", options: ["standard", "accurate"] },
       { key: "agent_max_iterations", label: "Max tool iterations", kind: "number" },
+      { key: "agent_timeout_seconds", label: "Turn timeout (seconds)", kind: "number" },
     ],
   },
   {

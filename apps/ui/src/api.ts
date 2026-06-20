@@ -451,6 +451,7 @@ export interface TenantSettings {
   agent_human_gate: boolean | null;
   agent_accuracy_mode: "standard" | "accurate" | null;
   agent_max_iterations: number | null;
+  agent_timeout_seconds: number | null;
   memory_enabled: boolean | null;
   grounding_enabled: boolean | null;
   max_upload_bytes: number | null;

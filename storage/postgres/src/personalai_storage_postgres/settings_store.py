@@ -28,6 +28,7 @@ _FIELDS = (
     "agent_human_gate",
     "agent_accuracy_mode",
     "agent_max_iterations",
+    "agent_timeout_seconds",
     "memory_enabled",
     "grounding_enabled",
     "max_upload_bytes",
