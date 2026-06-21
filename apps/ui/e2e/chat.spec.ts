@@ -110,6 +110,24 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   await page.route("**/api/v1/chat", (r) =>
     r.fulfill({ status: 200, contentType: "text/event-stream", body: CHAT_SSE }),
   );
+  // Per-tenant settings (loaded on mount; PUT when a model is picked) + agent config.
+  const SETTINGS_BODY = JSON.stringify({
+    ok: true,
+    data: {
+      settings: { default_model: null, agent_mode: null },
+      defaults: { default_model: "qwen3:8b", agent_mode: "single", egress_enabled: false, allowed_egress_hosts: [] },
+    },
+  });
+  await page.route("**/api/v1/settings", (r) =>
+    r.fulfill({ status: 200, contentType: "application/json", body: SETTINGS_BODY }),
+  );
+  await page.route("**/api/v1/agents/config", (r) =>
+    r.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: '{"ok":true,"data":{"config":{"agents":[]},"defaults":{"planner":"p","researcher":"r","critic":"c"},"agents":[{"name":"researcher","uses_tools":true}],"available_tools":["calculator"]}}',
+    }),
+  );
 
   await page.goto("/");
   await expect(page.getByTestId("backend-status")).toHaveText(/connected/i);
@@ -125,15 +143,7 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   await expect(page.getByTestId("details-body")).toContainText("web_search");
   await expect(page.getByTestId("context-meter-label")).toContainText("4,096 / 32,768");
 
-  // Memory panel opens and shows the empty state.
-  await page.getByTestId("memory-show").click();
-  await expect(page.getByTestId("memory-empty")).toBeVisible();
-
-  // Tools panel opens and lists the calculator.
-  await page.getByTestId("tools-show").click();
-  await expect(page.getByTestId("tool-list")).toContainText("calculator");
-
-  // Tool log opens, lists a call, and expands details on click.
+  // Side panel: Activity (tool log) lists a call and expands details on click.
   await page.getByTestId("toollog-show").click();
   await page.getByTestId("toollog-row-0").click();
   await expect(page.getByTestId("toollog-detail")).toContainText("2+2");
@@ -142,13 +152,19 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   await page.getByTestId("applogs-show").click();
   await expect(page.getByTestId("applogs-panel")).toContainText("started");
 
-  // MCP panel lists the connected server.
-  await page.getByTestId("mcp-show").click();
-  await expect(page.getByTestId("mcp-manager")).toContainText("playwright");
-
   // The panel sidebar collapses and re-expands.
   await page.getByTestId("side-toggle").click();
   await expect(page.getByTestId("side-panel")).toHaveCount(0);
   await page.getByTestId("side-toggle").click();
   await expect(page.getByTestId("side-panel")).toBeVisible();
+
+  // Settings view: Memory, Tools, and MCP now live in dedicated sections.
+  await page.getByTestId("nav-settings").click();
+  await expect(page.getByTestId("settings-view")).toBeVisible();
+  await page.getByTestId("settings-nav-memory").click();
+  await expect(page.getByTestId("memory-empty")).toBeVisible();
+  await page.getByTestId("settings-nav-tools").click();
+  await expect(page.getByTestId("tool-list")).toContainText("calculator");
+  await page.getByTestId("settings-nav-mcp").click();
+  await expect(page.getByTestId("mcp-manager")).toContainText("playwright");
 });

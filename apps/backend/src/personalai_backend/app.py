@@ -254,6 +254,7 @@ def _context_breakdown(groups: Sequence[tuple[str, Sequence[ChatMessage]]]) -> d
         items.append({"label": label, "count": len(msgs), "chars": chars})
     return {"items": items, "total_chars": total}
 
+
 # Grounding/anti-hallucination instruction (config.grounding_enabled). Balanced so it curbs
 # fabrication on factual questions without flattening creative/opinion requests.
 _GROUNDING = (
@@ -1314,8 +1315,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 "config": saved.model_dump(),
                 "defaults": dict(DEFAULT_AGENT_PROMPTS),
                 "agents": [
-                    {"name": name, "uses_tools": name in TOOL_USING_AGENTS}
-                    for name in AGENT_NAMES
+                    {"name": name, "uses_tools": name in TOOL_USING_AGENTS} for name in AGENT_NAMES
                 ],
                 "available_tools": list(registries.tools.names()),
             },

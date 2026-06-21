@@ -110,9 +110,7 @@ def test_egress_allow_host_adds_and_enables() -> None:
             headers=_csrf(user),
             json={"host": "files.example.org"},
         )
-        hosts = set(
-            user.get("/api/v1/settings").json()["data"]["settings"]["allowed_egress_hosts"]
-        )
+        hosts = set(user.get("/api/v1/settings").json()["data"]["settings"]["allowed_egress_hosts"])
         assert {"example.com", "files.example.org"} <= hosts
 
         # A non-bare host is rejected.
@@ -126,9 +124,7 @@ def test_settings_are_isolated_between_tenants() -> None:
     app = create_app(bootstrap(config=CoreConfig(app_mode="hosted")))
     with TestClient(app, base_url="https://testserver") as alice:
         _signup_login(alice, f"alice-{uuid.uuid4().hex[:8]}@example.com")
-        alice.put(
-            "/api/v1/settings", headers=_csrf(alice), json={"default_model": "alice-model"}
-        )
+        alice.put("/api/v1/settings", headers=_csrf(alice), json={"default_model": "alice-model"})
 
     with TestClient(app, base_url="https://testserver") as bob:
         _signup_login(bob, f"bob-{uuid.uuid4().hex[:8]}@example.com")
@@ -141,9 +137,7 @@ def test_settings_reject_out_of_range_values() -> None:
     with TestClient(app, base_url="https://testserver") as user:
         _signup_login(user, f"u-{uuid.uuid4().hex[:8]}@example.com")
         # agent_max_iterations is bounded 1..50; 999 must fail validation (422), not persist.
-        bad = user.put(
-            "/api/v1/settings", headers=_csrf(user), json={"agent_max_iterations": 999}
-        )
+        bad = user.put("/api/v1/settings", headers=_csrf(user), json={"agent_max_iterations": 999})
         assert bad.status_code == 422
         # Unknown/secret fields are rejected (extra="forbid") -- the API never accepts secrets.
         secret = user.put(
