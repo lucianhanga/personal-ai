@@ -12,6 +12,13 @@ generated OpenAPI document.
 ## [Unreleased]
 
 ### Added
+- **STT feedback polish (M9.2f)**: the voice composer now keeps you informed instead of waiting
+  silently — a live **recording timer** (with a gentle note past 60s), a **"Transcribing…"** state,
+  a **no-speech notice** when nothing was heard (common now that silence is filtered out), and a
+  hint that the **first transcription downloads the speech model** (which can take a minute) so the
+  one-time wait no longer looks like a hang. Microphone failures are now plain-language
+  ("Microphone access was blocked…", "No microphone was found…") and an over-long recording reports
+  "too long" rather than a raw HTTP error.
 - **Spoken-language control for STT (M9.2e)**: a new per-tenant **Spoken language** setting
   (Settings → Voice) — `auto` to auto-detect (multilingual, the default), or pin an ISO-639-1 code
   (`en`/`de`/`es`/`ro`/…). Whisper's auto-detection is probabilistic and can mis-detect the language

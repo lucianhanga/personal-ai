@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 
-import { Chat } from "./Chat";
+import { Chat, formatDuration, micErrorMessage, transcribeErrorMessage } from "./Chat";
 import * as api from "./api";
 
 afterEach(() => vi.restoreAllMocks());
@@ -217,6 +217,77 @@ test("auto-sends the transcript after the grace period if untouched (M9.2c)", as
   });
   expect(stream).toHaveBeenCalledTimes(1);
   vi.useRealTimers();
+});
+
+test("STT message helpers map failures to plain language (M9.2f)", () => {
+  expect(micErrorMessage({ name: "NotAllowedError" })).toMatch(/blocked/i);
+  expect(micErrorMessage({ name: "NotFoundError" })).toMatch(/no microphone/i);
+  expect(micErrorMessage(new Error("boom"))).toMatch(/unavailable/i);
+  expect(transcribeErrorMessage("transcribe failed: 413")).toMatch(/too long/i);
+  expect(transcribeErrorMessage("transcribe failed: 500")).toMatch(/failed/i);
+  expect(formatDuration(0)).toBe("0:00");
+  expect(formatDuration(9)).toBe("0:09");
+  expect(formatDuration(75)).toBe("1:15");
+});
+
+test("shows a no-speech notice when the transcript is empty (M9.2f)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
+  vi.spyOn(api, "transcribeAudio").mockResolvedValue(""); // VAD strips silence -> empty
+  const track = { stop: vi.fn() };
+  vi.stubGlobal("navigator", {
+    ...navigator,
+    mediaDevices: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [track] }) },
+  });
+  let onstop: (() => void) | null = null;
+  class FakeRecorder {
+    ondataavailable: ((e: { data: Blob }) => void) | null = null;
+    set onstop(fn: () => void) {
+      onstop = fn;
+    }
+    start(): void {
+      this.ondataavailable?.({ data: new Blob(["x"], { type: "audio/webm" }) });
+    }
+    stop(): void {
+      onstop?.();
+    }
+  }
+  vi.stubGlobal("MediaRecorder", FakeRecorder as unknown as typeof MediaRecorder);
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("mic")).toBeInTheDocument());
+  fireEvent.click(screen.getByTestId("mic"));
+  await waitFor(() =>
+    expect(screen.getByTestId("mic")).toHaveAttribute("aria-label", "Stop recording"),
+  );
+  fireEvent.click(screen.getByTestId("mic"));
+  await waitFor(() =>
+    expect(screen.getByTestId("mic-notice")).toHaveTextContent(/no speech detected/i),
+  );
+  // No transcript -> no auto-send banner.
+  expect(screen.queryByTestId("autosend-banner")).toBeNull();
+});
+
+test("shows a friendly error when mic permission is denied (M9.2f)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
+  vi.stubGlobal("navigator", {
+    ...navigator,
+    mediaDevices: {
+      getUserMedia: vi.fn().mockRejectedValue(
+        Object.assign(new Error("denied"), { name: "NotAllowedError" }),
+      ),
+    },
+  });
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("mic")).toBeInTheDocument());
+  fireEvent.click(screen.getByTestId("mic"));
+  await waitFor(() =>
+    expect(screen.getByTestId("chat-error")).toHaveTextContent(/microphone access was blocked/i),
+  );
 });
 
 test("attaches an image and sends it with the user message (vision)", async () => {
