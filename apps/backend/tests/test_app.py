@@ -424,6 +424,21 @@ def test_status_reports_transcribe_enabled_by_default() -> None:
     assert data["transcribe_enabled"] is True
 
 
+def test_status_reports_tts_enabled() -> None:
+    # M9.3: read-aloud availability is on by default and off when disabled, so the UI can hide it.
+    client = TestClient(create_app(bootstrap(config=CoreConfig(auth_token=TOKEN))))
+    on = client.get("/api/v1/status", headers={"Authorization": f"Bearer {TOKEN}"}).json()["data"]
+    assert on["tts_enabled"] is True
+
+    off_client = TestClient(
+        create_app(bootstrap(config=CoreConfig(auth_token=TOKEN, tts_enabled=False)))
+    )
+    off = off_client.get("/api/v1/status", headers={"Authorization": f"Bearer {TOKEN}"}).json()[
+        "data"
+    ]
+    assert off["tts_enabled"] is False
+
+
 def test_chat_empty_completion_emits_notice() -> None:
     # An empty turn (no answer/tools) must surface a notice, not close the stream silently (#224).
     client = _app_with_provider("empty", EmptyProvider())

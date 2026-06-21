@@ -12,6 +12,13 @@ generated OpenAPI document.
 ## [Unreleased]
 
 ### Added
+- **Read answers aloud (M9.3)**: a **read-aloud** control on each assistant answer, powered by the
+  browser's built-in speech synthesis — fully client-side, zero-setup, no new dependencies. Play
+  (`▶`) / stop (`■`) monochrome glyphs matching the voice-input controls; one answer reads at a time.
+  Gated by a per-tenant **Read answers aloud** setting (Settings → Voice → text-to-speech, on by
+  default; `PERSONALAI_TTS_ENABLED`), surfaced via `/status` and only shown when the browser supports
+  speech synthesis. First slice of M9.3 — a server-side **Piper** neural-voice provider is the
+  planned follow-up. Completes the M9 Multimodal trio (vision · STT · TTS).
 - **STT feedback polish (M9.2f)**: the voice composer now keeps you informed instead of waiting
   silently — a live **recording timer** (with a gentle note past 60s), a **"Transcribing…"** state,
   a **no-speech notice** when nothing was heard (common now that silence is filtered out), and a

@@ -13,6 +13,7 @@ import {
   fetchProviders,
   fetchSettings,
   fetchTranscribeEnabled,
+  fetchTtsEnabled,
   renameConversation,
   resumeChat,
   saveSettings,
@@ -146,6 +147,7 @@ export function Chat({
   const [attachedImages, setAttachedImages] = useState<string[]>([]);
   // Voice input (M9.2): whether STT is configured, and the live recording state.
   const [transcribeEnabled, setTranscribeEnabled] = useState(false);
+  const [ttsEnabled, setTtsEnabled] = useState(false);
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -380,9 +382,10 @@ export function Chat({
     }
   }
 
-  // Discover whether voice input is available (M9.2).
+  // Discover whether voice input (M9.2) and read-aloud (M9.3) are available.
   useEffect(() => {
     fetchTranscribeEnabled(token).then(setTranscribeEnabled, () => setTranscribeEnabled(false));
+    fetchTtsEnabled(token).then(setTtsEnabled, () => setTtsEnabled(false));
   }, [token]);
 
   function cancelAutoSend(): void {
@@ -845,6 +848,7 @@ export function Chat({
               trace={trace}
               citations={citations}
               busy={busy}
+              ttsEnabled={ttsEnabled}
               listRef={listRef}
               onScroll={onMessagesScroll}
               onAllowHost={(host) => void onAllowHost(host)}

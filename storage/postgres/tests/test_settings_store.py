@@ -66,6 +66,7 @@ def test_settings_round_trip_and_partial_inherit() -> None:
                         transcribe_base_url="http://127.0.0.1:8000/v1",
                         transcribe_model="whisper-1",
                         transcribe_language="ro",
+                        tts_enabled=True,
                     )
                 )
                 assert saved.default_model == "qwen3:14b"
@@ -81,6 +82,7 @@ def test_settings_round_trip_and_partial_inherit() -> None:
                 assert saved.transcribe_base_url == "http://127.0.0.1:8000/v1"
                 assert saved.transcribe_model == "whisper-1"
                 assert saved.transcribe_language == "ro"
+                assert saved.tts_enabled is True
                 # Unset fields stay None (inherit the deployment default).
                 assert saved.ollama_host is None
                 assert saved.memory_enabled is None
