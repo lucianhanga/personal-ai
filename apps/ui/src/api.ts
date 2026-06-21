@@ -330,6 +330,21 @@ export async function fetchTranscribeEnabled(token: string): Promise<boolean> {
   }
 }
 
+/** Whether reading answers aloud is enabled (so the UI shows the read-aloud control) — M9.3. */
+export async function fetchTtsEnabled(token: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/status`, {
+      headers: authHeaders(token),
+      credentials: CREDS,
+    });
+    if (!res.ok) return false;
+    const body = (await res.json()) as { data?: { tts_enabled?: boolean } };
+    return body.data?.tts_enabled === true;
+  } catch {
+    return false;
+  }
+}
+
 /** Transcribe a recorded audio blob to text via the backend transcriber (M9.2). */
 export async function transcribeAudio(token: string, audio: Blob): Promise<string> {
   const form = new FormData();
@@ -499,6 +514,7 @@ export interface TenantSettings {
   transcribe_base_url: string | null;
   transcribe_model: string | null;
   transcribe_language: string | null;
+  tts_enabled: boolean | null;
 }
 
 // The defaults the backend would apply for any field left null (echoed from the boot CoreConfig),

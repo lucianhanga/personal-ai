@@ -59,6 +59,10 @@ class TenantSettings(StrictModel):
     # Whisper mis-detecting the language on real-mic audio. None inherits the deployment default.
     transcribe_language: str | None = Field(default=None, min_length=2, max_length=10)
 
+    # --- Voice / text-to-speech (M9.3) ---
+    # Read assistant answers aloud (browser speech synthesis in slice 1). None inherits the default.
+    tts_enabled: bool | None = None
+
     # --- Network egress (security-sensitive) ---
     # When egress_enabled is on, outbound calls from in-process tools are permitted only to hosts in
     # allowed_egress_hosts (empty = fail-closed, deny all). None on either inherits the deployment

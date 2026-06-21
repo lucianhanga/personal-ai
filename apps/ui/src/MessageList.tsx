@@ -1,12 +1,14 @@
 import type { ChatMessage, Citation, TraceItem } from "./api";
 import { Markdown } from "./Markdown";
 import { MessageDetails } from "./MessageDetails";
+import { ReadAloudButton } from "./ReadAloudButton";
 
 interface MessageListProps {
   messages: ChatMessage[];
   trace: Record<number, TraceItem[]>;
   citations: Record<number, Citation[]>;
   busy: boolean;
+  ttsEnabled: boolean;
   listRef: React.RefObject<HTMLDivElement | null>;
   onScroll: () => void;
   onAllowHost?: (host: string) => void;
@@ -18,6 +20,7 @@ export function MessageList({
   trace,
   citations,
   busy,
+  ttsEnabled,
   listRef,
   onScroll,
   onAllowHost,
@@ -41,6 +44,10 @@ export function MessageList({
         m.role === "assistant" ? (
           <div key={i} data-testid="msg-assistant" style={{ margin: "0.4rem 0" }}>
             <strong>AI:</strong>
+            {/* Read aloud (M9.3) — only once the answer has finished streaming and TTS is enabled. */}
+            {ttsEnabled && !(busy && i === messages.length - 1) && (
+              <ReadAloudButton text={m.content} />
+            )}
             <MessageDetails
               trace={trace[i]?.length ? trace[i] : m.meta?.trace}
               steps={m.meta?.tool_steps}

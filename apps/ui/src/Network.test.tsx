@@ -32,6 +32,7 @@ const SETTINGS: TenantSettings = {
   transcribe_base_url: null,
   transcribe_model: null,
   transcribe_language: null,
+  tts_enabled: null,
 };
 
 function mockLoad(settings: Partial<TenantSettings> = {}): void {

@@ -422,6 +422,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 # Voice input availability (M9.2), reflecting the tenant's effective setting so the
                 # UI only shows the mic when transcription is on.
                 "transcribe_enabled": config.transcribe_enabled,
+                # Read-aloud availability (M9.3); the UI shows the control when on (and the browser
+                # supports speech synthesis).
+                "tts_enabled": config.tts_enabled,
             },
         )
 

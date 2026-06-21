@@ -50,6 +50,7 @@ _ENV_FIELDS = {
     "TRANSCRIBE_LANGUAGE": "transcribe_language",
     "TRANSCRIBE_BASE_URL": "transcribe_base_url",
     "TRANSCRIBE_API_KEY": "transcribe_api_key",  # pragma: allowlist secret  (env var name)
+    "TTS_ENABLED": "tts_enabled",
     "DATABASE_URL": "database_url",
     "DB_POOL_MAX_SIZE": "db_pool_max_size",
     "EMBED_PROVIDER": "embed_provider",
@@ -88,6 +89,7 @@ _BOOL_FIELDS = {
     "agent_graph_enabled",
     "agent_human_gate",
     "transcribe_enabled",
+    "tts_enabled",
 }
 
 _CSV_FIELDS = {"allowed_origins", "allowed_egress_hosts"}
@@ -212,6 +214,9 @@ class CoreConfig(StrictModel):
     transcribe_api_key: str | None = Field(
         default=None, description="Transcription API key (secret); empty = use openai_api_key."
     )
+    # Text-to-speech (M9.3): read assistant answers aloud. Slice 1 uses the browser's built-in
+    # speech synthesis (client-side, zero-setup); this flag just gates the read-aloud control.
+    tts_enabled: bool = Field(default=True, description="Enable reading answers aloud (TTS).")
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> CoreConfig:

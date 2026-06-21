@@ -68,6 +68,11 @@ const GROUPS: Group[] = [
     ],
   },
   {
+    title: "Voice (text-to-speech)",
+    note: "Reads assistant answers aloud using your browser's built-in voices (fully local, no setup). A read-aloud control appears on each answer when enabled.",
+    fields: [{ key: "tts_enabled", label: "Read answers aloud", kind: "bool" }],
+  },
+  {
     title: "Document indexing engine (advanced)",
     note: "How documents are embedded for search — not the chat model (that's in the top bar). Changing this re-defines indexing; existing documents were embedded with the current setting, so you may need to re-upload them. Endpoint changes apply after a backend restart.",
     fields: [
