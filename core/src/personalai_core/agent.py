@@ -79,6 +79,7 @@ class AgentEvent:
         "final",
         "plan",
         "critique",
+        "verification",
         "approval_request",
     ]
     tool: str | None = None
@@ -89,6 +90,7 @@ class AgentEvent:
     answer: str | None = None
     usage: Mapping[str, int] | None = None
     thinking: str | None = None
+    verdict: str | None = None  # verification outcome (pass/needs_revision/fail) — M8.2
     text: str | None = None
 
 

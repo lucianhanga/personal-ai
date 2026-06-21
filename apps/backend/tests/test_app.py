@@ -348,6 +348,41 @@ def test_chat_with_graph_enabled_streams_plan_answer_critique() -> None:
         body = "".join(resp.iter_text())
     assert "echo:" in body and '"done": true' in body
     assert "event: plan" in body and "event: critique" in body
+    # Standard accuracy mode: no verifier (LLM-judge) step.
+    assert "event: verification" not in body
+
+
+def test_accurate_mode_streams_a_verification_step() -> None:
+    # M8.2/#261: agent_accuracy_mode="accurate" adds the LLM-judge verifier after the critic, which
+    # emits a verification step. The fake judge returns a structured "pass" verdict (echo of the
+    # JSON we feed it), so the ladder verifies and finalizes.
+    judge = FakeModelProvider(name="fake")
+
+    async def _gen(request: GenerationRequest) -> GenerationResult:
+        last = request.messages[-1].content if request.messages else ""
+        if "Draft answer to verify" in last:
+            return GenerationResult(text='{"verdict": "pass", "reason": "ok"}', model=request.model)
+        return GenerationResult(text="echo", model=request.model)
+
+    judge.generate = _gen  # type: ignore[method-assign]
+    config = CoreConfig(auth_token=TOKEN, agent_mode="multi", agent_accuracy_mode="accurate")
+    boot = bootstrap(config=config)
+    boot.registries.model_providers.register("fake", judge, overwrite=True)
+    client = TestClient(create_app(boot))
+    with client.stream(
+        "POST",
+        "/api/v1/chat",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={
+            "messages": [{"role": "user", "content": "hi"}],
+            "provider": "fake",
+            "use_tools": True,
+        },
+    ) as resp:
+        assert resp.status_code == 200
+        body = "".join(resp.iter_text())
+    assert "event: verification" in body
+    assert '"verdict": "pass"' in body
 
 
 def test_chat_streams_deltas() -> None:

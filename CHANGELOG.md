@@ -11,6 +11,14 @@ generated OpenAPI document.
 
 ## [Unreleased]
 
+### Added
+- **Verification ladder (M8.2, #261)**: in the multi-agent graph, `accuracy_mode = "accurate"` adds
+  an **LLM-judge verifier** after the critic that returns a schema-validated `Verdict`
+  (pass/needs_revision/fail) and can route one more bounded researcher pass; `"standard"` skips it
+  (fast). Security gates (the human approval gate) are never accuracy-gated. New reusable
+  `generate_structured` core primitive (bounded, fail-closed, repair-retry via `RepairRequest`). The
+  verifier step streams to the reasoning pane as a `verification` trace event.
+
 ## [0.7.0] — 2026-06-21
 
 Milestone **M8.2** — multi-agent quality, per-tenant configuration, and a streamlined UI.

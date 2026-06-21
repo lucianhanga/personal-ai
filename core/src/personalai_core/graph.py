@@ -38,9 +38,11 @@ from personalai_contracts.ports import (
     ModelProvider,
     Role,
 )
+from personalai_contracts.schemas import Verdict
 from personalai_contracts.schemas.tools import Permission
 from personalai_core.agent import AgentEvent, run_agent
 from personalai_core.gateway import RegisteredTool, ToolGateway
+from personalai_core.structured import generate_structured
 
 # The ordered roster of configurable agents in the multi-agent graph (#290). Only the researcher
 # uses tools (it runs the single-agent loop); planner and critic are deliberately tool-free.
@@ -75,6 +77,14 @@ DEFAULT_AGENT_PROMPTS: dict[str, str] = {
         "otherwise begin with OK. Then add 1-2 short sentences explaining. Do not rewrite the "
         "answer."
     ),
+    "verifier": (
+        "You are the verifier (LLM judge). The researcher used live tools/data (the current date "
+        "is in context), so do NOT dismiss recent dates or tool-gathered facts. Judge whether the "
+        "draft answer actually and correctly answers the user's request and is grounded in the "
+        "provided sources. Return a JSON verdict: 'pass' if it does; 'needs_revision' if it is "
+        "close but has a fixable gap or unsupported claim; 'fail' if it does not answer the "
+        "request or is wrong. Give a one-sentence reason. Trust the gathered data."
+    ),
 }
 
 
@@ -102,6 +112,8 @@ class GraphState(TypedDict, total=False):
     # researcher when the answer is materially inadequate; ``attempts`` caps the retries.
     verdict: str
     attempts: int
+    # Verifier (LLM-judge) verdict ("pass"/"needs_revision"/"fail"), accurate mode only (#261).
+    verify_verdict: str
 
 
 # Max researcher passes in the reflection loop: the initial attempt + up to one retry.
@@ -139,11 +151,17 @@ def _build_graph(
     max_iterations: int,
     checkpointer: BaseCheckpointSaver[Any] | None,
     prompts: Mapping[str, str] | None = None,
+    accuracy_mode: str = "standard",
 ) -> Any:
     """Compile the graph. With a ``checkpointer`` a human_gate (interrupt) is inserted before
     finalize, enabling durable interrupt/resume. ``prompts`` overrides per-agent system prompts
-    (#290); missing entries fall back to :data:`DEFAULT_AGENT_PROMPTS`."""
+    (#290); missing entries fall back to :data:`DEFAULT_AGENT_PROMPTS`. ``accuracy_mode``
+    ("accurate" vs "standard") drives the verification-ladder depth (#261): "accurate" adds an
+    LLM-judge verifier after the critic that can route one more researcher pass. Security gates
+    are never accuracy-gated.
+    """
     agent_prompts = resolve_prompts(prompts)
+    verify = accuracy_mode == "accurate"
 
     async def planner(state: GraphState) -> dict[str, Any]:
         writer = get_stream_writer()
@@ -218,6 +236,31 @@ def _build_graph(
         verdict = "revise" if critique[:6].upper() == "REVISE" else "ok"
         return {"critique": critique, "verdict": verdict}
 
+    async def verifier(state: GraphState) -> dict[str, Any]:
+        # LLM-judge tier of the ladder (accurate mode only): a STRUCTURED verdict via
+        # generate_structured (schema-validated, bounded, fail-closed) so routing is deterministic.
+        answer = state.get("answer", "")
+        judged = await generate_structured(
+            provider=provider,
+            model=model,
+            messages=[
+                ChatMessage(Role.SYSTEM, agent_prompts["verifier"]),
+                *messages,
+                ChatMessage(Role.USER, f"Draft answer to verify:\n\n{answer}"),
+            ],
+            schema=Verdict,
+        )
+        # Fail-open on an unparseable judge (don't block finalizing on the judge itself): treat as
+        # "pass". A real fail/needs_revision can still route one bounded retry.
+        verdict = judged.verdict if judged is not None else "pass"
+        reason = judged.reason if judged is not None else "verifier unavailable"
+        get_stream_writer()(AgentEvent(type="verification", verdict=verdict, text=reason))
+        out: dict[str, Any] = {"verify_verdict": verdict}
+        if verdict != "pass":
+            # Feed the verifier's reason back as the critique so the researcher's retry uses it.
+            out["critique"] = f"Verifier: {reason}"
+        return out
+
     async def human_gate(state: GraphState) -> dict[str, Any]:
         # Durable suspend: interrupt() raises on the first pass (checkpoint persisted) and returns
         # the resume value on the second. The payload is what the human is approving.
@@ -243,14 +286,21 @@ def _build_graph(
     builder.add_node("finalize", finalize)
     if checkpointer is not None:
         builder.add_node("human_gate", human_gate)
+    if verify:
+        builder.add_node("verifier", verifier)
     builder.add_edge(START, "planner")
     builder.add_edge("planner", "researcher")
     builder.add_edge("researcher", "critic")
-    # Bounded reflection loop: on a "revise" verdict (while retries remain) go back to the
-    # researcher with the critique; otherwise proceed to the gate (if any) and finalize.
-    after_critic = "human_gate" if checkpointer is not None else "finalize"
+    # The gate (a SECURITY step) is never accuracy-gated: it always sits before finalize when a
+    # checkpointer is supplied, regardless of the verification ladder depth.
+    gate_or_finalize = "human_gate" if checkpointer is not None else "finalize"
+    # Where the critic proceeds when it is NOT asking for a revision: into the verifier (accurate
+    # mode), else straight to the gate/finalize (standard mode).
+    after_critic = "verifier" if verify else gate_or_finalize
 
     def _route_after_critic(state: GraphState) -> str:
+        # Bounded reflection loop: on a "revise" verdict (while researcher retries remain) go back
+        # to the researcher with the critique; otherwise proceed down the ladder.
         if state.get("verdict") == "revise" and state.get("attempts", 0) < MAX_ATTEMPTS:
             return "researcher"
         return after_critic
@@ -258,6 +308,21 @@ def _build_graph(
     builder.add_conditional_edges(
         "critic", _route_after_critic, {"researcher": "researcher", after_critic: after_critic}
     )
+    if verify:
+
+        def _route_after_verify(state: GraphState) -> str:
+            # A non-"pass" verdict routes one more researcher pass (shares the bounded ``attempts``
+            # cap with the reflection loop); otherwise proceed to the gate/finalize.
+            unverified = state.get("verify_verdict", "pass") != "pass"
+            if unverified and state.get("attempts", 0) < MAX_ATTEMPTS:
+                return "researcher"
+            return gate_or_finalize
+
+        builder.add_conditional_edges(
+            "verifier",
+            _route_after_verify,
+            {"researcher": "researcher", gate_or_finalize: gate_or_finalize},
+        )
     if checkpointer is not None:
         builder.add_edge("human_gate", "finalize")
     builder.add_edge("finalize", END)
@@ -280,6 +345,7 @@ async def run_graph(
     thread_id: str | None = None,
     resume: Any | None = None,
     prompts: Mapping[str, str] | None = None,
+    accuracy_mode: str = "standard",
 ) -> AsyncIterator[AgentEvent]:
     """Drive the LangGraph agent graph, yielding ordered :class:`AgentEvent`s.
 
@@ -301,6 +367,7 @@ async def run_graph(
         max_iterations=max_iterations,
         checkpointer=checkpointer,
         prompts=prompts,
+        accuracy_mode=accuracy_mode,
     )
     if checkpointer is None:
         async for ev in graph.astream({"context": context}, stream_mode="custom"):

@@ -459,6 +459,19 @@ export function Chat({
           })),
         // The context composition for this turn, shown in the side panel as the question is asked.
         (ctx) => patchChat(key, (s) => ({ ...s, context: ctx })),
+        // M8.2 verifier (accurate mode): a verification step into the reasoning trace.
+        (step) =>
+          patchChat(key, (s) => ({
+            ...s,
+            trace: {
+              ...s.trace,
+              [assistantIndex]: appendTrace(s.trace[assistantIndex], {
+                kind: "verification",
+                text: step.text,
+                verdict: step.verdict ?? null,
+              }),
+            },
+          })),
       );
       if (persistence) setConversations(await fetchConversations(token));
     } catch (e: unknown) {
