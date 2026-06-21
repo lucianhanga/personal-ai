@@ -40,6 +40,24 @@ function Tag({ color, children }: { color: string; children: React.ReactNode }):
   return <span style={{ color, fontWeight: 600 }}>{children}</span>;
 }
 
+// The researcher produces these step kinds; a new researcher block starts when one of them follows
+// another agent's step (planner/critic/verifier). Used to label the researcher's block like the
+// other agents (it only appears in the multi-agent graph, where those boundary steps exist).
+const RESEARCHER_KINDS = new Set(["reasoning", "tool_call", "tool_result"]);
+const AGENT_BLOCK_KINDS = new Set(["plan", "critique", "verification"]);
+
+/** Insert a synthetic "researcher header" marker before each researcher block (multi-agent only). */
+function withResearcherHeaders(items: TraceItem[]): (TraceItem | { kind: "researcher_header" })[] {
+  const out: (TraceItem | { kind: "researcher_header" })[] = [];
+  items.forEach((t, k) => {
+    if (RESEARCHER_KINDS.has(t.kind) && k > 0 && AGENT_BLOCK_KINDS.has(items[k - 1].kind)) {
+      out.push({ kind: "researcher_header" });
+    }
+    out.push(t);
+  });
+  return out;
+}
+
 /** Build an ordered trace from legacy (separate thinking + tool_steps) meta for old messages. */
 function legacyTrace(steps?: ToolStep[], thinking?: string | null): TraceItem[] {
   const items: TraceItem[] = [];
@@ -116,7 +134,14 @@ export function MessageDetails({
             overflowY: "auto",
           }}
         >
-          {items.map((t, k) => {
+          {withResearcherHeaders(items).map((t, k) => {
+            if (t.kind === "researcher_header") {
+              return (
+                <div key={k} data-testid="details-researcher" style={rowStyle("reasoning")}>
+                  <Tag color={TRACE.researcher}>Researcher</Tag>
+                </div>
+              );
+            }
             if (t.kind === "reasoning") {
               return (
                 <div key={k} data-testid="details-thinking" style={rowStyle("reasoning")}>
