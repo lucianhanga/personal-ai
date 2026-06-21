@@ -312,6 +312,34 @@ def test_chat_turn_timeout_emits_e_timeout() -> None:
     assert "E_TIMEOUT" in body
 
 
+def test_chat_passes_attached_images_to_the_provider() -> None:
+    # M9.1 vision: an image part on the user message reaches the provider's GenerationRequest.
+    seen: list[tuple[str, ...]] = []
+
+    class _Recorder(FakeModelProvider):
+        async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+            for m in request.messages:
+                if m.images:
+                    seen.append(m.images)
+            yield GenerationChunk(delta="ok")
+            yield GenerationChunk(done=True, finish_reason="stop")
+
+    client = _app_with_provider("rec", _Recorder(name="rec"))
+    img = "data:image/png;base64,AAAA"
+    with client.stream(
+        "POST",
+        "/api/v1/chat",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={
+            "messages": [{"role": "user", "content": "what is this?", "images": [img]}],
+            "provider": "rec",
+        },
+    ) as resp:
+        assert resp.status_code == 200
+        "".join(resp.iter_text())
+    assert seen and img in seen[0]
+
+
 def test_chat_empty_completion_emits_notice() -> None:
     # An empty turn (no answer/tools) must surface a notice, not close the stream silently (#224).
     client = _app_with_provider("empty", EmptyProvider())

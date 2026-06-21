@@ -266,3 +266,22 @@ def test_http_error_propagates() -> None:
     req = GenerationRequest(messages=[ChatMessage(Role.USER, "hi")], model="gpt-x")
     with pytest.raises(httpx.HTTPStatusError):
         run(lambda p: p.generate(req))
+
+
+def test_message_uses_content_parts_for_images() -> None:
+    # M9.1: a vision turn becomes OpenAI content parts (text + image_url with the data-URL).
+    from personalai_provider_openai.provider import _message
+
+    m = _message(ChatMessage(Role.USER, "describe", images=("data:image/png;base64,XYZ",)))
+    assert m["role"] == "user"
+    assert m["content"][0] == {"type": "text", "text": "describe"}
+    assert m["content"][1] == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/png;base64,XYZ"},
+    }
+
+
+def test_message_stays_plain_string_for_text_turn() -> None:
+    from personalai_provider_openai.provider import _message
+
+    assert _message(ChatMessage(Role.USER, "hi")) == {"role": "user", "content": "hi"}

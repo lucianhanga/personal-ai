@@ -52,6 +52,8 @@ export interface MessageMeta {
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
+  // Attached image parts as data-URLs (data:image/...;base64,...) for vision models (M9.1).
+  images?: string[];
   // Persisted per-assistant-message detail (tool calls + reasoning), shown collapsed in the UI.
   meta?: MessageMeta | null;
 }

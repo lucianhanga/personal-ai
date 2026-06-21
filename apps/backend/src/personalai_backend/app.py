@@ -121,10 +121,12 @@ class VersionResponse(BaseModel):
 
 
 class ChatMessageIn(BaseModel):
-    """A chat message from the client."""
+    """A chat message from the client. ``images`` carries optional image parts as data-URLs
+    (``data:image/...;base64,...``) for vision models (M9.1)."""
 
     role: Literal["system", "user", "assistant"]
     content: str
+    images: list[str] = []
 
 
 class ChatRequest(BaseModel):
@@ -552,7 +554,10 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         """Short-term memory: keep recent turns + fold older ones into the conversation summary."""
         config: CoreConfig = app.state.config
         storage: Storage | None = app.state.storage
-        messages = [ChatMessage(Role(m.role), m.content) for m in req.messages]
+        # Carry image parts (M9.1) through to the model; STM summarization stays text-only.
+        messages = [
+            ChatMessage(Role(m.role), m.content, images=tuple(m.images)) for m in req.messages
+        ]
         if (
             not config.stm_summarize
             or storage is None

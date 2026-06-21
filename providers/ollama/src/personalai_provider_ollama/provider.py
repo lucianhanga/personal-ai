@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 import httpx
 
 from personalai_contracts.ports.model_provider import (
+    ChatMessage,
     EmbeddingResult,
     GenerationChunk,
     GenerationRequest,
@@ -68,6 +69,21 @@ def _options(request: GenerationRequest) -> dict[str, Any]:
     return options
 
 
+def _strip_data_url(image: str) -> str:
+    """Ollama wants raw base64; strip a ``data:...;base64,`` prefix if the UI sent a data-URL."""
+    if image.startswith("data:") and "," in image:
+        return image.split(",", 1)[1]
+    return image
+
+
+def _ollama_message(m: ChatMessage) -> dict[str, Any]:
+    msg: dict[str, Any] = {"role": m.role.value, "content": m.content}
+    if m.images:
+        # Ollama's chat API takes images as an array of raw base64 strings on the message (M9.1).
+        msg["images"] = [_strip_data_url(img) for img in m.images]
+    return msg
+
+
 def _chat_payload(
     request: GenerationRequest,
     *,
@@ -80,7 +96,7 @@ def _chat_payload(
         options["num_ctx"] = num_ctx
     payload: dict[str, Any] = {
         "model": request.model,
-        "messages": [{"role": m.role.value, "content": m.content} for m in request.messages],
+        "messages": [_ollama_message(m) for m in request.messages],
         "stream": stream,
         "options": options,
     }

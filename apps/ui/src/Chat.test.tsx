@@ -69,6 +69,37 @@ test("switching provider reloads its models", async () => {
   await waitFor(() => expect(fetchModels).toHaveBeenCalledWith("demo", "openai"));
 });
 
+test("attaches an image and sends it with the user message (vision)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
+    onDelta("I see a cat.");
+  });
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+
+  // FileReader yields a data-URL; jsdom supports it. Attach a fake PNG.
+  const file = new File(["x"], "cat.png", { type: "image/png" });
+  fireEvent.change(screen.getByTestId("image-input"), { target: { files: [file] } });
+  await waitFor(() => expect(screen.getByTestId("image-attachments")).toBeInTheDocument());
+
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "what is this?" } });
+  fireEvent.click(screen.getByTestId("send"));
+
+  // The user message + its image render, and the streamed request carried the image.
+  await waitFor(() => expect(screen.getByTestId("msg-images")).toBeInTheDocument());
+  await waitFor(() => {
+    const sent = stream.mock.calls[0][0].messages;
+    const lastUser = sent[sent.length - 1];
+    expect(lastUser.images?.[0]).toMatch(/^data:image\/png/);
+  });
+  // The attachment tray clears after sending.
+  expect(screen.queryByTestId("image-attachments")).toBeNull();
+});
+
 test("sends a message and streams the assistant reply", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);

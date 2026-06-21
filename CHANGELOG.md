@@ -12,6 +12,11 @@ generated OpenAPI document.
 ## [Unreleased]
 
 ### Added
+- **Vision (M9.1, #294)**: attach image(s) to a chat turn and a **vision-capable model sees them**.
+  Image-attach button in the composer (with a hint when the selected model isn't a vision model),
+  thumbnail previews, and the image(s) rendered in the user bubble. Images flow as data-URLs through
+  the `ChatMessage` contract to both providers (Ollama `images` as raw base64; OpenAI `image_url`
+  content parts). Per-turn (not persisted/indexed). First slice of **M9 Multimodal**.
 - **Verification ladder (M8.2, #261)**: in the multi-agent graph, `accuracy_mode = "accurate"` adds
   an **LLM-judge verifier** after the critic that returns a schema-validated `Verdict`
   (pass/needs_revision/fail) and can route one more bounded researcher pass; `"standard"` skips it
