@@ -28,12 +28,18 @@ generated OpenAPI document.
   from the tenant's effective config; `POST /api/v1/audio/transcribe`.
 
 ### Changed
-- **Voice composer UX (M9.2c, #300)**: after the mic stops and transcription lands, a **3-second
-  grace period** lets you edit the text; if untouched, it **auto-sends** (a "Sending in Ns — edit to
-  cancel" banner counts down; editing cancels). The mic and send controls are now **stacked symbol
-  buttons** (mic above send) using monochrome non-emoji glyphs — record `●` / stop `■` (red, the
-  record convention) / transcribing `…`, send `↑` — with the description in the tooltip/aria-label
-  and an `aria-live` status for screen readers.
+- **Local Whisper CPU performance (M9.2d)**: `LocalWhisperTranscriber` now uses all CPU cores
+  (capped at 8) instead of faster-whisper's slow 4-thread default — roughly halves transcription
+  latency for the heavy `large-v3-turbo` model on a multi-core box (e.g. ~9s → ~5s for a few seconds
+  of audio). `cpu_threads` is configurable; the model stays loaded across requests (cold load only
+  on the first transcription after a restart). Tip: switch the model to `small`/`base` in Settings →
+  Voice for near-instant transcription if you don't need turbo-level accuracy.
+- **Voice composer countdown (M9.2c/d, #300)**: after the mic stops and the transcript lands in the
+  composer, a prominent **3-2-1 countdown** auto-sends it unless you press **Stop** (then the text
+  stays editable) — editing also cancels. The mic and send controls are **stacked symbol buttons**
+  (mic above send) using monochrome non-emoji glyphs — record `●` / stop `■` (red, the record
+  convention) / transcribing `…`, send `↑` — with the description in the tooltip/aria-label and an
+  `aria-live` status for screen readers.
 - **Vision (M9.1, #294)**: attach image(s) to a chat turn and a **vision-capable model sees them**.
   Image-attach button in the composer (with a hint when the selected model isn't a vision model),
   thumbnail previews, and the image(s) rendered in the user bubble. Images flow as data-URLs through

@@ -27,10 +27,10 @@ class _Info:
 
 
 class _FakeModel:
-    instances: list[tuple[str, str, str]] = []
+    instances: list[tuple[str, str, str, int]] = []
 
-    def __init__(self, model: str, *, device: str, compute_type: str) -> None:
-        _FakeModel.instances.append((model, device, compute_type))
+    def __init__(self, model: str, *, device: str, compute_type: str, cpu_threads: int) -> None:
+        _FakeModel.instances.append((model, device, compute_type, cpu_threads))
 
     def transcribe(self, audio: Any) -> tuple[list[_Segment], _Info]:
         return [_Segment(" Salut, "), _Segment("ce faci?")], _Info()
@@ -51,7 +51,12 @@ def test_transcribes_via_faster_whisper_and_joins_segments() -> None:
     result = asyncio.run(t.transcribe(b"\x00\x01webm", mime_type="audio/webm"))
     assert result.text == "Salut, ce faci?"  # segments joined + trimmed
     assert result.language == "ro"  # multilingual auto-detection surfaced
-    assert _FakeModel.instances == [("large-v3-turbo", "auto", "int8")]
+    # One model built with the expected model/device/compute, and a positive CPU-thread count
+    # (defaults to the core count, capped) rather than faster-whisper's slow 4-thread default.
+    assert len(_FakeModel.instances) == 1
+    model_name, device, compute, cpu_threads = _FakeModel.instances[0]
+    assert (model_name, device, compute) == ("large-v3-turbo", "auto", "int8")
+    assert cpu_threads >= 1
 
 
 def test_model_is_loaded_once_and_cached() -> None:

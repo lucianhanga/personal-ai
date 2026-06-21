@@ -148,7 +148,20 @@ test("editing the transcript cancels the auto-send", async () => {
   fireEvent.click(screen.getByTestId("mic"));
   await waitFor(() => expect(screen.getByTestId("autosend-banner")).toBeInTheDocument());
 
-  // Editing the composer cancels the pending auto-send.
+  // The countdown shows a 3-2-1 figure, and pressing Stop cancels the auto-send so the user can edit.
+  expect(screen.getByTestId("autosend-count")).toHaveTextContent("3");
+  fireEvent.click(screen.getByTestId("autosend-cancel"));
+  expect(screen.queryByTestId("autosend-banner")).toBeNull();
+  // The transcript stays in the composer, editable, and is not sent.
+  expect((screen.getByTestId("composer") as HTMLTextAreaElement).value).toContain("draft text");
+
+  // Editing the composer also cancels a pending auto-send.
+  fireEvent.click(screen.getByTestId("mic"));
+  await waitFor(() =>
+    expect(screen.getByTestId("mic")).toHaveAttribute("aria-label", "Stop recording"),
+  );
+  fireEvent.click(screen.getByTestId("mic"));
+  await waitFor(() => expect(screen.getByTestId("autosend-banner")).toBeInTheDocument());
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "draft text edited" } });
   expect(screen.queryByTestId("autosend-banner")).toBeNull();
 });
