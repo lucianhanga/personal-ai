@@ -12,6 +12,12 @@ generated OpenAPI document.
 ## [Unreleased]
 
 ### Added
+- **Speech-to-text (M9.2, #296)**: opt-in **voice input**. A mic button in the composer records
+  audio (when transcription is configured), transcribes it via an OpenAI-compatible
+  `/v1/audio/transcriptions` endpoint (a **local whisper server** — whisper.cpp-server /
+  faster-whisper-server / LocalAI — or OpenAI), and drops the text into the composer to review
+  before sending. Off by default; a local server on loopback works with egress disabled. New
+  `Transcriber` port + `OpenAICompatTranscriber` adapter + `POST /api/v1/audio/transcribe`.
 - **Vision (M9.1, #294)**: attach image(s) to a chat turn and a **vision-capable model sees them**.
   Image-attach button in the composer (with a hint when the selected model isn't a vision model),
   thumbnail previews, and the image(s) rendered in the user bubble. Images flow as data-URLs through

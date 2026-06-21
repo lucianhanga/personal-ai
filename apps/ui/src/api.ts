@@ -315,6 +315,41 @@ export async function uploadFile(token: string, file: File): Promise<DocumentInf
   return body.data;
 }
 
+/** Whether the backend has speech-to-text configured (so the UI shows the mic) — M9.2. */
+export async function fetchTranscribeEnabled(token: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/status`, {
+      headers: authHeaders(token),
+      credentials: CREDS,
+    });
+    if (!res.ok) return false;
+    const body = (await res.json()) as { data?: { transcribe_enabled?: boolean } };
+    return body.data?.transcribe_enabled === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Transcribe a recorded audio blob to text via the backend transcriber (M9.2). */
+export async function transcribeAudio(token: string, audio: Blob): Promise<string> {
+  const form = new FormData();
+  form.append("file", audio, "recording.webm");
+  const res = await fetch(`${API_BASE}/api/v1/audio/transcribe`, {
+    method: "POST",
+    headers: authHeaders(token),
+    credentials: CREDS,
+    body: form,
+  });
+  if (!res.ok) throw new Error(`transcribe failed: ${res.status}`);
+  const body = (await res.json()) as {
+    ok?: boolean;
+    error?: { message?: string };
+    data?: { text?: string };
+  };
+  if (body.ok === false) throw new Error(body.error?.message ?? "transcribe failed");
+  return body.data?.text ?? "";
+}
+
 /** List ingested documents. */
 export async function fetchFiles(token: string): Promise<DocumentInfo[]> {
   const res = await fetch(`${API_BASE}/api/v1/files`, { headers: authHeaders(token), credentials: CREDS });
