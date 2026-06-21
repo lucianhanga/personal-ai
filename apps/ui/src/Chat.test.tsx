@@ -100,7 +100,9 @@ test("records voice and inserts the transcript into the composer (M9.2)", async 
   await waitFor(() => expect(screen.getByTestId("mic")).toBeInTheDocument());
 
   fireEvent.click(screen.getByTestId("mic")); // start
-  await waitFor(() => expect(screen.getByTestId("mic")).toHaveTextContent("Stop"));
+  await waitFor(() =>
+    expect(screen.getByTestId("mic")).toHaveAttribute("aria-label", "Stop recording"),
+  );
   fireEvent.click(screen.getByTestId("mic")); // stop -> transcribe
 
   await waitFor(() =>
@@ -108,6 +110,94 @@ test("records voice and inserts the transcript into the composer (M9.2)", async 
       "hello from my voice",
     ),
   );
+  // After transcription, the grace-period auto-send banner shows (M9.2c).
+  await waitFor(() => expect(screen.getByTestId("autosend-banner")).toBeInTheDocument());
+});
+
+test("editing the transcript cancels the auto-send", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
+  vi.spyOn(api, "transcribeAudio").mockResolvedValue("draft text");
+  const track = { stop: vi.fn() };
+  vi.stubGlobal("navigator", {
+    ...navigator,
+    mediaDevices: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [track] }) },
+  });
+  let onstop: (() => void) | null = null;
+  class FakeRecorder {
+    ondataavailable: ((e: { data: Blob }) => void) | null = null;
+    set onstop(fn: () => void) {
+      onstop = fn;
+    }
+    start(): void {
+      this.ondataavailable?.({ data: new Blob(["x"], { type: "audio/webm" }) });
+    }
+    stop(): void {
+      onstop?.();
+    }
+  }
+  vi.stubGlobal("MediaRecorder", FakeRecorder as unknown as typeof MediaRecorder);
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("mic")).toBeInTheDocument());
+  fireEvent.click(screen.getByTestId("mic"));
+  await waitFor(() =>
+    expect(screen.getByTestId("mic")).toHaveAttribute("aria-label", "Stop recording"),
+  );
+  fireEvent.click(screen.getByTestId("mic"));
+  await waitFor(() => expect(screen.getByTestId("autosend-banner")).toBeInTheDocument());
+
+  // Editing the composer cancels the pending auto-send.
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "draft text edited" } });
+  expect(screen.queryByTestId("autosend-banner")).toBeNull();
+});
+
+test("auto-sends the transcript after the grace period if untouched (M9.2c)", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
+  vi.spyOn(api, "transcribeAudio").mockResolvedValue("auto sent text");
+  const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
+    onDelta("ok");
+  });
+  const track = { stop: vi.fn() };
+  vi.stubGlobal("navigator", {
+    ...navigator,
+    mediaDevices: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [track] }) },
+  });
+  let onstop: (() => void) | null = null;
+  class FakeRecorder {
+    ondataavailable: ((e: { data: Blob }) => void) | null = null;
+    set onstop(fn: () => void) {
+      onstop = fn;
+    }
+    start(): void {
+      this.ondataavailable?.({ data: new Blob(["x"], { type: "audio/webm" }) });
+    }
+    stop(): void {
+      onstop?.();
+    }
+  }
+  vi.stubGlobal("MediaRecorder", FakeRecorder as unknown as typeof MediaRecorder);
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("mic")).toBeInTheDocument());
+  fireEvent.click(screen.getByTestId("mic"));
+  await waitFor(() =>
+    expect(screen.getByTestId("mic")).toHaveAttribute("aria-label", "Stop recording"),
+  );
+  fireEvent.click(screen.getByTestId("mic"));
+  await waitFor(() => expect(screen.getByTestId("autosend-banner")).toBeInTheDocument());
+
+  // Let the 3-second countdown elapse without touching the text.
+  await act(async () => {
+    vi.advanceTimersByTime(3100);
+  });
+  await waitFor(() => expect(stream).toHaveBeenCalled());
+  expect(stream.mock.calls[0][0].messages.at(-1)?.content).toContain("auto sent text");
+  vi.useRealTimers();
 });
 
 test("attaches an image and sends it with the user message (vision)", async () => {

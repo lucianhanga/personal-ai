@@ -57,11 +57,12 @@ const GROUPS: Group[] = [
   },
   {
     title: "Voice (speech-to-text)",
-    note: "Records voice and transcribes it via an OpenAI-compatible /v1 endpoint — point it at a local whisper server (e.g. http://127.0.0.1:8000/v1, fully local) or leave blank to use the OpenAI provider. The mic button appears in the composer when enabled.",
+    note: "Records voice and transcribes it. 'local' runs Whisper in-process (zero-setup, multilingual incl. Romanian; the model downloads once then runs offline — e.g. large-v3-turbo). 'openai_compat' calls a whisper server / OpenAI at the URL below. The mic appears in the composer when enabled.",
     fields: [
       { key: "transcribe_enabled", label: "Enable voice input", kind: "bool" },
-      { key: "transcribe_base_url", label: "Whisper server URL", kind: "text", help: "e.g. http://127.0.0.1:8000/v1" },
-      { key: "transcribe_model", label: "Transcription model", kind: "text" },
+      { key: "transcribe_provider", label: "Engine", kind: "enum", options: ["local", "openai_compat"] },
+      { key: "transcribe_model", label: "Transcription model", kind: "text", help: "local: small/medium/large-v3-turbo · server: whisper-1" },
+      { key: "transcribe_base_url", label: "Whisper server URL (openai_compat)", kind: "text", help: "e.g. http://127.0.0.1:8000/v1" },
     ],
   },
   {

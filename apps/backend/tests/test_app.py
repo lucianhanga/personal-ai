@@ -352,6 +352,7 @@ def test_transcribe_endpoint_returns_text() -> None:
     config = CoreConfig(
         auth_token=TOKEN,
         transcribe_enabled=True,
+        transcribe_provider="openai_compat",
         transcribe_base_url="http://whisper.test/v1",
         egress_allow_any=True,  # the test endpoint is non-loopback; allow it for the test
         egress_enabled=True,
@@ -382,6 +383,38 @@ def test_transcribe_endpoint_503_when_disabled() -> None:
         "data"
     ]
     assert status_data["transcribe_enabled"] is False
+
+
+def test_transcribe_local_provider_uses_in_process_whisper() -> None:
+    # #300: with transcribe_provider="local" (the default) the endpoint uses the in-process
+    # faster-whisper adapter — patched here so no model is downloaded/loaded in tests.
+    from personalai_provider_whisper_local import transcriber as whisper_mod
+
+    class _FakeModel:
+        def __init__(self, *a: object, **k: object) -> None: ...
+        def transcribe(self, audio: object) -> tuple[list[object], object]:
+            seg = type("S", (), {"text": "hallo welt"})()
+            info = type("I", (), {"language": "de"})()
+            return [seg], info
+
+    import sys
+    import types as _types
+
+    whisper_mod._MODELS.clear()
+    fake = _types.ModuleType("faster_whisper")
+    fake.WhisperModel = _FakeModel  # type: ignore[attr-defined]
+    sys.modules["faster_whisper"] = fake
+
+    client = TestClient(
+        create_app(bootstrap(config=CoreConfig(auth_token=TOKEN, transcribe_provider="local")))
+    )
+    resp = client.post(
+        "/api/v1/audio/transcribe",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        files={"file": ("rec.webm", b"\x00\x01", "audio/webm")},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["text"] == "hallo welt"
 
 
 def test_status_reports_transcribe_enabled_by_default() -> None:

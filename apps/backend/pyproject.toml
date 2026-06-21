@@ -11,6 +11,7 @@ dependencies = [
     "personalai-core",
     "personalai-provider-ollama",
     "personalai-provider-openai",
+    "personalai-provider-whisper-local",
     "personalai-modality-files",
     "personalai-storage-postgres",
     "personalai-tool-builtin",
@@ -33,6 +34,7 @@ personalai-contracts = { workspace = true }
 personalai-core = { workspace = true }
 personalai-provider-ollama = { workspace = true }
 personalai-provider-openai = { workspace = true }
+personalai-provider-whisper-local = { workspace = true }
 personalai-modality-files = { workspace = true }
 personalai-storage-postgres = { workspace = true }
 personalai-tool-builtin = { workspace = true }

@@ -12,13 +12,28 @@ generated OpenAPI document.
 ## [Unreleased]
 
 ### Added
+- **In-process local Whisper (M9.2c, #300)**: a **zero-setup** speech-to-text engine that runs
+  Whisper **in-process** via [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
+  (CTranslate2) — no server, no API key, no egress. Multilingual (auto-detects ~99 languages incl.
+  **Romanian**, German, Spanish, English); default model `large-v3-turbo`. The model downloads once
+  from Hugging Face, then runs fully offline. This is now the **default** transcribe provider; a new
+  `transcribe_provider` per-tenant setting (Settings → Voice → Engine) selects `local` (in-process)
+  or `openai_compat` (whisper server / OpenAI). New `personalai-provider-whisper-local` package with
+  `LocalWhisperTranscriber` (blocking inference offloaded to a thread, module-level model cache).
 - **Speech-to-text (M9.2, #296/#298)**: **voice input**, on by default. A mic button in the
-  composer records audio, transcribes it via an OpenAI-compatible `/v1/audio/transcriptions`
-  endpoint, and drops the text into the composer to review before sending. The transcription
-  endpoint and model are **per-tenant settings** (Settings → Voice) — point them at a **local
-  whisper server** (whisper.cpp-server / faster-whisper-server / LocalAI; fully local, egress off
-  on loopback) or OpenAI. New `Transcriber` port + `OpenAICompatTranscriber` adapter, built
-  per-request from the tenant's effective config; `POST /api/v1/audio/transcribe`.
+  composer records audio, transcribes it, and drops the text into the composer to review before
+  sending. The provider, model, and (for `openai_compat`) endpoint are **per-tenant settings**
+  (Settings → Voice). New `Transcriber` port + `OpenAICompatTranscriber` adapter (an OpenAI-compatible
+  `/v1/audio/transcriptions` client — point it at a local whisper server or OpenAI), built per-request
+  from the tenant's effective config; `POST /api/v1/audio/transcribe`.
+
+### Changed
+- **Voice composer UX (M9.2c, #300)**: after the mic stops and transcription lands, a **3-second
+  grace period** lets you edit the text; if untouched, it **auto-sends** (a "Sending in Ns — edit to
+  cancel" banner counts down; editing cancels). The mic and send controls are now **stacked symbol
+  buttons** (mic above send) using monochrome non-emoji glyphs — record `●` / stop `■` (red, the
+  record convention) / transcribing `…`, send `↑` — with the description in the tooltip/aria-label
+  and an `aria-live` status for screen readers.
 - **Vision (M9.1, #294)**: attach image(s) to a chat turn and a **vision-capable model sees them**.
   Image-attach button in the composer (with a hint when the selected model isn't a vision model),
   thumbnail previews, and the image(s) rendered in the user bubble. Images flow as data-URLs through
