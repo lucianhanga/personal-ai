@@ -19,9 +19,10 @@ PERSONALAI_EGRESS_ENABLED=true              # remote calls require egress on
 PERSONALAI_ALLOWED_EGRESS_HOSTS=api.openai.com
 ```
 
-Then run the backend (`set -a; source .env; set +a; make run-backend`) and the UI. The
+Then run the backend (`make run-backend` — it auto-loads `.env` on startup) and the UI. The
 **Provider** dropdown now offers `openai` alongside `ollama`; pick a model (e.g. `gpt-4o-mini`) and
-chat. Each model shows a **local/remote** badge.
+chat. Each model shows a **local/remote** badge. Provider/model and the egress allowlist can also be
+set **per-tenant** in **Settings → Preferences / Network** (overlaying these env defaults).
 
 ## Other OpenAI-compatible runtimes
 

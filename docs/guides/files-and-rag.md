@@ -39,9 +39,15 @@ curl -X DELETE -H "Authorization: Bearer demo" http://127.0.0.1:8765/api/v1/file
 
 ## 3. Ask with RAG
 
-With **Use my documents** on (or `"use_rag": true` via the API), the last user message is embedded,
-the top-k chunks are retrieved from pgvector, and they are passed to the model as **reference
-context** with `[n]` citations. The UI shows a **Sources** line under the answer.
+With **Use my documents** on (or `"use_rag": true` via the API), the retrieval query is embedded, the
+top-k chunks are retrieved from pgvector, and they are passed to the model as **reference context**
+with `[n]` citations. The UI shows a **Sources** line under the answer.
+
+For a **follow-up** message, retrieval is anchored on the **contextualized standalone query** (the
+last message rewritten into a self-contained request using recent history) rather than the raw
+elliptical message, so *"and the second one?"* still retrieves the right chunks. The original
+question still drives the answer; first/standalone questions skip the rewrite. See
+[the agent guide](./agent.md#query-contextualization-follow-ups).
 
 ```bash
 curl -N -X POST http://127.0.0.1:8765/api/v1/chat \
@@ -82,6 +88,11 @@ API: `POST/GET/GET{id}/PATCH{id}/DELETE{id} /api/v1/conversations` (PATCH rename
 | `PERSONALAI_EMBED_PROVIDER` | `ollama` | provider used for embeddings |
 | `PERSONALAI_EMBED_MODEL` | `qwen3-embedding:0.6b` | embedding model (must be 1024-dim) |
 | `PERSONALAI_MAX_UPLOAD_BYTES` | `10000000` | max upload size |
+
+The embedding (document-indexing) **engine and model**, and the max upload size, are also saved
+**per-tenant** in **Settings → Documents** (`embed_provider` / `embed_model` / `max_upload_bytes` in
+`TenantSettings`); an unset value inherits the deployment default above. The model must still produce
+1024-dim vectors to match the schema.
 
 ## 6. Troubleshooting
 

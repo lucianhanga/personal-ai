@@ -15,7 +15,7 @@ risk approval, timeouts, and audit are enforced; nothing runs until every gate p
 
 ## Try it (UI)
 
-Open the **Tools** panel:
+Open **Settings → Tools**:
 1. **calculator** → args `{"expression": "2 + 3 * 4"}` → Run → `14`.
 2. **http_fetch** → args `{"url": "https://example.com"}` → Run → *"approval required for
    high-risk tool"*. Tick **approve** + **grant permissions** → now it's refused by the egress
@@ -38,14 +38,44 @@ curl -X POST http://127.0.0.1:8765/api/v1/tools/invoke -H "Authorization: Bearer
 2. **Risk approval** — HIGH/CRITICAL tools require an explicit `approved` flag.
 3. **Permissions** — every manifest permission must be granted (a grant matches by type and exact
    scope, or scope `*`); least-privilege, deny-by-default.
-4. **Input** validated against the manifest's JSON Schema.
+4. **Input** validated against the manifest's JSON Schema. Before a hard rejection, a
+   **schema-driven auto-fix** repairs common model slips (see below) and re-validates.
 5. **Egress** — any declared network host must pass the egress allowlist (`assert_egress_allowed`).
    Egress is off by default; enabling it with an **empty allowlist denies all hosts** (fail-closed).
    Set `PERSONALAI_ALLOWED_EGRESS_HOSTS`, or opt into open egress with
-   `PERSONALAI_EGRESS_ALLOW_ANY=true`.
+   `PERSONALAI_EGRESS_ALLOW_ANY=true`. Egress is now enforced **per-tenant**: a tenant's saved
+   `egress_enabled` + `allowed_egress_hosts` (Settings → Network) overlay the boot config for that
+   turn. See [Network egress](#network-egress-per-tenant) below.
 6. **Execute** via the executor with a **timeout**.
 7. **Output** validated against the manifest's JSON Schema.
 8. **Audit** — every outcome (allowed/denied) is recorded (redacted).
+
+## Schema-driven tool-arg auto-fix
+
+Models often get tool arguments *almost* right. Rather than reject the call (and waste a turn), the
+gateway makes a **best-effort, schema-driven repair** before validating, then **re-validates** — so a
+wrong guess is still rejected, never silently used. The fixes (read straight from the tool's JSON
+Schema, so they apply to **any** tool including MCP):
+
+- **Rename one mislabeled argument** — if exactly one required field is missing and exactly one extra
+  field is present, the extra is renamed to the missing one (e.g. `input` → the required `query`).
+- **Coerce toward the declared type** — scalar → array (`"http://x"` → `["http://x"]`),
+  numeric-string → number (`"5"` → `5`), number → string, and `"true"`/`"false"` → boolean.
+- **Clamp numbers** to the schema's `minimum`/`maximum`.
+
+If repair still fails, the **denial message lists the valid parameters** — and for an **enum**
+error, the **allowed values** — so the model can self-correct on its next turn.
+
+## Network egress (per-tenant)
+
+Outbound access from in-process tools (and remote model providers) is governed by the egress
+allowlist, now applied **per tenant**: each turn overlays the tenant's saved `egress_enabled` +
+`allowed_egress_hosts` (Settings → Network) onto the boot config. Hosts are bare lowercase hostnames
+(no scheme/path); an enabled-but-empty allowlist still denies all hosts (fail-closed).
+
+When a tool is blocked by egress, the reasoning pane offers a one-click **"allow this host from now
+on"**: it calls `POST /api/v1/settings/egress/allow {"host": "<bare hostname>"}`, which **enables
+egress and appends the host** to the tenant's allowlist, after which you re-send the request.
 
 ## The manifest
 

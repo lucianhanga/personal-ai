@@ -18,10 +18,17 @@ PERSONALAI_DEFAULT_MODEL=qwen3.6:35b-a3b make run-backend
 pnpm --filter @personalai/ui dev
 ```
 
-Open **http://localhost:5173**, pick a model, and chat. Replies stream in token by token. Everything
-stays on loopback; network egress is off by default. In the default `app_mode=local` no login is
-required; if you set `PERSONALAI_AUTH_TOKEN`, that bearer token then becomes **required** (enter it
-in the UI). `app_mode=hosted` requires real login (see [backend API](../reference/backend-api.md)).
+Open **http://localhost:5173**, pick a model, and chat. The UI is a **Chat | Settings** two-view
+split: chat in the Chat view; manage **Documents, Tools, MCP, Agents, Memory, Network, and
+Preferences** in the dedicated **Settings** view (these preferences are saved per-tenant and overlay
+the boot config). Replies stream in token by token. Everything stays on loopback; network egress is
+off by default. In the default `app_mode=local` no login is required; if you set
+`PERSONALAI_AUTH_TOKEN`, that bearer token then becomes **required** (enter it in the UI).
+`app_mode=hosted` requires real login (see [backend API](../reference/backend-api.md)).
+
+The backend **auto-loads a local `.env`** on startup (the `__main__` server entrypoint calls
+`load_dotenv`; real environment variables still win), so you no longer need to `source .env` before
+`make run-backend` for `PERSONALAI_*` settings.
 
 ## Configuration (env)
 

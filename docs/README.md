@@ -22,6 +22,8 @@ Start here:
   streamed reasoning + answer, ordered per-message details, all through the gateway.
 - **[Using MCP servers (M7)](./guides/mcp.md)** — connect published MCP servers (e.g. Playwright)
   via an `mcp.json`; their tools run through the gateway and the agent can use them.
+- **[Settings (M8.2)](./guides/settings.md)** — per-tenant preferences (models, agent mode, memory,
+  egress, timeout, embeddings) that overlay the boot config; the Settings view panels and the API.
 
 Reference & development:
 
