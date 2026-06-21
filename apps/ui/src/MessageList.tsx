@@ -63,9 +63,21 @@ export function MessageList({
             ) : null}
           </div>
         ) : (
-          <p key={i} data-testid="msg-user" style={{ margin: "0.4rem 0" }}>
+          <div key={i} data-testid="msg-user" style={{ margin: "0.4rem 0" }}>
             <strong>You:</strong> {m.content}
-          </p>
+            {m.images && m.images.length > 0 && (
+              <div data-testid="msg-images" style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", marginTop: "0.25rem" }}>
+                {m.images.map((src, k) => (
+                  <img
+                    key={k}
+                    src={src}
+                    alt="attachment"
+                    style={{ maxHeight: 160, borderRadius: 4, border: "1px solid #ddd" }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         ),
       )}
     </div>

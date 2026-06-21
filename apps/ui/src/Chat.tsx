@@ -116,6 +116,8 @@ export function Chat({
   const [chats, setChats] = useState<Record<string, ChatState>>({});
   const [persistence, setPersistence] = useState(false);
   const [input, setInput] = useState("");
+  // Image parts attached to the next turn, as data-URLs (M9.1 vision).
+  const [attachedImages, setAttachedImages] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -338,14 +340,29 @@ export function Chat({
     }
   }
 
+  function onAttachImages(files: FileList | null): void {
+    // Read each image as a data-URL (sent to vision models as base64); cap count to keep turns sane.
+    const list = Array.from(files ?? []).filter((f) => f.type.startsWith("image/"));
+    for (const f of list.slice(0, 4)) {
+      const reader = new FileReader();
+      reader.onload = () =>
+        setAttachedImages((imgs) => [...imgs, reader.result as string].slice(0, 4));
+      reader.readAsDataURL(f);
+    }
+  }
+
   async function send(): Promise<void> {
     const content = input.trim();
-    if (!content || !model || view.busy) return;
+    const images = attachedImages;
+    // Allow sending with only an image (no text), as long as there's something to send.
+    if ((!content && images.length === 0) || !model || view.busy) return;
     setError(null);
     setInput("");
+    setAttachedImages([]);
 
     const startKey = activeId ?? NEW_CHAT;
-    const history: ChatMessage[] = [...(chats[startKey]?.messages ?? []), { role: "user", content }];
+    const userMsg: ChatMessage = { role: "user", content, ...(images.length ? { images } : {}) };
+    const history: ChatMessage[] = [...(chats[startKey]?.messages ?? []), userMsg];
     const assistantIndex = history.length;
     // Optimistically show the user turn + an empty assistant bubble and mark this chat busy.
     patchChat(startKey, (s) => ({
@@ -361,7 +378,7 @@ export function Chat({
       // Persist into a conversation (create lazily on the first message); migrate the optimistic
       // state from NEW_CHAT to the real id so streaming continues there.
       if (persistence && targetId === null) {
-        const conv = await createConversation(token, content.slice(0, 60), incognito);
+        const conv = await createConversation(token, (content || "Image").slice(0, 60), incognito);
         targetId = conv.id;
         key = conv.id;
         setChats((prev) => {
@@ -803,7 +820,53 @@ export function Chat({
               </span>
             )}
 
+            {/* Attached image thumbnails (M9.1), removable before sending. */}
+            {attachedImages.length > 0 && (
+              <div data-testid="image-attachments" style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                {attachedImages.map((src, i) => (
+                  <span key={i} style={{ position: "relative", display: "inline-block" }}>
+                    <img
+                      src={src}
+                      alt="attachment"
+                      style={{ height: 56, borderRadius: 4, border: "1px solid #ddd" }}
+                    />
+                    <button
+                      data-testid={`remove-image-${i}`}
+                      onClick={() => setAttachedImages((imgs) => imgs.filter((_, k) => k !== i))}
+                      title="Remove"
+                      style={{ position: "absolute", top: -6, right: -6, borderRadius: "50%", lineHeight: 1, padding: "0 5px" }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {attachedImages.length > 0 && selected && !selected.capabilities.vision && (
+              <span data-testid="vision-hint" style={{ color: "#b06f00", fontSize: "0.8rem" }}>
+                The selected model isn’t a vision model — pick one tagged “vision” to use images.
+              </span>
+            )}
+
             <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-end" }}>
+              <label
+                data-testid="attach-image"
+                title="Attach image(s) for a vision model"
+                style={{ cursor: "pointer", border: "1px solid #ccc", borderRadius: 4, padding: "0.3rem 0.5rem", alignSelf: "stretch", display: "flex", alignItems: "center" }}
+              >
+                Image
+                <input
+                  data-testid="image-input"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    onAttachImages(e.target.files);
+                    e.target.value = ""; // allow re-selecting the same file
+                  }}
+                />
+              </label>
               <textarea
                 data-testid="composer"
                 rows={4}
@@ -823,7 +886,7 @@ export function Chat({
               <button
                 data-testid="send"
                 onClick={() => void send()}
-                disabled={busy || !model || input.trim() === ""}
+                disabled={busy || !model || (input.trim() === "" && attachedImages.length === 0)}
               >
                 {busy ? "..." : "Send"}
               </button>

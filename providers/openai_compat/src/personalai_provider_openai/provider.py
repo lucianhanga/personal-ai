@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 import httpx
 
 from personalai_contracts.ports.model_provider import (
+    ChatMessage,
     EmbeddingResult,
     GenerationChunk,
     GenerationRequest,
@@ -34,8 +35,17 @@ DEFAULT_BASE_URL = "https://api.openai.com/v1"
 EgressGuard = Callable[[str], None]
 
 
+def _message(m: ChatMessage) -> dict[str, Any]:
+    if not m.images:
+        return {"role": m.role.value, "content": m.content}
+    # OpenAI vision: content is an array of typed parts (text + image_url data-URLs) — M9.1.
+    parts: list[dict[str, Any]] = [{"type": "text", "text": m.content}]
+    parts += [{"type": "image_url", "image_url": {"url": img}} for img in m.images]
+    return {"role": m.role.value, "content": parts}
+
+
 def _messages(request: GenerationRequest) -> list[dict[str, Any]]:
-    return [{"role": m.role.value, "content": m.content} for m in request.messages]
+    return [_message(m) for m in request.messages]
 
 
 def _chat_payload(request: GenerationRequest, *, stream: bool) -> dict[str, Any]:

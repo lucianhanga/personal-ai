@@ -396,3 +396,26 @@ def test_egress_guard_allows_loopback() -> None:
     local = OllamaProvider(base_url="http://127.0.0.1:11434", egress_guard=seen.append)
     local._check_egress()  # loopback host passes the guard without raising
     assert seen == ["127.0.0.1"]
+
+
+def test_chat_payload_includes_images_as_raw_base64() -> None:
+    # M9.1: a vision turn carries data-URL images; Ollama wants raw base64 (prefix stripped).
+    from personalai_provider_ollama.provider import _chat_payload
+
+    req = GenerationRequest(
+        messages=[
+            ChatMessage(Role.USER, "what is this?", images=("data:image/png;base64,AAAABBBB",))
+        ],
+        model="gemma3:27b",
+    )
+    payload = _chat_payload(req, stream=False)
+    msg = payload["messages"][0]
+    assert msg["content"] == "what is this?"
+    assert msg["images"] == ["AAAABBBB"]  # data-URL prefix stripped
+
+
+def test_chat_payload_omits_images_for_text_turn() -> None:
+    from personalai_provider_ollama.provider import _chat_payload
+
+    req = GenerationRequest(messages=[ChatMessage(Role.USER, "hi")], model="qwen3:8b")
+    assert "images" not in _chat_payload(req, stream=False)["messages"][0]

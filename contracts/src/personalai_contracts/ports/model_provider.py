@@ -26,10 +26,12 @@ class Role(StrEnum):
 
 @dataclass(frozen=True)
 class ChatMessage:
-    """A single chat turn. Multimodal parts are added in M8."""
+    """A single chat turn. ``images`` carries optional image parts as data-URLs
+    (``data:image/...;base64,...``) for vision models (M9.1); empty for text-only turns."""
 
     role: Role
     content: str
+    images: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
