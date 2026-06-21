@@ -836,6 +836,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                             max_iterations=config.agent_max_iterations,
                             graph_enabled=graph_enabled,
                             agent_prompts=agent_prompts,
+                            accuracy_mode=config.agent_accuracy_mode,
                             context=_agent_context(req.conversation_id),
                             checkpointer=checkpointer,
                             thread_id=run_id,
@@ -879,6 +880,16 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                                 _add_text(ev.kind, ev.text)
                                 step = {"kind": ev.kind, "text": ev.text}
                                 yield f"event: {ev.kind}\ndata: {json.dumps(step)}\n\n".encode()
+                            elif ev.kind == "verification":
+                                # M8.2 verifier (accurate mode): a one-shot verdict step (not a
+                                # delta) into the ordered trace + a live frame.
+                                item = {
+                                    "kind": "verification",
+                                    "text": ev.text,
+                                    "verdict": ev.verdict,
+                                }
+                                trace.append(item)
+                                yield f"event: verification\ndata: {json.dumps(item)}\n\n".encode()
                             elif ev.kind == "approval_request":
                                 # Durable human gate (M8.1c): the run is checkpointed; surface the
                                 # request with the run_id so the client can POST .../resume later.
@@ -1313,7 +1324,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             ok=True,
             data={
                 "config": saved.model_dump(),
-                "defaults": dict(DEFAULT_AGENT_PROMPTS),
+                # Only the user-configurable agents (AGENT_NAMES); the internal verifier prompt is
+                # not editable in the Agents UI.
+                "defaults": {n: DEFAULT_AGENT_PROMPTS[n] for n in AGENT_NAMES},
                 "agents": [
                     {"name": name, "uses_tools": name in TOOL_USING_AGENTS} for name in AGENT_NAMES
                 ],

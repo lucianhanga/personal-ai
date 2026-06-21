@@ -21,7 +21,16 @@ class TurnEvent:
     """One step of a turn: a reasoning/answer delta, a tool call/result, a plan/critique step, the
     final (``text`` carries the full answer), or an ``approval_request`` (durable human gate)."""
 
-    kind: Literal["reasoning", "answer", "tool", "final", "plan", "critique", "approval_request"]
+    kind: Literal[
+        "reasoning",
+        "answer",
+        "tool",
+        "final",
+        "plan",
+        "critique",
+        "verification",
+        "approval_request",
+    ]
     text: str = ""
     phase: str = ""  # "call" | "result" for tool events
     tool: str | None = None
@@ -30,6 +39,7 @@ class TurnEvent:
     output: Mapping[str, Any] | None = None
     error: str | None = None
     usage: Mapping[str, int] | None = None
+    verdict: str | None = None  # verification outcome (pass/needs_revision/fail) — M8.2
 
 
 async def run_turn(
@@ -44,6 +54,7 @@ async def run_turn(
     max_iterations: int,
     graph_enabled: bool = False,
     agent_prompts: Mapping[str, str] | None = None,
+    accuracy_mode: str = "standard",
     context: AgentContext | None = None,
     checkpointer: Any | None = None,
     thread_id: str | None = None,
@@ -73,6 +84,7 @@ async def run_turn(
                 thread_id=thread_id,
                 resume=resume,
                 prompts=agent_prompts,
+                accuracy_mode=accuracy_mode,
             )
             if graph_enabled
             else run_agent(
@@ -96,6 +108,8 @@ async def run_turn(
                 yield TurnEvent("plan", text=ev.text or "")
             elif ev.type == "critique":
                 yield TurnEvent("critique", text=ev.text or "")
+            elif ev.type == "verification":
+                yield TurnEvent("verification", text=ev.text or "", verdict=ev.verdict)
             elif ev.type == "approval_request":
                 yield TurnEvent("approval_request", output=ev.output or {})
             elif ev.type == "final":

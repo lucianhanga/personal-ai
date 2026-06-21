@@ -216,6 +216,63 @@ def test_reflection_loop_retries_on_revise_then_finalizes_the_improved_answer() 
     assert final.answer == "It is 23C and sunny."  # the improved retry, not the weak first draft
 
 
+class _VerifierProvider(FakeModelProvider):
+    """Drives the verifier: critic OK (no reflection retry), then the judge returns a verdict.
+    First judge verdict is 'fail' (one researcher retry), second is 'pass' (finalize)."""
+
+    def __init__(self, judge_first: str = "fail") -> None:
+        super().__init__(name="verify")
+        self.researcher_runs = 0
+        self.judge_runs = 0
+        self._judge_first = judge_first
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        sys_text = " ".join(m.content for m in request.messages if m.role == Role.SYSTEM)
+        last = request.messages[-1].content if request.messages else ""
+        if "You are the verifier" in sys_text or "Draft answer to verify" in last:
+            self.judge_runs += 1
+            v = self._judge_first if self.judge_runs == 1 else "pass"
+            body = f'{{"verdict": "{v}", "reason": "r"}}'
+            return GenerationResult(text=body, model=request.model)
+        if "Draft answer to review" in last:
+            return GenerationResult(text="OK: fine", model=request.model)  # critic: no reflection
+        if "You are the planner" in sys_text:
+            return GenerationResult(text="plan", model=request.model)
+        self.researcher_runs += 1
+        return GenerationResult(text=f"answer {self.researcher_runs}", model=request.model)
+
+
+def test_standard_mode_skips_the_verifier() -> None:
+    provider = _VerifierProvider()
+    events = _drain(
+        messages=[ChatMessage(Role.USER, "q")],
+        provider=provider,
+        model="m",
+        gateway=_gateway(),
+        tools=[],
+        accuracy_mode="standard",
+    )
+    assert not any(e.type == "verification" for e in events)  # no judge in standard mode
+    assert provider.judge_runs == 0
+
+
+def test_accurate_mode_runs_the_verifier_and_retries_on_fail() -> None:
+    provider = _VerifierProvider(judge_first="fail")
+    events = _drain(
+        messages=[ChatMessage(Role.USER, "q")],
+        provider=provider,
+        model="m",
+        gateway=_gateway(),
+        tools=[],
+        accuracy_mode="accurate",
+    )
+    verifications = [e for e in events if e.type == "verification"]
+    assert verifications  # the judge ran (accurate mode)
+    assert verifications[0].verdict == "fail"
+    assert provider.researcher_runs == 2  # one retry triggered by the verifier
+    assert any(e.type == "final" for e in events)
+
+
 def test_reflection_loop_is_bounded() -> None:
     # If the critic always says REVISE, the loop still stops at MAX_ATTEMPTS researcher passes.
     provider = _CriticRevises()  # always REVISE

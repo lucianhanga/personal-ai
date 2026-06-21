@@ -35,6 +35,7 @@ from personalai_contracts.schemas.tools import (
     ToolInvocation,
     ToolManifest,
 )
+from personalai_contracts.schemas.verdict import Verdict
 
 __all__ = [
     # agents
@@ -61,6 +62,7 @@ __all__ = [
     "default_registry",
     # settings
     "TenantSettings",
+    "Verdict",
     # tools
     "Integrity",
     "Permission",

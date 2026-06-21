@@ -750,6 +750,7 @@ export async function streamChat(
   onApproval?: (req: ApprovalRequest) => void,
   onAgentStep?: (step: { kind: "plan" | "critique"; text: string }) => void,
   onContext?: (context: ContextBreakdown) => void,
+  onVerification?: (step: { text: string; verdict?: string }) => void,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/chat`, {
     method: "POST",
@@ -786,6 +787,10 @@ export async function streamChat(
     if (event === "tool") return onToolStep?.(parsed as ToolStep);
     if (event === "plan" || event === "critique") {
       return onAgentStep?.({ kind: event, text: (parsed as { text?: string }).text ?? "" });
+    }
+    if (event === "verification") {
+      const v = parsed as { text?: string; verdict?: string };
+      return onVerification?.({ text: v.text ?? "", verdict: v.verdict });
     }
     if (event === "usage") return onUsage?.(parsed as UsageInfo);
     if (event === "approval_request") return onApproval?.(parsed as ApprovalRequest);

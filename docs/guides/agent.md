@@ -185,10 +185,24 @@ PERSONALAI_OLLAMA_IT=1 uv run pytest apps/backend/tests/test_agent_integration.p
 ```
 (Opt-in; skipped in CI. Needs a local Ollama with a `tools`-capable model, e.g. qwen3.)
 
+## Verification ladder (M8.2)
+
+The **accuracy mode** (`PERSONALAI_AGENT_ACCURACY_MODE`, or the per-tenant `agent_accuracy_mode`
+setting) controls how deeply the multi-agent graph verifies an answer:
+
+- **`standard`** (default) — planner → researcher → critic → finalize, with the bounded reflection
+  loop. Fast: no extra model call.
+- **`accurate`** — adds an **LLM-judge verifier** after the critic. It returns a schema-validated
+  `Verdict` (`pass` / `needs_revision` / `fail`, via the bounded, fail-closed `generate_structured`
+  primitive) and, on a non-`pass` verdict, routes **one more** researcher pass (sharing the same
+  bounded attempt cap as the reflection loop) before finalizing. The verdict streams to the
+  reasoning pane as the green/red **Verify** step.
+
+**Security gates are never accuracy-gated**: the durable human approval gate (and egress/approval
+checks) always run regardless of the verification depth.
+
 ## What's next
 
-**M8.2** builds on the graph with a **tiered verification ladder**, **bounded schema-repair**, and
-an **accuracy mode** (`PERSONALAI_AGENT_ACCURACY_MODE`) that controls how deeply answers are
-verified — surfaced in the trace as the green/red **Verify** step. Third-party **MCP servers** (M7)
-plug into the same gateway as additional tool sources — sandboxed (ADR-0007) — so "ask it to search
-/ browse / act" extends to the whole MCP ecosystem in either runtime.
+Third-party **MCP servers** (M7) plug into the same gateway as additional tool sources — sandboxed
+(ADR-0007) — so "ask it to search / browse / act" extends to the whole MCP ecosystem in either
+runtime.
