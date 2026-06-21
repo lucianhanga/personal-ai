@@ -365,19 +365,22 @@ export function Chat({
   }
 
   // Grace period after a transcription: count down, then auto-send unless the user edited the text.
+  // The remaining count lives in a closure ref, NOT in the setState updater: a state updater must be
+  // pure, and React Strict Mode double-invokes it — which would fire the send (and create the
+  // conversation) twice, leaving a duplicate empty chat. The timer callback runs once per tick, so
+  // the side effects (send/cancel) belong here.
   function startAutoSend(seconds = 3): void {
     cancelAutoSend();
-    setAutoSendIn(seconds);
+    let remaining = seconds;
+    setAutoSendIn(remaining);
     autoSendTimerRef.current = setInterval(() => {
-      setAutoSendIn((n) => {
-        if (n === null) return null;
-        if (n <= 1) {
-          cancelAutoSend();
-          sendRef.current(); // reads the latest input via the ref (avoids a stale closure)
-          return null;
-        }
-        return n - 1;
-      });
+      remaining -= 1;
+      if (remaining <= 0) {
+        cancelAutoSend();
+        sendRef.current(); // reads the latest input via the ref (avoids a stale closure)
+      } else {
+        setAutoSendIn(remaining);
+      }
     }, 1000);
   }
 
