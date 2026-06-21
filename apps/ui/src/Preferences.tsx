@@ -20,6 +20,7 @@ interface FieldSpec {
   kind: "text" | "number" | "bool" | "enum";
   options?: string[]; // for "enum"
   help?: string;
+  placeholder?: string; // shown when the deployment default is empty (so the box isn't blank)
 }
 
 interface Group {
@@ -62,7 +63,8 @@ const GROUPS: Group[] = [
       { key: "transcribe_enabled", label: "Enable voice input", kind: "bool" },
       { key: "transcribe_provider", label: "Engine", kind: "enum", options: ["local", "openai_compat"] },
       { key: "transcribe_model", label: "Transcription model", kind: "text", help: "local: small/medium/large-v3-turbo · server: whisper-1" },
-      { key: "transcribe_base_url", label: "Whisper server URL (openai_compat)", kind: "text", help: "e.g. http://127.0.0.1:8000/v1" },
+      { key: "transcribe_language", label: "Spoken language", kind: "enum", options: ["auto", "en", "de", "es", "ro", "fr", "it"], help: "'auto' detects the language; pin one (e.g. 'en') if it mis-detects" },
+      { key: "transcribe_base_url", label: "Whisper server URL (openai_compat)", kind: "text", help: "e.g. http://127.0.0.1:8000/v1 — blank uses the OpenAI base URL", placeholder: "blank = OpenAI base URL" },
     ],
   },
   {
@@ -292,7 +294,13 @@ function Field({
         <input
           data-testid={tid}
           type={spec.kind === "number" ? "number" : "text"}
-          placeholder={String(def)}
+          // When the deployment default is empty/blank, fall back to the field's own hint so the
+          // box reads meaningfully instead of showing nothing.
+          placeholder={
+            def === null || def === undefined || String(def) === ""
+              ? (spec.placeholder ?? "")
+              : String(def)
+          }
           value={value === null || value === undefined ? "" : String(value)}
           onChange={(e) => {
             const raw = e.target.value;

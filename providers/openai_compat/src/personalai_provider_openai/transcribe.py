@@ -31,6 +31,7 @@ class OpenAICompatTranscriber:
         model: str,
         api_key: str = "",
         base_url: str = DEFAULT_BASE_URL,
+        language: str | None = None,
         client: httpx.AsyncClient | None = None,
         egress_guard: EgressGuard | None = None,
     ) -> None:
@@ -38,6 +39,8 @@ class OpenAICompatTranscriber:
         self._base = base_url.rstrip("/")
         self._host = urlparse(self._base).hostname or ""
         self._api_key = api_key
+        # None / "auto" / "" -> let the server auto-detect; otherwise pin this ISO-639-1 language.
+        self._language = language if language and language.lower() != "auto" else None
         self._client = client or httpx.AsyncClient(timeout=httpx.Timeout(120.0))
         self._owns_client = client is None
         self._egress_guard = egress_guard
@@ -53,11 +56,14 @@ class OpenAICompatTranscriber:
             self._egress_guard(self._host)
         # Bearer auth only when a key is set (local whisper servers usually need none).
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
+        form = {"model": self._model}
+        if self._language is not None:
+            form["language"] = self._language
         response = await self._client.post(
             f"{self._base}/audio/transcriptions",
             headers=headers,
             files={"file": (filename, audio, mime_type)},
-            data={"model": self._model},
+            data=form,
         )
         response.raise_for_status()
         data = response.json()

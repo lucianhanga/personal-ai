@@ -31,6 +31,7 @@ const SETTINGS: TenantSettings = {
   transcribe_enabled: null,
   transcribe_base_url: null,
   transcribe_model: null,
+  transcribe_language: null,
 };
 
 const VIEW: AgentConfigView = {

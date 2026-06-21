@@ -55,6 +55,9 @@ class TenantSettings(StrictModel):
     transcribe_provider: Literal["local", "openai_compat"] | None = None
     transcribe_base_url: str | None = Field(default=None, min_length=1, max_length=500)
     transcribe_model: str | None = Field(default=None, min_length=1, max_length=200)
+    # Spoken language: "auto" to detect, or an ISO-639-1 code (en/de/es/ro/...). Pinning avoids
+    # Whisper mis-detecting the language on real-mic audio. None inherits the deployment default.
+    transcribe_language: str | None = Field(default=None, min_length=2, max_length=10)
 
     # --- Network egress (security-sensitive) ---
     # When egress_enabled is on, outbound calls from in-process tools are permitted only to hosts in

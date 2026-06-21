@@ -23,6 +23,26 @@ def _run(transcriber: OpenAICompatTranscriber) -> Transcription:
     return asyncio.run(_inner())
 
 
+@respx.mock
+def test_transcribe_pins_language_when_set() -> None:
+    route = respx.post(f"{BASE}/audio/transcriptions").mock(
+        return_value=httpx.Response(200, json={"text": "hola", "language": "es"})
+    )
+    _run(OpenAICompatTranscriber(model="whisper-1", base_url=BASE, language="es"))
+    body = route.calls[0].request.content
+    assert b'name="language"' in body and b"es" in body
+
+
+@respx.mock
+def test_transcribe_omits_language_when_auto() -> None:
+    # "auto" / None must not send a language field (let the server detect).
+    route = respx.post(f"{BASE}/audio/transcriptions").mock(
+        return_value=httpx.Response(200, json={"text": "hi"})
+    )
+    _run(OpenAICompatTranscriber(model="whisper-1", base_url=BASE, language="auto"))
+    assert b'name="language"' not in route.calls[0].request.content
+
+
 def test_is_a_transcriber() -> None:
     assert isinstance(OpenAICompatTranscriber(model="whisper-1", base_url=BASE), Transcriber)
 

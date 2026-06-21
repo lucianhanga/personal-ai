@@ -38,6 +38,7 @@ _FIELDS = (
     "transcribe_provider",
     "transcribe_base_url",
     "transcribe_model",
+    "transcribe_language",
 )
 _COLS = ", ".join(_FIELDS)
 

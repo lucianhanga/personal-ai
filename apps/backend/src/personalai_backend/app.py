@@ -684,13 +684,16 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         if config.transcribe_provider == "local":
             from personalai_provider_whisper_local import LocalWhisperTranscriber
 
-            return LocalWhisperTranscriber(model=config.transcribe_model)
+            return LocalWhisperTranscriber(
+                model=config.transcribe_model, language=config.transcribe_language
+            )
         from personalai_provider_openai import OpenAICompatTranscriber
 
         return OpenAICompatTranscriber(
             model=config.transcribe_model,
             api_key=config.transcribe_api_key or config.openai_api_key or "",
             base_url=config.transcribe_base_url or config.openai_base_url,
+            language=config.transcribe_language,
             egress_guard=lambda host: assert_egress_allowed(config, host),
         )
 
