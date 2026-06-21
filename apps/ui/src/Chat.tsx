@@ -12,10 +12,12 @@ import {
   fetchModels,
   fetchProviders,
   fetchSettings,
+  fetchTranscribeEnabled,
   renameConversation,
   resumeChat,
   saveSettings,
   streamChat,
+  transcribeAudio,
   uploadFile,
   type ApprovalRequest,
   type ChatMessage,
@@ -118,6 +120,11 @@ export function Chat({
   const [input, setInput] = useState("");
   // Image parts attached to the next turn, as data-URLs (M9.1 vision).
   const [attachedImages, setAttachedImages] = useState<string[]>([]);
+  // Voice input (M9.2): whether STT is configured, and the live recording state.
+  const [transcribeEnabled, setTranscribeEnabled] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const recorderRef = useRef<MediaRecorder | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -337,6 +344,42 @@ export function Chat({
       await allowEgressHost(token, host);
     } catch (e: unknown) {
       setError(String(e));
+    }
+  }
+
+  // Discover whether voice input is available (M9.2).
+  useEffect(() => {
+    fetchTranscribeEnabled(token).then(setTranscribeEnabled, () => setTranscribeEnabled(false));
+  }, [token]);
+
+  async function toggleRecording(): Promise<void> {
+    if (recording) {
+      recorderRef.current?.stop(); // the onstop handler transcribes
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const chunks: Blob[] = [];
+      const rec = new MediaRecorder(stream);
+      rec.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data);
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setRecording(false);
+        setTranscribing(true);
+        try {
+          const text = await transcribeAudio(token, new Blob(chunks, { type: "audio/webm" }));
+          if (text) setInput((cur) => (cur ? `${cur} ${text}` : text));
+        } catch (e: unknown) {
+          setError(String(e));
+        } finally {
+          setTranscribing(false);
+        }
+      };
+      recorderRef.current = rec;
+      rec.start();
+      setRecording(true);
+    } catch (e: unknown) {
+      setError(`microphone unavailable: ${String(e)}`);
     }
   }
 
@@ -867,6 +910,21 @@ export function Chat({
                   }}
                 />
               </label>
+              {transcribeEnabled && (
+                <button
+                  data-testid="mic"
+                  onClick={() => void toggleRecording()}
+                  disabled={busy || transcribing}
+                  title={recording ? "Stop recording" : "Record voice (speech-to-text)"}
+                  style={{
+                    alignSelf: "stretch",
+                    color: recording ? "#b00" : undefined,
+                    fontWeight: recording ? 600 : undefined,
+                  }}
+                >
+                  {transcribing ? "..." : recording ? "Stop" : "Mic"}
+                </button>
+              )}
               <textarea
                 data-testid="composer"
                 rows={4}

@@ -60,6 +60,10 @@ from personalai_contracts.ports.tool import (
     ToolHandler,
     ToolResult,
 )
+from personalai_contracts.ports.transcribe import (
+    Transcriber,
+    Transcription,
+)
 
 __all__ = [
     # agent
@@ -111,4 +115,7 @@ __all__ = [
     "ToolExecutor",
     "ToolHandler",
     "ToolResult",
+    # transcribe
+    "Transcriber",
+    "Transcription",
 ]

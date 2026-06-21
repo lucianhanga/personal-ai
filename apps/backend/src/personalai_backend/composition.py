@@ -12,6 +12,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from personalai_contracts.ports import Transcriber
 from personalai_core import CoreConfig, InProcessExecutor, Registries, ToolGateway
 from personalai_core.security import (
     AuditLog,
@@ -29,6 +30,7 @@ class Bootstrap:
     config: CoreConfig
     gateway: ToolGateway
     audit: AuditLog
+    transcriber: Transcriber | None = None  # speech-to-text (M9.2); None when disabled
 
 
 def register_adapters(registries: Registries, config: CoreConfig) -> None:
@@ -119,4 +121,27 @@ def bootstrap(
     gateway = ToolGateway(
         registries.tools, InProcessExecutor(), audit=audit, egress_check=_egress_check
     )
-    return Bootstrap(registries=registries, config=resolved_config, gateway=gateway, audit=audit)
+
+    # Speech-to-text (M9.2), opt-in. Falls back to the OpenAI provider's base/key. A local whisper
+    # server on loopback works with egress disabled; remote endpoints are egress-guarded.
+    transcriber: Transcriber | None = None
+    if resolved_config.transcribe_enabled:
+        from personalai_provider_openai import OpenAICompatTranscriber
+
+        def _transcribe_egress(host: str) -> None:
+            assert_egress_allowed(effective_egress_config(resolved_config), host)
+
+        transcriber = OpenAICompatTranscriber(
+            model=resolved_config.transcribe_model,
+            api_key=resolved_config.transcribe_api_key or resolved_config.openai_api_key or "",
+            base_url=resolved_config.transcribe_base_url or resolved_config.openai_base_url,
+            egress_guard=_transcribe_egress,
+        )
+
+    return Bootstrap(
+        registries=registries,
+        config=resolved_config,
+        gateway=gateway,
+        audit=audit,
+        transcriber=transcriber,
+    )

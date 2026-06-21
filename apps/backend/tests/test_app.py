@@ -340,6 +340,47 @@ def test_chat_passes_attached_images_to_the_provider() -> None:
     assert seen and img in seen[0]
 
 
+def test_transcribe_endpoint_returns_text() -> None:
+    # M9.2: POST audio to /api/v1/audio/transcribe -> the configured transcriber's text.
+    import dataclasses
+
+    from personalai_contracts.ports import Transcription
+
+    class _FakeTranscriber:
+        name = "fake"
+
+        async def transcribe(
+            self, audio: bytes, *, mime_type: str, filename: str = "audio.webm"
+        ) -> Transcription:
+            return Transcription(text="hello from audio", language="en")
+
+    boot = bootstrap(config=CoreConfig(auth_token=TOKEN))
+    boot = dataclasses.replace(boot, transcriber=_FakeTranscriber())
+    client = TestClient(create_app(boot))
+    resp = client.post(
+        "/api/v1/audio/transcribe",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        files={"file": ("rec.webm", b"\x00\x01", "audio/webm")},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["text"] == "hello from audio"
+
+
+def test_transcribe_endpoint_503_when_disabled() -> None:
+    # No transcriber configured (default) -> 503, and /status reports it disabled.
+    client = TestClient(create_app(bootstrap(config=CoreConfig(auth_token=TOKEN))))
+    resp = client.post(
+        "/api/v1/audio/transcribe",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        files={"file": ("rec.webm", b"\x00", "audio/webm")},
+    )
+    assert resp.status_code == 503
+    status_data = client.get("/api/v1/status", headers={"Authorization": f"Bearer {TOKEN}"}).json()[
+        "data"
+    ]
+    assert status_data["transcribe_enabled"] is False
+
+
 def test_chat_empty_completion_emits_notice() -> None:
     # An empty turn (no answer/tools) must surface a notice, not close the stream silently (#224).
     client = _app_with_provider("empty", EmptyProvider())

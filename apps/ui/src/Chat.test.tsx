@@ -69,6 +69,47 @@ test("switching provider reloads its models", async () => {
   await waitFor(() => expect(fetchModels).toHaveBeenCalledWith("demo", "openai"));
 });
 
+test("records voice and inserts the transcript into the composer (M9.2)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
+  vi.spyOn(api, "transcribeAudio").mockResolvedValue("hello from my voice");
+
+  // Mock the browser media APIs (not in jsdom).
+  const track = { stop: vi.fn() };
+  vi.stubGlobal("navigator", {
+    ...navigator,
+    mediaDevices: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [track] }) },
+  });
+  let onstop: (() => void) | null = null;
+  class FakeRecorder {
+    ondataavailable: ((e: { data: Blob }) => void) | null = null;
+    set onstop(fn: () => void) {
+      onstop = fn;
+    }
+    start(): void {
+      this.ondataavailable?.({ data: new Blob(["x"], { type: "audio/webm" }) });
+    }
+    stop(): void {
+      onstop?.();
+    }
+  }
+  vi.stubGlobal("MediaRecorder", FakeRecorder as unknown as typeof MediaRecorder);
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("mic")).toBeInTheDocument());
+
+  fireEvent.click(screen.getByTestId("mic")); // start
+  await waitFor(() => expect(screen.getByTestId("mic")).toHaveTextContent("Stop"));
+  fireEvent.click(screen.getByTestId("mic")); // stop -> transcribe
+
+  await waitFor(() =>
+    expect((screen.getByTestId("composer") as HTMLTextAreaElement).value).toContain(
+      "hello from my voice",
+    ),
+  );
+});
+
 test("attaches an image and sends it with the user message (vision)", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);

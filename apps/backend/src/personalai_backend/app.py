@@ -419,6 +419,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 "vector_repository": config.vector_repository,
                 "bind_host": config.bind_host,
                 "egress_enabled": config.egress_enabled,
+                # Voice input availability (M9.2), so the UI only shows the mic when configured.
+                "transcribe_enabled": app.state.bootstrap.transcriber is not None,
             },
         )
 
@@ -1098,6 +1100,38 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             ok=True,
             data={"id": doc.id, "name": doc.name, "mime": doc.mime, "chunk_count": doc.chunk_count},
         )
+
+    @app.post(
+        "/api/v1/audio/transcribe",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def transcribe_audio(file: UploadFile = File(...)) -> StructuredResult:
+        # Speech-to-text (M9.2): transcribe a recorded audio blob via the configured transcriber.
+        transcriber = app.state.bootstrap.transcriber
+        if transcriber is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="transcription is not enabled (set PERSONALAI_TRANSCRIBE_ENABLED)",
+            )
+        config: CoreConfig = app.state.config
+        audio = await file.read(config.max_upload_bytes + 1)
+        if len(audio) > config.max_upload_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"audio exceeds {config.max_upload_bytes} bytes",
+            )
+        try:
+            result = await transcriber.transcribe(
+                audio,
+                mime_type=file.content_type or "audio/webm",
+                filename=file.filename or "audio.webm",
+            )
+        except Exception as exc:  # noqa: BLE001 - structured error (e.g. egress/endpoint failure)
+            return StructuredResult(
+                ok=False, error=ErrorInfo(code="E_TRANSCRIBE", message=str(exc))
+            )
+        return StructuredResult(ok=True, data={"text": result.text, "language": result.language})
 
     @app.get(
         "/api/v1/files", response_model=StructuredResult, dependencies=[Depends(require_context)]
