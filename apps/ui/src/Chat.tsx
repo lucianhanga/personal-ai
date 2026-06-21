@@ -38,6 +38,30 @@ import { SidePanel } from "./SidePanel";
 // Key for the not-yet-persisted "new" chat (before its conversation id exists).
 const NEW_CHAT = "__new__";
 
+// Turn a getUserMedia failure into a plain-language hint instead of a raw DOMException string.
+export function micErrorMessage(e: unknown): string {
+  const name = (e as { name?: string } | null)?.name;
+  if (name === "NotAllowedError" || name === "SecurityError")
+    return "Microphone access was blocked. Allow microphone access in your browser, then try again.";
+  if (name === "NotFoundError" || name === "DevicesNotFoundError")
+    return "No microphone was found. Connect one and try again.";
+  return `Microphone unavailable: ${String(e)}`;
+}
+
+// Friendlier message for a failed transcription (the upload cap returns HTTP 413).
+export function transcribeErrorMessage(e: unknown): string {
+  const msg = String(e);
+  if (msg.includes("413")) return "That recording is too long. Try a shorter one.";
+  return `Transcription failed: ${msg}`;
+}
+
+// Seconds -> "m:ss" for the recording timer.
+export function formatDuration(totalSeconds: number): string {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
 /** All per-conversation state, so chats stream independently and survive switching. */
 interface ChatState {
   messages: ChatMessage[];
@@ -125,6 +149,11 @@ export function Chat({
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
+  // Soft, non-error STT feedback (amber): no-speech, or the one-time model-download hint.
+  const [micNotice, setMicNotice] = useState<string | null>(null);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const modelHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // After a transcription, auto-send unless the user edits within a short grace period (M9.2c).
   const [autoSendIn, setAutoSendIn] = useState<number | null>(null);
   const autoSendTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -384,7 +413,29 @@ export function Chat({
     }, 1000);
   }
 
-  useEffect(() => cancelAutoSend, []); // clear the timer on unmount
+  useEffect(() => {
+    // Clear every STT timer on unmount.
+    return () => {
+      cancelAutoSend();
+      stopRecordTimer();
+      clearModelHint();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function stopRecordTimer(): void {
+    if (recordTimerRef.current) {
+      clearInterval(recordTimerRef.current);
+      recordTimerRef.current = null;
+    }
+  }
+
+  function clearModelHint(): void {
+    if (modelHintTimerRef.current) {
+      clearTimeout(modelHintTimerRef.current);
+      modelHintTimerRef.current = null;
+    }
+  }
 
   async function toggleRecording(): Promise<void> {
     if (recording) {
@@ -392,6 +443,8 @@ export function Chat({
       return;
     }
     cancelAutoSend(); // a new recording supersedes a pending auto-send
+    setMicNotice(null);
+    setError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const chunks: Blob[] = [];
@@ -399,25 +452,41 @@ export function Chat({
       rec.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data);
       rec.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
+        stopRecordTimer();
         setRecording(false);
         setTranscribing(true);
+        // A slow transcription is almost always the one-time local-model download — surface that
+        // after a few seconds so the wait doesn't look like a hang (the user hit this before).
+        modelHintTimerRef.current = setTimeout(
+          () =>
+            setMicNotice(
+              "Working… the first transcription downloads the speech model, which can take a minute.",
+            ),
+          4000,
+        );
         try {
           const text = await transcribeAudio(token, new Blob(chunks, { type: "audio/webm" }));
           if (text) {
+            setMicNotice(null);
             setInput((cur) => (cur ? `${cur} ${text}` : text));
             startAutoSend(); // auto-send after a grace period unless the user edits
+          } else {
+            setMicNotice("No speech detected — try again, a bit closer to the mic.");
           }
         } catch (e: unknown) {
-          setError(String(e));
+          setError(transcribeErrorMessage(e));
         } finally {
+          clearModelHint();
           setTranscribing(false);
         }
       };
       recorderRef.current = rec;
       rec.start();
       setRecording(true);
+      setRecordSeconds(0);
+      recordTimerRef.current = setInterval(() => setRecordSeconds((s) => s + 1), 1000);
     } catch (e: unknown) {
-      setError(`microphone unavailable: ${String(e)}`);
+      setError(micErrorMessage(e));
     }
   }
 
@@ -832,6 +901,32 @@ export function Chat({
               </p>
             )}
 
+            {/* Live STT feedback (M9.2f): recording timer (red), transcribing state, and soft
+                amber notices (model-download hint, no-speech). Keeps the user informed instead of
+                a silent wait. */}
+            {recording && (
+              <p data-testid="recording-status" style={{ color: "#b00", fontSize: "0.82rem", margin: 0 }}>
+                <span aria-hidden="true">● </span>
+                Recording {formatDuration(recordSeconds)}
+                {recordSeconds >= 60 && (
+                  <span style={{ color: "#b06f00" }}>
+                    {" "}
+                    — long recordings take longer to transcribe.
+                  </span>
+                )}
+              </p>
+            )}
+            {!recording && transcribing && (
+              <p data-testid="transcribing-status" style={{ color: "#555", fontSize: "0.82rem", margin: 0 }}>
+                Transcribing…
+              </p>
+            )}
+            {micNotice && (
+              <p data-testid="mic-notice" style={{ color: "#b06f00", fontSize: "0.82rem", margin: 0 }}>
+                {micNotice}
+              </p>
+            )}
+
             {/* Grace period after a transcription (M9.2c): a visible 3-2-1 countdown auto-sends the
                 transcript unless the user presses Stop (then they can edit) — editing also cancels. */}
             {autoSendIn !== null && (
@@ -1065,7 +1160,7 @@ export function Chat({
                   whiteSpace: "nowrap",
                 }}
               >
-                {transcribing ? "Transcribing" : recording ? "Recording" : ""}
+                {transcribing ? "Transcribing" : recording ? "Recording" : (micNotice ?? "")}
               </span>
             </div>
           </section>
