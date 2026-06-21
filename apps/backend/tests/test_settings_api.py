@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from personalai_backend.app import create_app
 from personalai_backend.composition import bootstrap
+from personalai_contracts.testing import FakeModelProvider
 from personalai_core import CoreConfig
 from personalai_storage_postgres import create_pool
 
@@ -79,7 +80,10 @@ def test_settings_get_defaults_then_round_trip() -> None:
 def test_saved_default_model_surfaces_in_models_endpoint() -> None:
     # The top-bar model selector is seeded from /api/v1/models' default_model, which now reflects
     # the tenant's persisted default (the redesign's single source of truth, saved via /settings).
-    app = create_app(bootstrap(config=CoreConfig(app_mode="hosted")))
+    # Use a fake provider so /models works without a live Ollama (CI has no model runtime).
+    boot = bootstrap(config=CoreConfig(app_mode="hosted", model_provider="fake"))
+    boot.registries.model_providers.register("fake", FakeModelProvider(name="fake"), overwrite=True)
+    app = create_app(boot)
     with TestClient(app, base_url="https://testserver") as user:
         _signup_login(user, f"u-{uuid.uuid4().hex[:8]}@example.com")
         before = user.get("/api/v1/models").json()["data"]["default_model"]

@@ -40,3 +40,5 @@ minimumReleaseAgeExclude:
 # risky vite major bump; revisit when vite ships esbuild >= 0.28.1 natively (#275).
 overrides:
   esbuild@<0.28.1: ">=0.28.1"
+  # form-data <4.0.6: CRLF injection (high). Pulled transitively via jsdom (vitest, dev/test only).
+  form-data@<4.0.6: ">=4.0.6"
