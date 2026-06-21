@@ -7,14 +7,14 @@ import asyncio
 import httpx
 import respx
 
-from personalai_contracts.ports import Transcriber
+from personalai_contracts.ports import Transcriber, Transcription
 from personalai_provider_openai import OpenAICompatTranscriber
 
 BASE = "https://api.example.test/v1"
 
 
-def _run(transcriber: OpenAICompatTranscriber) -> object:
-    async def _inner() -> object:
+def _run(transcriber: OpenAICompatTranscriber) -> Transcription:
+    async def _inner() -> Transcription:
         try:
             return await transcriber.transcribe(b"\x00\x01audio", mime_type="audio/webm")
         finally:
