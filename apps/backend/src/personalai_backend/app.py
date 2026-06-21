@@ -331,6 +331,27 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             # Unit-of-work: TenantDb.acquire(tenant_id) yields a tenant-bound connection in ONE
             # transaction, so multiple store ops commit/roll back together (M8 agent writes; A3).
             app.state.tenant_db = TenantDb(pool)
+            # The `remember` tool needs the (tenant-scoped) memory store + an embedder, so it is
+            # wired here once storage is up rather than at bootstrap. It lets the agent ground
+            # "remember this" in a real write (#308), instead of only the background extraction.
+            from personalai_core import RegisteredTool
+            from personalai_tool_builtin import REMEMBER_MANIFEST, RememberTool
+
+            async def _embed_one(text: str) -> Sequence[float]:
+                result = await _resolve_provider(boot.config.embed_provider).embed(
+                    [text], boot.config.embed_model
+                )
+                if not result.vectors:
+                    raise ValueError("embedding provider returned no vector")
+                return result.vectors[0]
+
+            boot.registries.tools.register(
+                "remember",
+                RegisteredTool(
+                    REMEMBER_MANIFEST, RememberTool(app.state.storage.memories, _embed_one)
+                ),
+                overwrite=True,
+            )
         except Exception as exc:  # noqa: BLE001 - storage is optional; degrade gracefully
             logger.warning("storage unavailable (file/RAG features disabled): %s", exc)
             app.state.storage = None
