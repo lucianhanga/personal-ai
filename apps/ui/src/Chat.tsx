@@ -829,21 +829,44 @@ export function Chat({
               </p>
             )}
 
-            {/* Grace period after a transcription (M9.2c): auto-send unless the user edits/cancels. */}
+            {/* Grace period after a transcription (M9.2c): a visible 3-2-1 countdown auto-sends the
+                transcript unless the user presses Stop (then they can edit) — editing also cancels. */}
             {autoSendIn !== null && (
               <div
                 data-testid="autosend-banner"
+                role="status"
                 style={{
                   display: "flex",
-                  gap: "0.5rem",
+                  gap: "0.6rem",
                   alignItems: "center",
-                  fontSize: "0.82rem",
+                  fontSize: "0.85rem",
                   color: "#b06f00",
+                  border: "1px solid #e6c200",
+                  background: "#fff8e1",
+                  borderRadius: 6,
+                  padding: "0.35rem 0.6rem",
                 }}
               >
-                <span>Sending in {autoSendIn}s — edit the text to cancel.</span>
-                <button data-testid="autosend-cancel" onClick={cancelAutoSend}>
-                  Cancel
+                <span
+                  data-testid="autosend-count"
+                  aria-hidden="true"
+                  style={{
+                    fontSize: "1.2rem",
+                    fontWeight: 700,
+                    fontVariantNumeric: "tabular-nums",
+                    minWidth: "1.2rem",
+                    textAlign: "center",
+                  }}
+                >
+                  {autoSendIn}
+                </span>
+                <span style={{ flex: 1 }}>Sending in {autoSendIn}… press Stop to edit.</span>
+                <button
+                  data-testid="autosend-cancel"
+                  onClick={cancelAutoSend}
+                  style={{ fontWeight: 600 }}
+                >
+                  Stop
                 </button>
               </div>
             )}
