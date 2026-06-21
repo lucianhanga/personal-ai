@@ -17,6 +17,7 @@ from personalai_core.graph import (
     run_graph,
 )
 from personalai_core.memory import split_recent, summarize
+from personalai_core.memory_consolidation import ConsolidationOutcome, consolidate_fact
 from personalai_core.memory_extraction import extract_facts, recall, remember
 from personalai_core.registries import Registries
 from personalai_core.registry import Registry, RegistryError
@@ -34,6 +35,7 @@ __all__ = [
     "GraphState",
     "resolve_prompts",
     "InProcessExecutor",
+    "ConsolidationOutcome",
     "RegisteredTool",
     "Registries",
     "Registry",
@@ -41,6 +43,7 @@ __all__ = [
     "ToolGateway",
     "VectorRetriever",
     "__version__",
+    "consolidate_fact",
     "effective_config",
     "extract_facts",
     "generate_structured",

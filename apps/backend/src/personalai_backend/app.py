@@ -331,25 +331,34 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             # Unit-of-work: TenantDb.acquire(tenant_id) yields a tenant-bound connection in ONE
             # transaction, so multiple store ops commit/roll back together (M8 agent writes; A3).
             app.state.tenant_db = TenantDb(pool)
-            # The `remember` tool needs the (tenant-scoped) memory store + an embedder, so it is
-            # wired here once storage is up rather than at bootstrap. It lets the agent ground
-            # "remember this" in a real write (#308), instead of only the background extraction.
-            from personalai_core import RegisteredTool
+            # The `remember` tool needs the (tenant-scoped) memory store, an embedder, and a judge
+            # model, so it is wired here once storage is up rather than at bootstrap. It lets the
+            # agent ground "remember this" in a real write (#308) that is deduped/reconciled against
+            # existing memories (#310), instead of only the non-deterministic background extraction.
+            from personalai_contracts.ports import MemoryItem, MemoryKind
+            from personalai_core import ConsolidationOutcome, RegisteredTool, consolidate_fact
             from personalai_tool_builtin import REMEMBER_MANIFEST, RememberTool
 
-            async def _embed_one(text: str) -> Sequence[float]:
-                result = await _resolve_provider(boot.config.embed_provider).embed(
-                    [text], boot.config.embed_model
+            memories = app.state.storage.memories
+
+            async def _save_memory(text: str, kind: str) -> tuple[str, MemoryItem | None]:
+                gen = _resolve_provider(boot.config.model_provider)
+                outcome: ConsolidationOutcome = await consolidate_fact(
+                    text=text,
+                    kind=MemoryKind(kind),
+                    confidence=1.0,  # the user stated it directly
+                    source={"origin": "user_request"},
+                    store=memories,
+                    embed_provider=_resolve_provider(boot.config.embed_provider),
+                    embed_model=boot.config.embed_model,
+                    judge_provider=gen,
+                    judge_model=boot.config.default_model,
                 )
-                if not result.vectors:
-                    raise ValueError("embedding provider returned no vector")
-                return result.vectors[0]
+                return outcome.op, outcome.item
 
             boot.registries.tools.register(
                 "remember",
-                RegisteredTool(
-                    REMEMBER_MANIFEST, RememberTool(app.state.storage.memories, _embed_one)
-                ),
+                RegisteredTool(REMEMBER_MANIFEST, RememberTool(_save_memory)),
                 overwrite=True,
             )
         except Exception as exc:  # noqa: BLE001 - storage is optional; degrade gracefully

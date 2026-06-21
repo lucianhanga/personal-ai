@@ -77,6 +77,14 @@ def test_memory_add_search_update_delete_clear() -> None:
             assert updated is not None and updated.text == "Lucian works at Hyperneers"
             assert await store.update_text("missing", "x") is None
 
+            # Supersede hides a memory from search/list but leaves it fetchable by id (#310).
+            superseded = await store.supersede(mid)
+            assert superseded is not None and superseded.superseded is True
+            assert all(h.id != mid for h in await store.search(_vec(1.0, 0.0), top_k=5))
+            assert all(m.id != mid for m in await store.list())
+            assert (await store.get(mid)) is not None
+            assert await store.supersede("missing") is None
+
             await store.delete(mid)
             assert await store.get(mid) is None
 

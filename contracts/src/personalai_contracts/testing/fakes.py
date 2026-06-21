@@ -178,12 +178,13 @@ class InMemoryMemoryStore:
                 score=sum(a * b for a, b in zip(embedding, self._vectors[mid], strict=False)),
             )
             for mid, item in self._items.items()
+            if not item.superseded  # mirror the store: superseded memories are hidden
         ]
         scored.sort(key=lambda m: m.score or 0.0, reverse=True)
         return scored[:top_k]
 
     async def list(self) -> Sequence[MemoryItem]:
-        return list(self._items.values())
+        return [item for item in self._items.values() if not item.superseded]
 
     async def get(self, memory_id: str) -> MemoryItem | None:
         return self._items.get(memory_id)
@@ -193,6 +194,14 @@ class InMemoryMemoryStore:
         if item is None:
             return None
         updated = replace(item, text=text, updated_at=datetime.now(tz=UTC))
+        self._items[memory_id] = updated
+        return updated
+
+    async def supersede(self, memory_id: str) -> MemoryItem | None:
+        item = self._items.get(memory_id)
+        if item is None:
+            return None
+        updated = replace(item, superseded=True, updated_at=datetime.now(tz=UTC))
         self._items[memory_id] = updated
         return updated
 
