@@ -392,7 +392,7 @@ def test_transcribe_local_provider_uses_in_process_whisper() -> None:
 
     class _FakeModel:
         def __init__(self, *a: object, **k: object) -> None: ...
-        def transcribe(self, audio: object) -> tuple[list[object], object]:
+        def transcribe(self, audio: object, **k: object) -> tuple[list[object], object]:
             seg = type("S", (), {"text": "hallo welt"})()
             info = type("I", (), {"language": "de"})()
             return [seg], info

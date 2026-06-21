@@ -28,11 +28,13 @@ class _Info:
 
 class _FakeModel:
     instances: list[tuple[str, str, str, int]] = []
+    calls: list[dict[str, Any]] = []
 
     def __init__(self, model: str, *, device: str, compute_type: str, cpu_threads: int) -> None:
         _FakeModel.instances.append((model, device, compute_type, cpu_threads))
 
-    def transcribe(self, audio: Any) -> tuple[list[_Segment], _Info]:
+    def transcribe(self, audio: Any, **kwargs: Any) -> tuple[list[_Segment], _Info]:
+        _FakeModel.calls.append(kwargs)
         return [_Segment(" Salut, "), _Segment("ce faci?")], _Info()
 
 
@@ -46,6 +48,7 @@ def test_transcribes_via_faster_whisper_and_joins_segments() -> None:
     _install_fake_faster_whisper()
     mod._MODELS.clear()
     _FakeModel.instances.clear()
+    _FakeModel.calls.clear()
     t = LocalWhisperTranscriber(model="large-v3-turbo")
 
     result = asyncio.run(t.transcribe(b"\x00\x01webm", mime_type="audio/webm"))
@@ -57,6 +60,30 @@ def test_transcribes_via_faster_whisper_and_joins_segments() -> None:
     model_name, device, compute, cpu_threads = _FakeModel.instances[0]
     assert (model_name, device, compute) == ("large-v3-turbo", "auto", "int8")
     assert cpu_threads >= 1
+    # Default: auto-detect language (None) and VAD filtering on to suppress silence hallucinations.
+    assert _FakeModel.calls[0]["language"] is None
+    assert _FakeModel.calls[0]["vad_filter"] is True
+
+
+def test_pins_the_spoken_language_when_configured() -> None:
+    _install_fake_faster_whisper()
+    mod._MODELS.clear()
+    _FakeModel.instances.clear()
+    _FakeModel.calls.clear()
+    # "auto" means detect; a real code is forwarded to force the language.
+    asyncio.run(
+        LocalWhisperTranscriber(model="small", language="auto").transcribe(
+            b"a", mime_type="audio/webm"
+        )
+    )
+    assert _FakeModel.calls[0]["language"] is None
+    _FakeModel.calls.clear()
+    asyncio.run(
+        LocalWhisperTranscriber(model="small", language="en").transcribe(
+            b"a", mime_type="audio/webm"
+        )
+    )
+    assert _FakeModel.calls[0]["language"] == "en"
 
 
 def test_model_is_loaded_once_and_cached() -> None:

@@ -47,6 +47,7 @@ _ENV_FIELDS = {
     "TRANSCRIBE_ENABLED": "transcribe_enabled",
     "TRANSCRIBE_PROVIDER": "transcribe_provider",
     "TRANSCRIBE_MODEL": "transcribe_model",
+    "TRANSCRIBE_LANGUAGE": "transcribe_language",
     "TRANSCRIBE_BASE_URL": "transcribe_base_url",
     "TRANSCRIBE_API_KEY": "transcribe_api_key",  # pragma: allowlist secret  (env var name)
     "DATABASE_URL": "database_url",
@@ -198,6 +199,12 @@ class CoreConfig(StrictModel):
     transcribe_provider: str = Field(default="local", description="local | openai_compat")
     transcribe_model: str = Field(
         default="large-v3-turbo", description="Transcription model (faster-whisper size or OpenAI)."
+    )
+    # "auto" = auto-detect the spoken language (multilingual). Whisper's auto-detection is
+    # probabilistic and can pick the wrong language on real-mic audio (accent/noise/codec), so a
+    # specific ISO-639-1 code (en/de/es/ro/...) can be pinned to force it.
+    transcribe_language: str = Field(
+        default="auto", description='Spoken language: "auto" to detect, or an ISO-639-1 code.'
     )
     transcribe_base_url: str = Field(
         default="", description="Transcription endpoint base URL; empty = use openai_base_url."

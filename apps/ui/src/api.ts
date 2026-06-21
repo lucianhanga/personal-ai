@@ -498,6 +498,7 @@ export interface TenantSettings {
   transcribe_provider: "local" | "openai_compat" | null;
   transcribe_base_url: string | null;
   transcribe_model: string | null;
+  transcribe_language: string | null;
 }
 
 // The defaults the backend would apply for any field left null (echoed from the boot CoreConfig),

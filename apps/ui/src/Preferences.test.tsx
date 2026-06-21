@@ -31,6 +31,7 @@ const EMPTY: TenantSettings = {
   transcribe_enabled: null,
   transcribe_base_url: null,
   transcribe_model: null,
+  transcribe_language: null,
 };
 
 const DEFAULTS: TenantSettingsDefaults = {
@@ -57,6 +58,7 @@ const DEFAULTS: TenantSettingsDefaults = {
   transcribe_enabled: false,
   transcribe_base_url: "",
   transcribe_model: "whisper-1",
+  transcribe_language: "auto",
 };
 
 function mockLoad(settings: TenantSettings = EMPTY): void {

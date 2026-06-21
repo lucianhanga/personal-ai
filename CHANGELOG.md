@@ -12,6 +12,13 @@ generated OpenAPI document.
 ## [Unreleased]
 
 ### Added
+- **Spoken-language control for STT (M9.2e)**: a new per-tenant **Spoken language** setting
+  (Settings → Voice) — `auto` to auto-detect (multilingual, the default), or pin an ISO-639-1 code
+  (`en`/`de`/`es`/`ro`/…). Whisper's auto-detection is probabilistic and can mis-detect the language
+  on real-mic audio (e.g. English heard as Bulgarian); pinning forces the right one. Applies to both
+  the local and `openai_compat` engines (`PERSONALAI_TRANSCRIBE_LANGUAGE`). Local STT also now runs
+  with a **VAD filter** that strips silence/non-speech, which removes phantom phrases on near-silent
+  clips and steadies language detection.
 - **In-process local Whisper (M9.2c, #300)**: a **zero-setup** speech-to-text engine that runs
   Whisper **in-process** via [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
   (CTranslate2) — no server, no API key, no egress. Multilingual (auto-detects ~99 languages incl.
@@ -40,6 +47,9 @@ generated OpenAPI document.
   (mic above send) using monochrome non-emoji glyphs — record `●` / stop `■` (red, the record
   convention) / transcribing `…`, send `↑` — with the description in the tooltip/aria-label and an
   `aria-live` status for screen readers.
+- **Settings placeholders (M9.2e)**: text fields whose deployment default is blank (e.g. the
+  `openai_compat` "Whisper server URL") now show a descriptive placeholder ("blank = OpenAI base
+  URL") instead of an empty box that looked unset.
 - **Vision (M9.1, #294)**: attach image(s) to a chat turn and a **vision-capable model sees them**.
   Image-attach button in the composer (with a hint when the selected model isn't a vision model),
   thumbnail previews, and the image(s) rendered in the user bubble. Images flow as data-URLs through
