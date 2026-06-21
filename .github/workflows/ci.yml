@@ -89,7 +89,7 @@ jobs:
         run: uv run ruff format --check .
 
       - name: mypy type check
-        run: uv run mypy contracts core apps/backend providers/ollama providers/openai_compat storage/postgres modalities/files tools/builtin tools/mcp
+        run: uv run mypy contracts core apps/backend providers/ollama providers/openai_compat providers/whisper_local storage/postgres modalities/files tools/builtin tools/mcp
 
       - name: Architecture (import-linter)
         run: uv run lint-imports

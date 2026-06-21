@@ -52,6 +52,7 @@ class TenantSettings(StrictModel):
     # transcribe_base_url points at an OpenAI-compatible /v1 transcription endpoint (a local whisper
     # server, or OpenAI). The API key stays env-only (secret), like openai_api_key. None inherits.
     transcribe_enabled: bool | None = None
+    transcribe_provider: Literal["local", "openai_compat"] | None = None
     transcribe_base_url: str | None = Field(default=None, min_length=1, max_length=500)
     transcribe_model: str | None = Field(default=None, min_length=1, max_length=200)
 

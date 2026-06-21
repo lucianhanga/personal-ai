@@ -11,6 +11,7 @@ root_packages =
     personalai_backend
     personalai_provider_ollama
     personalai_provider_openai
+    personalai_provider_whisper_local
     personalai_storage_postgres
     personalai_modality_files
     personalai_tool_builtin
@@ -30,6 +31,7 @@ type = forbidden
 source_modules =
     personalai_provider_ollama
     personalai_provider_openai
+    personalai_provider_whisper_local
     personalai_storage_postgres
     personalai_modality_files
     personalai_tool_builtin
@@ -44,6 +46,7 @@ type = independence
 modules =
     personalai_provider_ollama
     personalai_provider_openai
+    personalai_provider_whisper_local
     personalai_storage_postgres
     personalai_modality_files
     personalai_tool_builtin

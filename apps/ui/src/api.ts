@@ -495,6 +495,7 @@ export interface TenantSettings {
   egress_enabled: boolean | null;
   allowed_egress_hosts: string[] | null;
   transcribe_enabled: boolean | null;
+  transcribe_provider: "local" | "openai_compat" | null;
   transcribe_base_url: string | null;
   transcribe_model: string | null;
 }

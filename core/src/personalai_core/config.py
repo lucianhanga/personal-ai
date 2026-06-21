@@ -45,6 +45,7 @@ _ENV_FIELDS = {
     "OPENAI_API_KEY": "openai_api_key",  # pragma: allowlist secret  (env var name, not a secret)
     "OPENAI_BASE_URL": "openai_base_url",
     "TRANSCRIBE_ENABLED": "transcribe_enabled",
+    "TRANSCRIBE_PROVIDER": "transcribe_provider",
     "TRANSCRIBE_MODEL": "transcribe_model",
     "TRANSCRIBE_BASE_URL": "transcribe_base_url",
     "TRANSCRIBE_API_KEY": "transcribe_api_key",  # pragma: allowlist secret  (env var name)
@@ -192,7 +193,12 @@ class CoreConfig(StrictModel):
     # endpoint (OpenAI or a local whisper server). Off by default; a local server on loopback works
     # with egress disabled. Empty base/key fall back to the OpenAI provider's base/key.
     transcribe_enabled: bool = Field(default=True, description="Enable speech-to-text input.")
-    transcribe_model: str = Field(default="whisper-1", description="Transcription model name.")
+    # "local" = in-process faster-whisper (zero-setup, multilingual; downloads the model once);
+    # "openai_compat" = a remote/local whisper SERVER over /v1/audio/transcriptions.
+    transcribe_provider: str = Field(default="local", description="local | openai_compat")
+    transcribe_model: str = Field(
+        default="large-v3-turbo", description="Transcription model (faster-whisper size or OpenAI)."
+    )
     transcribe_base_url: str = Field(
         default="", description="Transcription endpoint base URL; empty = use openai_base_url."
     )

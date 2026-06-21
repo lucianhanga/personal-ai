@@ -35,6 +35,7 @@ _FIELDS = (
     "egress_enabled",
     "allowed_egress_hosts",
     "transcribe_enabled",
+    "transcribe_provider",
     "transcribe_base_url",
     "transcribe_model",
 )

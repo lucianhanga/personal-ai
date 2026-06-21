@@ -677,9 +677,14 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return effective_config(base, await storage.settings.get())
 
     def _build_transcriber(config: CoreConfig) -> Any:
-        """Build the speech-to-text transcriber from the effective config (#298). The endpoint
-        (whisper server URL) + model are per-tenant; the API key stays env-only. A local server on
-        loopback works with egress disabled; remote endpoints are egress-guarded."""
+        """Build the speech-to-text transcriber from the effective config (#298/#300). "local" runs
+        Whisper in-process (faster-whisper; zero-setup, multilingual). "openai_compat" calls a
+        whisper SERVER /v1/audio/transcriptions (per-tenant URL/model; key env-only); a local server
+        on loopback works with egress disabled, remote endpoints are egress-guarded."""
+        if config.transcribe_provider == "local":
+            from personalai_provider_whisper_local import LocalWhisperTranscriber
+
+            return LocalWhisperTranscriber(model=config.transcribe_model)
         from personalai_provider_openai import OpenAICompatTranscriber
 
         return OpenAICompatTranscriber(

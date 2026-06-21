@@ -125,6 +125,10 @@ export function Chat({
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
+  // After a transcription, auto-send unless the user edits within a short grace period (M9.2c).
+  const [autoSendIn, setAutoSendIn] = useState<number | null>(null);
+  const autoSendTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sendRef = useRef<() => void>(() => {});
   const [error, setError] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -352,11 +356,39 @@ export function Chat({
     fetchTranscribeEnabled(token).then(setTranscribeEnabled, () => setTranscribeEnabled(false));
   }, [token]);
 
+  function cancelAutoSend(): void {
+    if (autoSendTimerRef.current) {
+      clearInterval(autoSendTimerRef.current);
+      autoSendTimerRef.current = null;
+    }
+    setAutoSendIn(null);
+  }
+
+  // Grace period after a transcription: count down, then auto-send unless the user edited the text.
+  function startAutoSend(seconds = 3): void {
+    cancelAutoSend();
+    setAutoSendIn(seconds);
+    autoSendTimerRef.current = setInterval(() => {
+      setAutoSendIn((n) => {
+        if (n === null) return null;
+        if (n <= 1) {
+          cancelAutoSend();
+          sendRef.current(); // reads the latest input via the ref (avoids a stale closure)
+          return null;
+        }
+        return n - 1;
+      });
+    }, 1000);
+  }
+
+  useEffect(() => cancelAutoSend, []); // clear the timer on unmount
+
   async function toggleRecording(): Promise<void> {
     if (recording) {
       recorderRef.current?.stop(); // the onstop handler transcribes
       return;
     }
+    cancelAutoSend(); // a new recording supersedes a pending auto-send
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const chunks: Blob[] = [];
@@ -368,7 +400,10 @@ export function Chat({
         setTranscribing(true);
         try {
           const text = await transcribeAudio(token, new Blob(chunks, { type: "audio/webm" }));
-          if (text) setInput((cur) => (cur ? `${cur} ${text}` : text));
+          if (text) {
+            setInput((cur) => (cur ? `${cur} ${text}` : text));
+            startAutoSend(); // auto-send after a grace period unless the user edits
+          }
         } catch (e: unknown) {
           setError(String(e));
         } finally {
@@ -395,6 +430,7 @@ export function Chat({
   }
 
   async function send(): Promise<void> {
+    cancelAutoSend();
     const content = input.trim();
     const images = attachedImages;
     // Allow sending with only an image (no text), as long as there's something to send.
@@ -540,6 +576,9 @@ export function Chat({
       patchChat(key, (s) => ({ ...s, busy: false }));
     }
   }
+
+  // The auto-send timer fires a stable ref so it always calls the latest send (current input).
+  sendRef.current = () => void send();
 
   // Resolve a turn suspended at the durable human gate (M8.1c): resume with the decision, stream the
   // finalized answer into the same assistant bubble, and clear the pending state.
@@ -790,6 +829,25 @@ export function Chat({
               </p>
             )}
 
+            {/* Grace period after a transcription (M9.2c): auto-send unless the user edits/cancels. */}
+            {autoSendIn !== null && (
+              <div
+                data-testid="autosend-banner"
+                style={{
+                  display: "flex",
+                  gap: "0.5rem",
+                  alignItems: "center",
+                  fontSize: "0.82rem",
+                  color: "#b06f00",
+                }}
+              >
+                <span>Sending in {autoSendIn}s — edit the text to cancel.</span>
+                <button data-testid="autosend-cancel" onClick={cancelAutoSend}>
+                  Cancel
+                </button>
+              </div>
+            )}
+
             {/* Per-session controls strip: these are per-turn toggles, kept next to the composer. */}
             <div
               data-testid="session-controls"
@@ -910,28 +968,16 @@ export function Chat({
                   }}
                 />
               </label>
-              {transcribeEnabled && (
-                <button
-                  data-testid="mic"
-                  onClick={() => void toggleRecording()}
-                  disabled={busy || transcribing}
-                  title={recording ? "Stop recording" : "Record voice (speech-to-text)"}
-                  style={{
-                    alignSelf: "stretch",
-                    color: recording ? "#b00" : undefined,
-                    fontWeight: recording ? 600 : undefined,
-                  }}
-                >
-                  {transcribing ? "..." : recording ? "Stop" : "Mic"}
-                </button>
-              )}
               <textarea
                 data-testid="composer"
                 rows={4}
                 style={{ flex: 1, resize: "vertical", font: "inherit", padding: "0.4rem" }}
                 value={input}
                 placeholder="Type a message...  (Enter to send, Shift+Enter for a new line)"
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => {
+                  cancelAutoSend(); // editing the transcript cancels the pending auto-send
+                  setInput(e.target.value);
+                }}
                 onKeyDown={(e) => {
                   // Enter sends; Shift+Enter inserts a newline. Ignore Enter mid-IME composition
                   // (e.g. Japanese/Chinese input) so committing a candidate doesn't send.
@@ -941,13 +987,60 @@ export function Chat({
                   }
                 }}
               />
-              <button
-                data-testid="send"
-                onClick={() => void send()}
-                disabled={busy || !model || (input.trim() === "" && attachedImages.length === 0)}
+              {/* Mic stacked above Send; both are symbol buttons with the description in the
+                  tooltip (monochrome geometric glyphs, not emoji — record dot / stop / send). */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+                {transcribeEnabled && (
+                  <button
+                    data-testid="mic"
+                    onClick={() => void toggleRecording()}
+                    disabled={busy || transcribing}
+                    aria-label={recording ? "Stop recording" : "Record voice (speech-to-text)"}
+                    title={
+                      transcribing
+                        ? "Transcribing…"
+                        : recording
+                          ? "Stop recording"
+                          : "Record voice (speech-to-text)"
+                    }
+                    style={{
+                      fontSize: "1.1rem",
+                      lineHeight: 1,
+                      padding: "0.25rem 0.6rem",
+                      // Record convention: red dot = record, red square = stop, muted while processing.
+                      color: transcribing ? "#888" : "#b00",
+                    }}
+                  >
+                    <span aria-hidden="true">{transcribing ? "…" : recording ? "■" : "●"}</span>
+                  </button>
+                )}
+                <button
+                  data-testid="send"
+                  onClick={() => void send()}
+                  disabled={busy || !model || (input.trim() === "" && attachedImages.length === 0)}
+                  aria-label="Send message"
+                  title="Send message (Enter)"
+                  style={{ fontSize: "1.1rem", lineHeight: 1, padding: "0.25rem 0.6rem" }}
+                >
+                  <span aria-hidden="true">{busy ? "…" : "↑"}</span>
+                </button>
+              </div>
+              {/* Screen-reader-only live status: an aria-label swap on a button is not always
+                  reannounced, so the recording/transcribing transition is voiced here. */}
+              <span
+                data-testid="mic-status"
+                aria-live="polite"
+                style={{
+                  position: "absolute",
+                  width: 1,
+                  height: 1,
+                  overflow: "hidden",
+                  clip: "rect(0 0 0 0)",
+                  whiteSpace: "nowrap",
+                }}
               >
-                {busy ? "..." : "Send"}
-              </button>
+                {transcribing ? "Transcribing" : recording ? "Recording" : ""}
+              </span>
             </div>
           </section>
 

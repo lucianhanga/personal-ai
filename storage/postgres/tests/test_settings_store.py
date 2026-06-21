@@ -62,6 +62,7 @@ def test_settings_round_trip_and_partial_inherit() -> None:
                         egress_enabled=True,
                         allowed_egress_hosts=("api.example.com", "files.example.org"),
                         transcribe_enabled=True,
+                        transcribe_provider="local",
                         transcribe_base_url="http://127.0.0.1:8000/v1",
                         transcribe_model="whisper-1",
                     )
@@ -75,6 +76,7 @@ def test_settings_round_trip_and_partial_inherit() -> None:
                 assert saved.allowed_egress_hosts == ("api.example.com", "files.example.org")
                 # Voice (speech-to-text) settings round-trip (#298).
                 assert saved.transcribe_enabled is True
+                assert saved.transcribe_provider == "local"
                 assert saved.transcribe_base_url == "http://127.0.0.1:8000/v1"
                 assert saved.transcribe_model == "whisper-1"
                 # Unset fields stay None (inherit the deployment default).
