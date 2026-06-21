@@ -12,7 +12,7 @@ machine.
   ```
 - **Ollama** running with an embedding model:
   ```bash
-  ollama pull mxbai-embed-large   # 1024-dim; matches the vectors schema
+  ollama pull qwen3-embedding:0.6b   # 1024-dim; matches the vectors schema
   ```
 - Backend + UI:
   ```bash
@@ -39,9 +39,15 @@ curl -X DELETE -H "Authorization: Bearer demo" http://127.0.0.1:8765/api/v1/file
 
 ## 3. Ask with RAG
 
-With **Use my documents** on (or `"use_rag": true` via the API), the last user message is embedded,
-the top-k chunks are retrieved from pgvector, and they are passed to the model as **reference
-context** with `[n]` citations. The UI shows a **Sources** line under the answer.
+With **Use my documents** on (or `"use_rag": true` via the API), the retrieval query is embedded, the
+top-k chunks are retrieved from pgvector, and they are passed to the model as **reference context**
+with `[n]` citations. The UI shows a **Sources** line under the answer.
+
+For a **follow-up** message, retrieval is anchored on the **contextualized standalone query** (the
+last message rewritten into a self-contained request using recent history) rather than the raw
+elliptical message, so *"and the second one?"* still retrieves the right chunks. The original
+question still drives the answer; first/standalone questions skip the rewrite. See
+[the agent guide](./agent.md#query-contextualization-follow-ups).
 
 ```bash
 curl -N -X POST http://127.0.0.1:8765/api/v1/chat \
@@ -53,7 +59,7 @@ curl -N -X POST http://127.0.0.1:8765/api/v1/chat \
 ### How it works
 
 ```
-file -> parse (txt/md/pdf/docx) -> chunk (overlapping) -> embed (mxbai-embed-large)
+file -> parse (txt/md/pdf/docx) -> chunk (overlapping) -> embed (qwen3-embedding:0.6b)
      -> pgvector (cosine/HNSW)            query -> embed -> top-k -> inject as context -> answer + citations
 ```
 
@@ -80,14 +86,19 @@ API: `POST/GET/GET{id}/PATCH{id}/DELETE{id} /api/v1/conversations` (PATCH rename
 |---|---|---|
 | `PERSONALAI_DATABASE_URL` | `postgresql://personalai@127.0.0.1:5432/personalai` | Postgres DSN |
 | `PERSONALAI_EMBED_PROVIDER` | `ollama` | provider used for embeddings |
-| `PERSONALAI_EMBED_MODEL` | `mxbai-embed-large` | embedding model (must be 1024-dim) |
+| `PERSONALAI_EMBED_MODEL` | `qwen3-embedding:0.6b` | embedding model (must be 1024-dim) |
 | `PERSONALAI_MAX_UPLOAD_BYTES` | `10000000` | max upload size |
+
+The embedding (document-indexing) **engine and model**, and the max upload size, are also saved
+**per-tenant** in **Settings → Documents** (`embed_provider` / `embed_model` / `max_upload_bytes` in
+`TenantSettings`); an unset value inherits the deployment default above. The model must still produce
+1024-dim vectors to match the schema.
 
 ## 6. Troubleshooting
 
 - **Documents panel missing / 503:** the database isn't reachable — run `make db`.
 - **Upload fails with a dimension error:** the embedding model must produce 1024-dim vectors
-  (e.g. `mxbai-embed-large`). Changing models requires a new migration.
+  (e.g. `qwen3-embedding:0.6b`). Changing models requires a new migration.
 - **Unsupported file type:** only txt/md/pdf/docx are supported in v1 (richer parsing — Tika/Docling
   — can be added behind the `ModalityHandler` seam later).
 

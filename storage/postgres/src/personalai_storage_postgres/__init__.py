@@ -1,5 +1,6 @@
 """PostgreSQL + pgvector storage adapters for PersonalAI."""
 
+from personalai_storage_postgres.agent_config_store import PgAgentConfigStore
 from personalai_storage_postgres.conversation_store import (
     Conversation,
     Message,
@@ -9,6 +10,7 @@ from personalai_storage_postgres.db import apply_migrations, create_pool
 from personalai_storage_postgres.document_store import Document, PgDocumentStore
 from personalai_storage_postgres.memory_store import PgMemoryStore
 from personalai_storage_postgres.session_store import PgSessionStore
+from personalai_storage_postgres.settings_store import PgSettingsStore
 from personalai_storage_postgres.tenant_checkpoint_saver import TenantCheckpointSaver
 from personalai_storage_postgres.tenant_db import TenantDb
 from personalai_storage_postgres.tenant_store import (
@@ -25,10 +27,12 @@ __all__ = [
     "Conversation",
     "Document",
     "Message",
+    "PgAgentConfigStore",
     "PgConversationStore",
     "PgDocumentStore",
     "PgMemoryStore",
     "PgSessionStore",
+    "PgSettingsStore",
     "PgTenantStore",
     "PgVectorRepository",
     "Subject",

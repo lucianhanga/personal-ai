@@ -1,0 +1,596 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e4]:
+      - link "weather25.com" [ref=e5] [cursor=pointer]:
+        - /url: https://www.weather25.com
+        - img "weather25.com" [ref=e6]
+      - generic [ref=e7]:
+        - link "United States" [ref=e8] [cursor=pointer]:
+          - /url: https://www.weather25.com/north-america/usa
+        - link "England" [ref=e9] [cursor=pointer]:
+          - /url: https://www.weather25.com/europe/united-kingdom
+        - link "Australia" [ref=e10] [cursor=pointer]:
+          - /url: https://www.weather25.com/oceania/australia
+        - link "Canada" [ref=e11] [cursor=pointer]:
+          - /url: https://www.weather25.com/north-america/canada
+      - generic [ref=e12]:
+        - generic [ref=e13]:
+          - generic [ref=e14]: °F
+          - generic "Temperatures units" [ref=e15]:
+            - checkbox "Temperatures units" [checked]
+          - generic [ref=e17]: °C
+        - generic [ref=e18]:
+          - textbox "search" [ref=e19]:
+            - /placeholder: Search for a city
+          - generic "search" [ref=e20] [cursor=pointer]:
+            - img "Search" [ref=e21]
+    - generic [ref=e22]:
+      - generic [ref=e23]:
+        - text: Munich
+        - img "weather in Germany" [ref=e24]
+      - generic [ref=e25]: Weather tomorrow
+      - navigation [ref=e26]:
+        - list [ref=e27]:
+          - listitem [ref=e28]:
+            - link "Overview" [ref=e29] [cursor=pointer]:
+              - /url: https://www.weather25.com/europe/germany/bavaria/munich
+          - listitem [ref=e30]:
+            - link "14 Days" [ref=e31] [cursor=pointer]:
+              - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=14
+          - listitem [ref=e32]:
+            - link "June" [ref=e33] [cursor=pointer]:
+              - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=month&month=June
+          - listitem [ref=e34]:
+            - link "July" [ref=e35] [cursor=pointer]:
+              - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=month&month=July
+          - listitem [ref=e36]:
+            - link "Long range" [ref=e37] [cursor=pointer]:
+              - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=long-range
+          - listitem [ref=e38]:
+            - link "Today" [ref=e39] [cursor=pointer]:
+              - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=today
+          - listitem [ref=e40]:
+            - link "Tomorrow" [ref=e41] [cursor=pointer]:
+              - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=tomorrow
+  - generic [ref=e44]:
+    - generic [ref=e45]:
+      - img "Add to my locations" [ref=e47] [cursor=pointer]
+      - img "Share" [ref=e49] [cursor=pointer]
+    - list [ref=e50]:
+      - listitem [ref=e51]:
+        - link "Home" [ref=e52] [cursor=pointer]:
+          - /url: https://www.weather25.com
+          - generic [ref=e53]: Home
+      - listitem [ref=e54]:
+        - link "Europe" [ref=e56] [cursor=pointer]:
+          - /url: https://www.weather25.com/europe
+          - generic [ref=e57]: Europe
+      - listitem [ref=e58]:
+        - link "weather in Germany Germany" [ref=e60] [cursor=pointer]:
+          - /url: https://www.weather25.com/europe/germany
+          - img "weather in Germany" [ref=e62]
+          - generic [ref=e63]: Germany
+      - listitem [ref=e64]:
+        - link "Bavaria" [ref=e66] [cursor=pointer]:
+          - /url: https://www.weather25.com/europe/germany/bavaria
+          - generic [ref=e67]: Bavaria
+      - listitem [ref=e68]:
+        - link "Munich" [ref=e70] [cursor=pointer]:
+          - /url: https://www.weather25.com/europe/germany/bavaria/munich
+          - generic [ref=e71]: Munich
+      - listitem [ref=e72]:
+        - link "Tomorrow" [ref=e74] [cursor=pointer]:
+          - /url: /europe/germany/bavaria/munich?page=tomorrow
+          - generic [ref=e75]: Tomorrow
+  - main [ref=e77]:
+    - generic [ref=e78]:
+      - heading "The local weather in Munich tomorrow" [level=1] [ref=e79]
+      - generic [ref=e80]: Friday, 19 June 2026
+      - generic [ref=e81]:
+        - generic [ref=e82]:
+          - paragraph [ref=e83]:
+            - text: The weather tomorrow in Munich will be hot with
+            - generic [ref=e84]: temperatures reaching 30°C
+            - text: . During the evening and night time the temperatures will drop to 16°C.
+          - paragraph [ref=e85]:
+            - text: For deep dive information check out our
+            - link "hourly" [ref=e86] [cursor=pointer]:
+              - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=tomorrow#intervals-1
+            - text: weather forecast for tomorrow down the page.
+        - generic [ref=e87]:
+          - generic [ref=e88]:
+            - img "Temperature" [ref=e90]
+            - generic [ref=e91]:
+              - generic [ref=e92]: Temperature
+              - generic [ref=e93]:
+                - generic [ref=e94]: "30"
+                - text: °
+                - generic [ref=e95]: /
+                - generic [ref=e96]: "16"
+                - text: °
+          - generic [ref=e97]:
+            - img "Chance of rain" [ref=e99]
+            - generic [ref=e100]:
+              - generic [ref=e101]: Chance of rain
+              - generic [ref=e102]:
+                - generic [ref=e103]: "14"
+                - generic [ref=e104]: "%"
+          - generic [ref=e105]:
+            - img "Wind" [ref=e107]
+            - generic [ref=e108]:
+              - generic [ref=e109]: Wind
+              - generic [ref=e110]:
+                - generic [ref=e111]: "12"
+                - generic [ref=e112]: Km/h
+          - generic [ref=e113]:
+            - img "Humidity" [ref=e115]
+            - generic [ref=e116]:
+              - generic [ref=e117]: Humidity
+              - generic [ref=e118]:
+                - generic [ref=e119]: "91"
+                - generic [ref=e120]: "%"
+    - generic [ref=e123]:
+      - generic [ref=e124]:
+        - link "Previous day" [ref=e125] [cursor=pointer]:
+          - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=today
+          - text: Previous day
+        - generic [ref=e127]:
+          - button "3 Hours" [ref=e128] [cursor=pointer]
+          - button "Hour by Hour" [ref=e129] [cursor=pointer]
+        - link "Next day" [ref=e130] [cursor=pointer]:
+          - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=day#date=2026-06-20
+          - text: Next day
+      - table [ref=e133]:
+        - rowgroup [ref=e134]:
+          - row "00:00 03:00 06:00 09:00 12:00 15:00 18:00 21:00" [ref=e135]:
+            - rowheader [ref=e136]
+            - cell "00:00" [ref=e137]
+            - cell "03:00" [ref=e138]
+            - cell "06:00" [ref=e139]
+            - cell "09:00" [ref=e140]
+            - cell "12:00" [ref=e141]
+            - cell "15:00" [ref=e142]
+            - cell "18:00" [ref=e143]
+            - cell "21:00" [ref=e144]
+        - rowgroup [ref=e145]:
+          - row "Temperature 18°C 17°C 16°C 23°C 28°C 30°C 29°C 22°C" [ref=e146]:
+            - rowheader "Temperature" [ref=e147]
+            - cell "18°C" [ref=e148]:
+              - generic [ref=e149]: "18"
+              - text: °C
+            - cell "17°C" [ref=e150]:
+              - generic [ref=e151]: "17"
+              - text: °C
+            - cell "16°C" [ref=e152]:
+              - generic [ref=e153]: "16"
+              - text: °C
+            - cell "23°C" [ref=e154]:
+              - generic [ref=e155]: "23"
+              - text: °C
+            - cell "28°C" [ref=e156]:
+              - generic [ref=e157]: "28"
+              - text: °C
+            - cell "30°C" [ref=e158]:
+              - generic [ref=e159]: "30"
+              - text: °C
+            - cell "29°C" [ref=e160]:
+              - generic [ref=e161]: "29"
+              - text: °C
+            - cell "22°C" [ref=e162]:
+              - generic [ref=e163]: "22"
+              - text: °C
+          - row "Weather Clear Clear Clear Clear Sunny Sunny Sunny Sunny Sunny Sunny Sunny Sunny Sunny Sunny Sunny Sunny" [ref=e164]:
+            - rowheader "Weather" [ref=e165]
+            - cell "Clear Clear" [ref=e166]:
+              - img "Clear" [ref=e167]
+              - generic [ref=e168]: Clear
+            - cell "Clear Clear" [ref=e169]:
+              - img "Clear" [ref=e170]
+              - generic [ref=e171]: Clear
+            - cell "Sunny Sunny" [ref=e172]:
+              - img "Sunny" [ref=e173]
+              - generic [ref=e174]: Sunny
+            - cell "Sunny Sunny" [ref=e175]:
+              - img "Sunny" [ref=e176]
+              - generic [ref=e177]: Sunny
+            - cell "Sunny Sunny" [ref=e178]:
+              - img "Sunny" [ref=e179]
+              - generic [ref=e180]: Sunny
+            - cell "Sunny Sunny" [ref=e181]:
+              - img "Sunny" [ref=e182]
+              - generic [ref=e183]: Sunny
+            - cell "Sunny Sunny" [ref=e184]:
+              - img "Sunny" [ref=e185]
+              - generic [ref=e186]: Sunny
+            - cell "Sunny Sunny" [ref=e187]:
+              - img "Sunny" [ref=e188]
+              - generic [ref=e189]: Sunny
+          - row "Chance of rain 12% 14% 14% 5% 2% 1% 2% 10%" [ref=e190]:
+            - rowheader "Chance of rain" [ref=e191]
+            - cell "12%" [ref=e192]
+            - cell "14%" [ref=e193]
+            - cell "14%" [ref=e194]
+            - cell "5%" [ref=e195]
+            - cell "2%" [ref=e196]
+            - cell "1%" [ref=e197]
+            - cell "2%" [ref=e198]
+            - cell "10%" [ref=e199]
+          - row "Precipitation 0 mm 0 mm 0 mm 0 mm 0 mm 0 mm 0 mm 0 mm" [ref=e200]:
+            - rowheader "Precipitation" [ref=e201]
+            - cell "0 mm" [ref=e202]
+            - cell "0 mm" [ref=e203]
+            - cell "0 mm" [ref=e204]
+            - cell "0 mm" [ref=e205]
+            - cell "0 mm" [ref=e206]
+            - cell "0 mm" [ref=e207]
+            - cell "0 mm" [ref=e208]
+            - cell "0 mm" [ref=e209]
+          - row "Humidity 87% 91% 90% 66% 52% 47% 55% 80%" [ref=e210]:
+            - rowheader "Humidity" [ref=e211]
+            - cell "87%" [ref=e212]
+            - cell "91%" [ref=e213]
+            - cell "90%" [ref=e214]
+            - cell "66%" [ref=e215]
+            - cell "52%" [ref=e216]
+            - cell "47%" [ref=e217]
+            - cell "55%" [ref=e218]
+            - cell "80%" [ref=e219]
+          - row "Wind 8Km/h 6Km/h 6Km/h 3Km/h 5Km/h 10Km/h 12Km/h 9Km/h" [ref=e220]:
+            - rowheader "Wind" [ref=e221]
+            - cell "8Km/h" [ref=e222]
+            - cell "6Km/h" [ref=e223]
+            - cell "6Km/h" [ref=e224]
+            - cell "3Km/h" [ref=e225]
+            - cell "5Km/h" [ref=e226]
+            - cell "10Km/h" [ref=e227]
+            - cell "12Km/h" [ref=e228]
+            - cell "9Km/h" [ref=e229]
+          - row "Wind Gust 17Km/h 14Km/h 12Km/h 4Km/h 5Km/h 12Km/h 14Km/h 20Km/h" [ref=e230]:
+            - rowheader "Wind Gust" [ref=e231]
+            - cell "17Km/h" [ref=e232]
+            - cell "14Km/h" [ref=e233]
+            - cell "12Km/h" [ref=e234]
+            - cell "4Km/h" [ref=e235]
+            - cell "5Km/h" [ref=e236]
+            - cell "12Km/h" [ref=e237]
+            - cell "14Km/h" [ref=e238]
+            - cell "20Km/h" [ref=e239]
+          - row "Wind Degree 116° Wind Degree 127° Wind Degree 162° Wind Degree 177° Wind Degree 62° Wind Degree 48° Wind Degree 70° Wind Degree 226° Wind Degree" [ref=e240]:
+            - rowheader "Wind Degree" [ref=e241]
+            - cell "116° Wind Degree" [ref=e242]:
+              - text: 116°
+              - img "Wind Degree" [ref=e244]
+            - cell "127° Wind Degree" [ref=e245]:
+              - text: 127°
+              - img "Wind Degree" [ref=e247]
+            - cell "162° Wind Degree" [ref=e248]:
+              - text: 162°
+              - img "Wind Degree" [ref=e250]
+            - cell "177° Wind Degree" [ref=e251]:
+              - text: 177°
+              - img "Wind Degree" [ref=e253]
+            - cell "62° Wind Degree" [ref=e254]:
+              - text: 62°
+              - img "Wind Degree" [ref=e256]
+            - cell "48° Wind Degree" [ref=e257]:
+              - text: 48°
+              - img "Wind Degree" [ref=e259]
+            - cell "70° Wind Degree" [ref=e260]:
+              - text: 70°
+              - img "Wind Degree" [ref=e262]
+            - cell "226° Wind Degree" [ref=e263]:
+              - text: 226°
+              - img "Wind Degree" [ref=e265]
+          - row "Wind Direction ESE SE SSE S ENE NE ENE SW" [ref=e266]:
+            - rowheader "Wind Direction" [ref=e267]
+            - cell "ESE" [ref=e268]
+            - cell "SE" [ref=e269]
+            - cell "SSE" [ref=e270]
+            - cell "S" [ref=e271]
+            - cell "ENE" [ref=e272]
+            - cell "NE" [ref=e273]
+            - cell "ENE" [ref=e274]
+            - cell "SW" [ref=e275]
+          - row "Cloud Cover 4% 3% 3% 2% 2% 4% 2% 9%" [ref=e276]:
+            - rowheader "Cloud Cover" [ref=e277]
+            - cell "4%" [ref=e278]
+            - cell "3%" [ref=e279]
+            - cell "3%" [ref=e280]
+            - cell "2%" [ref=e281]
+            - cell "2%" [ref=e282]
+            - cell "4%" [ref=e283]
+            - cell "2%" [ref=e284]
+            - cell "9%" [ref=e285]
+          - row "UV Index 0 0 0 3 8 7 2 0" [ref=e286]:
+            - rowheader "UV Index" [ref=e287]
+            - cell "0" [ref=e288]
+            - cell "0" [ref=e289]
+            - cell "0" [ref=e290]
+            - cell "3" [ref=e291]
+            - cell "8" [ref=e292]
+            - cell "7" [ref=e293]
+            - cell "2" [ref=e294]
+            - cell "0" [ref=e295]
+          - row "Visibility 10 Km 10 Km 10 Km 10 Km 10 Km 10 Km 10 Km 10 Km" [ref=e296]:
+            - rowheader "Visibility" [ref=e297]
+            - cell "10 Km" [ref=e298]
+            - cell "10 Km" [ref=e299]
+            - cell "10 Km" [ref=e300]
+            - cell "10 Km" [ref=e301]
+            - cell "10 Km" [ref=e302]
+            - cell "10 Km" [ref=e303]
+            - cell "10 Km" [ref=e304]
+            - cell "10 Km" [ref=e305]
+    - generic [ref=e307]:
+      - generic [ref=e308]: Check Munich's weather in other day
+      - generic [ref=e309]: Click on a day for an hourly weather forecast
+      - generic [ref=e310]:
+        - button "Previous" [disabled] [ref=e312] [cursor=pointer]
+        - generic [ref=e315]:
+          - link "Thursday Jun 18 Sunny 0.3 mm 28° / 14°" [ref=e316] [cursor=pointer]:
+            - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=today
+            - generic [ref=e317]:
+              - generic [ref=e318]: Thursday
+              - generic [ref=e319]: Jun 18
+              - img "Sunny" [ref=e321]
+              - generic [ref=e322]: 0.3 mm
+              - generic [ref=e323]:
+                - generic [ref=e324]: 28°
+                - text: /
+                - generic [ref=e325]: 14°
+          - link "Friday Jun 19 Sunny 0 mm 30° / 16°" [ref=e326] [cursor=pointer]:
+            - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=tomorrow
+            - generic [ref=e327]:
+              - generic [ref=e328]: Friday
+              - generic [ref=e329]: Jun 19
+              - img "Sunny" [ref=e331]
+              - generic [ref=e332]: 0 mm
+              - generic [ref=e333]:
+                - generic [ref=e334]: 30°
+                - text: /
+                - generic [ref=e335]: 16°
+          - link "Saturday Jun 20 Sunny 0.8 mm 30° / 16°" [ref=e336] [cursor=pointer]:
+            - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=day#date=2026-06-20
+            - generic [ref=e337]:
+              - generic [ref=e338]: Saturday
+              - generic [ref=e339]: Jun 20
+              - img "Sunny" [ref=e341]
+              - generic [ref=e342]: 0.8 mm
+              - generic [ref=e343]:
+                - generic [ref=e344]: 30°
+                - text: /
+                - generic [ref=e345]: 16°
+          - link "Sunday Jun 21 Sunny 0.3 mm 31° / 18°" [ref=e346] [cursor=pointer]:
+            - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=day#date=2026-06-21
+            - generic [ref=e347]:
+              - generic [ref=e348]: Sunday
+              - generic [ref=e349]: Jun 21
+              - img "Sunny" [ref=e351]
+              - generic [ref=e352]: 0.3 mm
+              - generic [ref=e353]:
+                - generic [ref=e354]: 31°
+                - text: /
+                - generic [ref=e355]: 18°
+          - link "Monday Jun 22 Patchy rain possible 0.8 mm 30° / 16°" [ref=e356] [cursor=pointer]:
+            - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=day#date=2026-06-22
+            - generic [ref=e357]:
+              - generic [ref=e358]: Monday
+              - generic [ref=e359]: Jun 22
+              - img "Patchy rain possible" [ref=e361]
+              - generic [ref=e362]: 0.8 mm
+              - generic [ref=e363]:
+                - generic [ref=e364]: 30°
+                - text: /
+                - generic [ref=e365]: 16°
+          - link "Tuesday Jun 23 Sunny 0.3 mm 28° / 16°" [ref=e366] [cursor=pointer]:
+            - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=day#date=2026-06-23
+            - generic [ref=e367]:
+              - generic [ref=e368]: Tuesday
+              - generic [ref=e369]: Jun 23
+              - img "Sunny" [ref=e371]
+              - generic [ref=e372]: 0.3 mm
+              - generic [ref=e373]:
+                - generic [ref=e374]: 28°
+                - text: /
+                - generic [ref=e375]: 16°
+          - link "Wednesday Jun 24 Sunny 0 mm 29° / 17°" [ref=e376] [cursor=pointer]:
+            - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=day#date=2026-06-24
+            - generic [ref=e377]:
+              - generic [ref=e378]: Wednesday
+              - generic [ref=e379]: Jun 24
+              - img "Sunny" [ref=e381]
+              - generic [ref=e382]: 0 mm
+              - generic [ref=e383]:
+                - generic [ref=e384]: 29°
+                - text: /
+                - generic [ref=e385]: 17°
+          - link "Thursday Jun 25 Patchy rain possible 0 mm 28° / 17°" [ref=e386] [cursor=pointer]:
+            - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=day#date=2026-06-25
+            - generic [ref=e387]:
+              - generic [ref=e388]: Thursday
+              - generic [ref=e389]: Jun 25
+              - img "Patchy rain possible" [ref=e391]
+              - generic [ref=e392]: 0 mm
+              - generic [ref=e393]:
+                - generic [ref=e394]: 28°
+                - text: /
+                - generic [ref=e395]: 17°
+          - link "Friday Jun 26 Sunny 0 mm 25° / 15°" [ref=e396] [cursor=pointer]:
+            - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=day#date=2026-06-26
+            - generic [ref=e397]:
+              - generic [ref=e398]: Friday
+              - generic [ref=e399]: Jun 26
+              - img "Sunny" [ref=e401]
+              - generic [ref=e402]: 0 mm
+              - generic [ref=e403]:
+                - generic [ref=e404]: 25°
+                - text: /
+                - generic [ref=e405]: 15°
+          - link "Saturday Jun 27 Sunny 0 mm 28° / 13°" [ref=e406] [cursor=pointer]:
+            - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=day#date=2026-06-27
+            - generic [ref=e407]:
+              - generic [ref=e408]: Saturday
+              - generic [ref=e409]: Jun 27
+              - img "Sunny" [ref=e411]
+              - generic [ref=e412]: 0 mm
+              - generic [ref=e413]:
+                - generic [ref=e414]: 28°
+                - text: /
+                - generic [ref=e415]: 13°
+          - link "Sunday Jun 28 Sunny 0 mm 31° / 14°" [ref=e416] [cursor=pointer]:
+            - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=day#date=2026-06-28
+            - generic [ref=e417]:
+              - generic [ref=e418]: Sunday
+              - generic [ref=e419]: Jun 28
+              - img "Sunny" [ref=e421]
+              - generic [ref=e422]: 0 mm
+              - generic [ref=e423]:
+                - generic [ref=e424]: 31°
+                - text: /
+                - generic [ref=e425]: 14°
+          - link "Monday Jun 29 Patchy light rain with thunder 6.3 mm 31° / 17°" [ref=e426] [cursor=pointer]:
+            - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=day#date=2026-06-29
+            - generic [ref=e427]:
+              - generic [ref=e428]: Monday
+              - generic [ref=e429]: Jun 29
+              - img "Patchy light rain with thunder" [ref=e431]
+              - generic [ref=e432]: 6.3 mm
+              - generic [ref=e433]:
+                - generic [ref=e434]: 31°
+                - text: /
+                - generic [ref=e435]: 17°
+          - link "Tuesday Jun 30 Partly cloudy 13 mm 26° / 17°" [ref=e436] [cursor=pointer]:
+            - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=day#date=2026-06-30
+            - generic [ref=e437]:
+              - generic [ref=e438]: Tuesday
+              - generic [ref=e439]: Jun 30
+              - img "Partly cloudy" [ref=e441]
+              - generic [ref=e442]: 13 mm
+              - generic [ref=e443]:
+                - generic [ref=e444]: 26°
+                - text: /
+                - generic [ref=e445]: 17°
+          - link "Wednesday Jul 1 Moderate or heavy rain shower 7.3 mm 29° / 17°" [ref=e446] [cursor=pointer]:
+            - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=day#date=2026-07-01
+            - generic [ref=e447]:
+              - generic [ref=e448]: Wednesday
+              - generic [ref=e449]: Jul 1
+              - img "Moderate or heavy rain shower" [ref=e451]
+              - generic [ref=e452]: 7.3 mm
+              - generic [ref=e453]:
+                - generic [ref=e454]: 29°
+                - text: /
+                - generic [ref=e455]: 17°
+          - link "Next Month >>" [ref=e456] [cursor=pointer]:
+            - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=long-range
+            - generic [ref=e458]:
+              - text: Next
+              - text: Month >>
+        - button "Next Day" [ref=e460] [cursor=pointer]
+    - generic [ref=e463]:
+      - heading "The weather in Munich tomorrow - FAQ" [level=2] [ref=e464]
+      - generic [ref=e465]:
+        - generic [ref=e467] [cursor=pointer]: What is the weather tomorrow in Munich?
+        - generic [ref=e469] [cursor=pointer]: What is tomorrow's highest and lowest temperature in Munich?
+        - generic [ref=e471] [cursor=pointer]: Will it be raining tomorrow in Munich?
+        - generic [ref=e473] [cursor=pointer]: Will it be windy tomorrow in Munich?
+        - generic [ref=e475] [cursor=pointer]: How many hours of sunlight tomorrow in Munich?
+        - generic [ref=e477] [cursor=pointer]: What time is the sunrise and sunset tomorrow in Munich?
+    - generic [ref=e480]:
+      - heading "Sunrise and sunset time in Munich tomorrow" [level=2] [ref=e481]
+      - paragraph [ref=e483]: What time is the sunset and sunrise in Munich tomorrow? The sun will rise at 05:13 and will set at 21:17. There will be 16 hours of sunlight in Munich.
+      - generic [ref=e484]:
+        - generic [ref=e485]:
+          - img "Sunrise" [ref=e487]
+          - generic [ref=e488]: Sunrise
+          - generic [ref=e489]: 05:13
+        - generic [ref=e491]:
+          - img "Sunset" [ref=e492]
+          - generic [ref=e493]: Sunset
+          - generic [ref=e494]: 21:17
+    - heading "Munich tomorrow weather" [level=2] [ref=e496]
+    - generic [ref=e499]:
+      - generic [ref=e500]:
+        - generic [ref=e501]: Morning
+        - img "Sunny" [ref=e502]
+      - generic [ref=e503]:
+        - paragraph [ref=e504]: The temperature in Munich tomorrow in the early morning is 16°C.
+        - paragraph [ref=e505]: If you take into account factors such as wind, humidity and other weather conditions, the temperatures can feel like 16°C.
+        - paragraph [ref=e506]: The chance of rain in Munich in the morning is 14%, and the wind will blow at 6km/h.
+    - generic [ref=e509]:
+      - generic [ref=e510]:
+        - generic [ref=e511]: Noon
+        - img "Sunny" [ref=e512]
+      - paragraph [ref=e514]: The temperature in Munich tomorrow at noon time is 28°C and it will feel like 29°C. The humidity will be around 52% with wind speed of 5km/h.
+    - generic [ref=e517]:
+      - generic [ref=e518]:
+        - generic [ref=e519]: Evening
+        - img "Sunny" [ref=e520]
+      - generic [ref=e521]:
+        - paragraph [ref=e522]: The temperature in Munich tomorrow's evening will get to 30°C.
+        - paragraph [ref=e523]: The chance of rain in Munich in the evening time is 1%, with wind speed of 10km/h.
+    - generic [ref=e526]:
+      - generic [ref=e527]:
+        - generic [ref=e528]: Night
+        - img "Sunny" [ref=e529]
+      - paragraph [ref=e531]: The night temperature in Munich tomorrow is 22°C with a wind speed of 9km/h.
+    - generic [ref=e532]:
+      - heading "Clothing recommendation for Munich" [level=2] [ref=e533]
+      - generic [ref=e534]: Friday, 19 June 2026
+      - generic [ref=e535]:
+        - generic [ref=e536]:
+          - img "Sunglasses" [ref=e538]
+          - generic [ref=e539]: Sunglasses
+        - generic [ref=e540]:
+          - img "T-Shirt" [ref=e542]
+          - generic [ref=e543]: T-Shirt
+    - generic [ref=e544]:
+      - generic [ref=e545]: More about the weather in Munich
+      - generic [ref=e546]:
+        - link "Munich 14 day weather" [ref=e547] [cursor=pointer]:
+          - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=14
+          - text: Munich 14 day weather
+        - link "Long range weather for Munich" [ref=e549] [cursor=pointer]:
+          - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=long-range
+          - text: Long range weather for Munich
+        - link "Munich weather in June" [ref=e551] [cursor=pointer]:
+          - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=month&month=June
+          - text: Munich weather in June
+        - link "Munich weather in July" [ref=e553] [cursor=pointer]:
+          - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=month&month=July
+          - text: Munich weather in July
+        - link "Munich Webcam" [ref=e555] [cursor=pointer]:
+          - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=webcam
+          - text: Munich Webcam
+        - link "Hotels in Munich" [ref=e557] [cursor=pointer]:
+          - /url: https://www.weather25.com/europe/germany/bavaria/munich?page=hotels
+          - text: Hotels in Munich
+  - contentinfo [ref=e559]:
+    - generic [ref=e560]:
+      - generic [ref=e561]:
+        - generic [ref=e562]:
+          - img "weather25.com" [ref=e563]
+          - generic [ref=e564]: Munich weather data is sourced from official meteorological authorities worldwide, ensuring accuracy and reliability.
+        - generic [ref=e565]:
+          - generic [ref=e566]:
+            - generic [ref=e567]: Popular Cities
+            - generic [ref=e569]:
+              - link "› New York" [ref=e570] [cursor=pointer]:
+                - /url: https://www.weather25.com/north-america/usa/new-york
+              - link "› London" [ref=e571] [cursor=pointer]:
+                - /url: https://www.weather25.com/europe/united-kingdom/london
+              - link "› Sydney" [ref=e572] [cursor=pointer]:
+                - /url: https://www.weather25.com/oceania/australia/new-south-wales/sydney
+              - link "› Singapore" [ref=e573] [cursor=pointer]:
+                - /url: https://www.weather25.com/asia/singapore
+          - generic [ref=e574]:
+            - generic [ref=e575]: Weather25.com
+            - link "› Terms and conditions" [ref=e576] [cursor=pointer]:
+              - /url: https://www.weather25.com/terms
+            - link "› Privacy Policy" [ref=e577] [cursor=pointer]:
+              - /url: https://www.weather25.com/privacy
+            - link "› Cookie Policy" [ref=e578] [cursor=pointer]:
+              - /url: https://www.weather25.com/cookie-policy
+            - link "› Contact" [ref=e579] [cursor=pointer]:
+              - /url: https://www.weather25.com/contact-us
+      - generic [ref=e581]: Copyright © 2026, weather25.com

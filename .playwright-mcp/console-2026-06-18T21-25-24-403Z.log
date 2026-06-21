@@ -1,0 +1,9 @@
+[     912ms] Uncaught Error: Stop the wrapper script on User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/149.0.0.0 Safari/537.36
+    at <anonymous> (https://cdn.adverge.ai/adv.weather25.js:14:149477)
+    at 3412 (https://cdn.adverge.ai/adv.weather25.js:14:149551)
+    at n (https://cdn.adverge.ai/adv.weather25.js:13:4209)
+    at <anonymous> (https://cdn.adverge.ai/adv.weather25.js:5:98)
+    at n.O (https://cdn.adverge.ai/adv.weather25.js:13:4463)
+    at e (https://cdn.adverge.ai/adv.weather25.js:13:5188)
+    at <anonymous> (https://cdn.adverge.ai/adv.weather25.js:17:34)
+    at <anonymous> (https://cdn.adverge.ai/adv.weather25.js:90:2)

@@ -328,9 +328,9 @@ def test_chat_empty_completion_emits_notice() -> None:
 
 
 def test_chat_with_graph_enabled_streams_plan_answer_critique() -> None:
-    # M8.1b: with agent_graph_enabled the tool path runs the planner -> researcher -> critic graph,
-    # so the stream carries plan + critique steps around the answer (in addition to the done frame).
-    config = CoreConfig(auth_token=TOKEN, agent_graph_enabled=True)
+    # M8.1b/#290: with agent_mode="multi" the tool path runs the planner -> researcher -> critic
+    # graph, so the stream carries plan + critique steps around the answer (plus the done frame).
+    config = CoreConfig(auth_token=TOKEN, agent_mode="multi")
     boot = bootstrap(config=config)
     boot.registries.model_providers.register("fake", FakeModelProvider(name="fake"), overwrite=True)
     client = TestClient(create_app(boot))
@@ -423,3 +423,54 @@ def test_resume_without_db_is_503() -> None:
     )
     resp = client.post("/api/v1/chat/some-run/resume", json={"decision": "approve"})
     assert resp.status_code == 503
+
+
+def test_context_breakdown_summarizes_non_empty_components() -> None:
+    # The context view (#290) lists each non-empty component with its size; empties are skipped.
+    from personalai_backend.app import _context_breakdown
+    from personalai_contracts.ports import ChatMessage, Role
+
+    bd = _context_breakdown(
+        [
+            ("Grounding", [ChatMessage(Role.SYSTEM, "x" * 100)]),
+            ("Empty", []),
+            ("Documents", [ChatMessage(Role.SYSTEM, "y" * 50), ChatMessage(Role.SYSTEM, "z" * 50)]),
+        ]
+    )
+    labels = {i["label"]: i for i in bd["items"]}
+    assert "Empty" not in labels
+    assert labels["Grounding"]["chars"] == 100
+    assert labels["Documents"]["count"] == 2 and labels["Documents"]["chars"] == 100
+    assert bd["total_chars"] == 200
+
+
+def test_followup_adds_an_interpreted_request_to_the_context() -> None:
+    # Option A: a follow-up (prior turn exists) is contextualized into a standalone "Interpreted
+    # request" that anchors retrieval/tools and shows up in the context breakdown.
+    client = _app_with_provider("fake", FakeModelProvider(name="fake"))
+    body = {
+        "messages": [
+            {"role": "user", "content": "weather in munich?"},
+            {"role": "assistant", "content": "It's sunny."},
+            {"role": "user", "content": "and tomorrow?"},
+        ],
+        "provider": "fake",
+    }
+    with client.stream(
+        "POST", "/api/v1/chat", headers={"Authorization": f"Bearer {TOKEN}"}, json=body
+    ) as resp:
+        assert resp.status_code == 200
+        text = "".join(resp.iter_text())
+    assert "Interpreted request" in text  # the standalone query was added
+
+
+def test_single_question_skips_the_interpreted_request() -> None:
+    # A first/only question is already standalone -> no extra rewrite call, no interpreted-request.
+    client = _app_with_provider("fake", FakeModelProvider(name="fake"))
+    body = {"messages": [{"role": "user", "content": "weather in munich?"}], "provider": "fake"}
+    with client.stream(
+        "POST", "/api/v1/chat", headers={"Authorization": f"Bearer {TOKEN}"}, json=body
+    ) as resp:
+        assert resp.status_code == 200
+        text = "".join(resp.iter_text())
+    assert "Interpreted request" not in text

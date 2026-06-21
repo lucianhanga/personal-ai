@@ -140,7 +140,7 @@ def test_durable_human_gate_resume_is_tenant_isolated() -> None:
     # Sequential (non-nested) TestClient contexts: nesting would re-run the app lifespan and close
     # the shared DB pool. The suspended run lives durably in Postgres between contexts.
     boot = bootstrap(
-        config=CoreConfig(app_mode="hosted", agent_graph_enabled=True, agent_human_gate=True)
+        config=CoreConfig(app_mode="hosted", agent_mode="multi", agent_human_gate=True)
     )
     boot.registries.model_providers.register("fake", FakeModelProvider(name="fake"), overwrite=True)
     app = create_app(boot)

@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 CHAT_MODEL = os.environ.get("PERSONALAI_IT_MODEL", "gemma3:latest")
-EMBED_MODEL = os.environ.get("PERSONALAI_IT_EMBED", "mxbai-embed-large")
+EMBED_MODEL = os.environ.get("PERSONALAI_IT_EMBED", "qwen3-embedding:0.6b")
 
 
 def test_list_models_returns_local_models() -> None:

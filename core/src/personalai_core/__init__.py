@@ -6,9 +6,16 @@ and resolve them by name at the composition root.
 """
 
 from personalai_core.agent import AgentEvent, run_agent
-from personalai_core.config import CoreConfig
+from personalai_core.config import CoreConfig, effective_config
 from personalai_core.gateway import InProcessExecutor, RegisteredTool, ToolGateway
-from personalai_core.graph import GraphState, run_graph
+from personalai_core.graph import (
+    AGENT_NAMES,
+    DEFAULT_AGENT_PROMPTS,
+    TOOL_USING_AGENTS,
+    GraphState,
+    resolve_prompts,
+    run_graph,
+)
 from personalai_core.memory import split_recent, summarize
 from personalai_core.memory_extraction import extract_facts, recall, remember
 from personalai_core.registries import Registries
@@ -18,9 +25,13 @@ from personalai_core.retrieval import VectorRetriever
 __version__ = "0.0.0"
 
 __all__ = [
+    "AGENT_NAMES",
+    "DEFAULT_AGENT_PROMPTS",
+    "TOOL_USING_AGENTS",
     "AgentEvent",
     "CoreConfig",
     "GraphState",
+    "resolve_prompts",
     "InProcessExecutor",
     "RegisteredTool",
     "Registries",
@@ -29,6 +40,7 @@ __all__ = [
     "ToolGateway",
     "VectorRetriever",
     "__version__",
+    "effective_config",
     "extract_facts",
     "run_agent",
     "run_graph",

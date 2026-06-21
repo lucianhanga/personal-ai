@@ -86,6 +86,51 @@ def test_agent_calls_tool_then_answers() -> None:
     assert events[-1].answer == "The answer is 437."
 
 
+class _NarratingScripted(FakeModelProvider):
+    """Turn 1 narrates its tool use AND calls a tool; turn 2 gives the final answer."""
+
+    def __init__(self) -> None:
+        super().__init__(name="narrate")
+        self._n = 0
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        self._n += 1
+        if self._n == 1:
+            return GenerationResult(
+                text="Let me calculate that for you.",
+                model=request.model,
+                tool_calls=[ToolCallRequest(name="calculator", arguments={"expression": "23*19"})],
+            )
+        return GenerationResult(text="The answer is 437.", model=request.model)
+
+
+def test_tool_turn_narration_is_preserved_as_reasoning() -> None:
+    # A turn that calls a tool is the model narrating ("let me…"). The narration streams (the
+    # consumer drops it from the answer on the tool_call) and is also re-emitted as reasoning so it
+    # lands in the trace. The final answer is the post-tool turn's text.
+    async def _run() -> list[AgentEvent]:
+        return [
+            ev
+            async for ev in run_agent(
+                messages=[ChatMessage(Role.USER, "what is 23*19?")],
+                provider=_NarratingScripted(),
+                model="m",
+                gateway=_gateway(),
+                tools=[RegisteredTool(CALC, _Calc())],
+            )
+        ]
+
+    events = asyncio.run(_run())
+    # The narration is preserved as a reasoning event.
+    reasoning = next(e for e in events if e.type == "reasoning")
+    assert reasoning.thinking == "Let me calculate that for you."
+    # Exactly one tool call (the consumer resets the answer on it).
+    assert sum(1 for e in events if e.type == "tool_call") == 1
+    # The final answer is the post-tool turn's text, not the narration.
+    final = next(e for e in events if e.type == "final")
+    assert final.answer == "The answer is 437."
+
+
 def test_agent_answers_directly_without_tools() -> None:
     async def _run() -> list[AgentEvent]:
         return [

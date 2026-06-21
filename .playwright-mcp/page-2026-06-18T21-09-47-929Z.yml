@@ -1,0 +1,878 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e3]:
+      - link "Go to start page" [ref=e4] [cursor=pointer]:
+        - /url: /
+      - generic [ref=e5]:
+        - link "Map" [ref=e6] [cursor=pointer]:
+          - /url: /
+          - generic [ref=e7]: Map
+        - link "Locations" [ref=e8] [cursor=pointer]:
+          - /url: /locations
+          - generic [ref=e9]: Locations
+      - generic [ref=e10]:
+        - generic [ref=e11] [cursor=pointer]:
+          - img [ref=e12]
+          - generic [ref=e14]: Search
+        - generic [ref=e15] [cursor=pointer]:
+          - generic [ref=e16]: Favorites
+          - img [ref=e18]
+        - generic [ref=e20] [cursor=pointer]:
+          - generic [ref=e21]: Settings
+          - img [ref=e23]
+        - generic [ref=e25] [cursor=pointer]:
+          - generic [ref=e26]: Account
+          - img [ref=e28]
+        - generic [ref=e30] [cursor=pointer]:
+          - generic [ref=e31]: More
+          - img [ref=e33]
+  - main [ref=e35]:
+    - generic [ref=e36]:
+      - generic [ref=e38]:
+        - link "View on map" [ref=e39] [cursor=pointer]:
+          - /url: /#12/47.9600/12.8000/sp:P894
+          - img [ref=e40]
+          - text: View on map
+        - button "Add favorite" [ref=e45] [cursor=pointer]:
+          - img [ref=e46]
+          - generic [ref=e48]: Add favorite
+        - link "Facebook" [ref=e49] [cursor=pointer]:
+          - /url: https://www.facebook.com/dialog/share?app_id=162630957105069&display=page&href=https://www.windfinder.com/forecast/waginger_see%3Futm_source=facebook%26utm_medium=web%26utm_campaign=fb-share&redirect_uri=https://www.windfinder.com/forecast/waginger_see%3Futm_source=facebook%26utm_medium=web%26utm_campaign=fb-share
+          - img [ref=e50]
+          - text: Facebook
+      - generic [ref=e54]:
+        - heading "Wind & weather forecast Waginger See" [level=1] [ref=e56]:
+          - generic [ref=e57]: Wind & weather forecast
+          - text: Waginger See
+        - generic [ref=e61]:
+          - generic [ref=e63]:
+            - generic [ref=e64]:
+              - img "50°" [ref=e65]
+              - img [ref=e66]
+            - generic [ref=e82]:
+              - generic [ref=e83]: 4 kts
+              - generic [ref=e84]: Northeast
+          - generic [ref=e85]: Report from local weather station at 22:00 local time
+      - list [ref=e91]:
+        - listitem [ref=e92]:
+          - img [ref=e94]
+          - generic [ref=e96]: Sunrise
+          - generic [ref=e97]: 05:05
+        - listitem [ref=e98]:
+          - img [ref=e100]
+          - generic [ref=e102]: Sunset
+          - generic [ref=e103]: 21:14
+        - listitem [ref=e104]:
+          - img [ref=e106]
+          - generic [ref=e110]: Local time
+          - generic [ref=e111]:
+            - text: 23:09
+            - generic [ref=e112]: (UTC +2)
+        - listitem [ref=e113]:
+          - img [ref=e115]
+          - generic [ref=e117]: Elevation
+          - generic [ref=e118]: 496 m
+    - navigation [ref=e121]:
+      - list [ref=e122]:
+        - listitem [ref=e123]:
+          - link "Forecast" [ref=e124] [cursor=pointer]:
+            - /url: /forecast/waginger_see
+            - img [ref=e125]
+            - generic [ref=e127]: Forecast
+        - listitem [ref=e128]:
+          - link "Superforecast" [ref=e129] [cursor=pointer]:
+            - /url: /weatherforecast/waginger_see
+            - img [ref=e130]
+            - generic [ref=e134]: Superforecast
+        - listitem [ref=e135]:
+          - link "Report" [ref=e136] [cursor=pointer]:
+            - /url: /report/waginger_see
+            - img [ref=e137]
+            - generic [ref=e142]: Report
+        - listitem [ref=e143]:
+          - link "Statistics" [ref=e144] [cursor=pointer]:
+            - /url: /windstatistics/waginger_see
+            - img [ref=e145]
+            - generic [ref=e149]: Statistics
+        - listitem [ref=e150]:
+          - link "Webcams" [ref=e151] [cursor=pointer]:
+            - /url: /webcams/waginger_see
+            - img [ref=e152]
+            - generic [ref=e154]: Webcams
+    - generic [ref=e157]:
+      - generic [ref=e158]:
+        - generic [ref=e159]:
+          - generic [ref=e160]:
+            - heading "Daily forecast" [level=2] [ref=e161]
+            - text: as
+          - generic [ref=e162]:
+            - button "Tables" [ref=e163] [cursor=pointer]:
+              - img [ref=e164]
+              - text: Tables
+            - link "Bird's-eye" [ref=e166] [cursor=pointer]:
+              - /url: /forecast/waginger_see/birdseye
+              - img [ref=e167]
+              - text: Bird's-eye
+        - generic [ref=e169]:
+          - button "Print forecast" [ref=e171] [cursor=pointer]:
+            - img [ref=e172]
+            - text: Print forecast
+          - link "Embed forecast" [ref=e174] [cursor=pointer]:
+            - /url: /widget/configurator/waginger_see
+            - img [ref=e175]
+            - text: Embed forecast
+      - generic [ref=e179]:
+        - generic:
+          - generic: Thu, Jun 18
+          - generic: Fri, Jun 19
+          - generic: Sat, Jun 20
+          - generic: Sun, Jun 21
+          - generic: Mon, Jun 22
+          - generic: Tue, Jun 23
+          - generic: Wed, Jun 24
+          - generic: Thu, Jun 25
+          - generic: Fri, Jun 26
+          - generic: Sat, Jun 27
+      - generic [ref=e193]:
+        - generic [ref=e194]: "Last update: 18:34 local time / Next update: 00:49 local time"
+        - text: / This forecast is based on the GFS model
+      - generic [ref=e197]:
+        - generic [ref=e198]:
+          - generic [ref=e201]: Local time
+          - link "Wind direction" [ref=e203] [cursor=pointer]:
+            - /url: /wind/windspeed
+          - link "Wind speed (kts)" [ref=e205] [cursor=pointer]:
+            - /url: /wind/windspeed
+          - link "Wind gusts (max kts)" [ref=e207] [cursor=pointer]:
+            - /url: /wind/windspeed
+            - text: Wind gusts
+            - generic [ref=e208]: (max kts)
+          - generic [ref=e210]: Cloud cover
+          - generic [ref=e212]: Precipitation type
+          - generic [ref=e213]:
+            - generic [ref=e214]: Precipitation
+            - text: (mm/3h)
+          - generic [ref=e215]:
+            - generic [ref=e216]: Air temperature
+            - text: (
+            - generic [ref=e217]: °C
+            - text: )
+          - generic [ref=e218]:
+            - generic [ref=e219]: Air pressure
+            - text: (
+            - generic [ref=e220]: hPa
+            - text: )
+        - generic [ref=e221]:
+          - heading "Thursday, Jun 18" [level=2] [ref=e223]
+          - generic [ref=e224]:
+            - generic [ref=e225]:
+              - generic [ref=e226]: 02h
+              - img "201.97°" [ref=e228]
+              - generic [ref=e230]: "4"
+              - generic [ref=e233]: "4"
+              - img "11.77%" [ref=e235]
+              - img "Rain" [ref=e237]
+              - generic [ref=e238]: "1"
+              - generic [ref=e240]: "15"
+              - generic [ref=e241]: "965"
+            - generic [ref=e242]:
+              - generic [ref=e243]: 05h
+              - img "190.55°" [ref=e245]
+              - generic [ref=e247]: "3"
+              - generic [ref=e250]: "3"
+              - img "4.96%" [ref=e252]
+              - img "Rain" [ref=e254]
+              - generic [ref=e255]: "0.7"
+              - generic [ref=e257]: "15"
+              - generic [ref=e258]: "964"
+            - generic [ref=e259]:
+              - generic [ref=e260]: 08h
+              - img "166.64°" [ref=e262]
+              - generic [ref=e264]: "1"
+              - generic [ref=e267]: "2"
+              - img "24.45%" [ref=e269]
+              - generic [ref=e273]: "19"
+              - generic [ref=e274]: "965"
+            - generic [ref=e275]:
+              - generic [ref=e276]: 11h
+              - img "37.65°" [ref=e278]
+              - generic [ref=e280]: "2"
+              - generic [ref=e283]: "2"
+              - img "63.32%" [ref=e285]
+              - generic [ref=e289]: "25"
+              - generic [ref=e290]: "965"
+            - generic [ref=e291]:
+              - generic [ref=e292]: 14h
+              - img "45.27°" [ref=e294]
+              - generic [ref=e296]: "3"
+              - generic [ref=e299]: "3"
+              - img "13.9%" [ref=e301]
+              - generic [ref=e305]: "27"
+              - generic [ref=e306]: "964"
+            - generic [ref=e307]:
+              - generic [ref=e308]: 17h
+              - img "52.38°" [ref=e310]
+              - generic [ref=e312]: "3"
+              - generic [ref=e315]: "3"
+              - img "78.29%" [ref=e317]
+              - generic [ref=e321]: "27"
+              - generic [ref=e322]: "963"
+            - generic [ref=e323]:
+              - generic [ref=e324]: 20h
+              - img "90.27°" [ref=e326]
+              - generic [ref=e328]: "3"
+              - generic [ref=e331]: "3"
+              - img "16.79%" [ref=e333]
+              - generic [ref=e337]: "23"
+              - generic [ref=e338]: "963"
+            - generic [ref=e339]:
+              - generic [ref=e340]: 23h
+              - img "131.15°" [ref=e342]
+              - generic [ref=e344]: "3"
+              - generic [ref=e347]: "4"
+              - img "5.54%" [ref=e349]
+              - generic [ref=e353]: "19"
+              - generic [ref=e354]: "963"
+        - generic [ref=e355]:
+          - heading "Friday, Jun 19" [level=2] [ref=e357]
+          - generic [ref=e358]:
+            - generic [ref=e359]:
+              - generic [ref=e360]: 02h
+              - img "155.92°" [ref=e362]
+              - generic [ref=e364]: "4"
+              - generic [ref=e367]: "4"
+              - img "4.96%" [ref=e369]
+              - generic [ref=e373]: "17"
+              - generic [ref=e374]: "962"
+            - generic [ref=e375]:
+              - generic [ref=e376]: 05h
+              - img "157.63°" [ref=e378]
+              - generic [ref=e380]: "3"
+              - generic [ref=e383]: "3"
+              - img "0.05%" [ref=e385]
+              - generic [ref=e389]: "15"
+              - generic [ref=e390]: "962"
+            - generic [ref=e391]:
+              - generic [ref=e392]: 08h
+              - img "119.61°" [ref=e394]
+              - generic [ref=e396]: "2"
+              - generic [ref=e399]: "3"
+              - img "0.05%" [ref=e401]
+              - generic [ref=e405]: "21"
+              - generic [ref=e406]: "962"
+            - generic [ref=e407]:
+              - generic [ref=e408]: 11h
+              - img "57.81°" [ref=e410]
+              - generic [ref=e412]: "3"
+              - generic [ref=e415]: "3"
+              - img "3.2%" [ref=e417]
+              - generic [ref=e421]: "26"
+              - generic [ref=e422]: "962"
+            - generic [ref=e423]:
+              - generic [ref=e424]: 14h
+              - img "39.52°" [ref=e426]
+              - generic [ref=e428]: "4"
+              - generic [ref=e431]: "4"
+              - img "8.2%" [ref=e433]
+              - generic [ref=e437]: "29"
+              - generic [ref=e438]: "962"
+            - generic [ref=e439]:
+              - generic [ref=e440]: 17h
+              - img "43.76°" [ref=e442]
+              - generic [ref=e444]: "6"
+              - generic [ref=e447]: "7"
+              - img "4.96%" [ref=e449]
+              - generic [ref=e453]: "29"
+              - generic [ref=e454]: "960"
+            - generic [ref=e455]:
+              - generic [ref=e456]: 20h
+              - img "61.74°" [ref=e458]
+              - generic [ref=e460]: "4"
+              - generic [ref=e463]: "10"
+              - img "5.07%" [ref=e465]
+              - generic [ref=e469]: "24"
+              - generic [ref=e470]: "960"
+            - generic [ref=e471]:
+              - generic [ref=e472]: 23h
+              - img "273.41°" [ref=e474]
+              - generic [ref=e476]: "2"
+              - generic [ref=e479]: "3"
+              - img "99.75%" [ref=e481]
+              - generic [ref=e485]: "20"
+              - generic [ref=e486]: "962"
+      - generic [ref=e489]:
+        - generic [ref=e490]:
+          - generic [ref=e493]: Local time
+          - link "Wind direction" [ref=e495] [cursor=pointer]:
+            - /url: /wind/windspeed
+          - link "Wind speed (kts)" [ref=e497] [cursor=pointer]:
+            - /url: /wind/windspeed
+          - link "Wind gusts (max kts)" [ref=e499] [cursor=pointer]:
+            - /url: /wind/windspeed
+            - text: Wind gusts
+            - generic [ref=e500]: (max kts)
+          - generic [ref=e502]: Cloud cover
+          - generic [ref=e504]: Precipitation type
+          - generic [ref=e505]:
+            - generic [ref=e506]: Precipitation
+            - text: (mm/3h)
+          - generic [ref=e507]:
+            - generic [ref=e508]: Air temperature
+            - text: (
+            - generic [ref=e509]: °C
+            - text: )
+          - generic [ref=e510]:
+            - generic [ref=e511]: Air pressure
+            - text: (
+            - generic [ref=e512]: hPa
+            - text: )
+        - generic [ref=e513]:
+          - heading "Saturday, Jun 20" [level=2] [ref=e515]
+          - generic [ref=e516]:
+            - generic [ref=e517]:
+              - generic [ref=e518]: 02h
+              - img "201.4°" [ref=e520]
+              - generic [ref=e522]: "2"
+              - generic [ref=e525]: "3"
+              - img "99.95%" [ref=e527]
+              - img "Rain" [ref=e529]
+              - generic [ref=e530]: "2.9"
+              - generic [ref=e532]: "17"
+              - generic [ref=e533]: "964"
+            - generic [ref=e534]:
+              - generic [ref=e535]: 05h
+              - img "199.46°" [ref=e537]
+              - generic [ref=e539]: "1"
+              - generic [ref=e542]: "1"
+              - img "9.09%" [ref=e544]
+              - generic [ref=e548]: "16"
+              - generic [ref=e549]: "963"
+            - generic [ref=e550]:
+              - generic [ref=e551]: 08h
+              - img "166.07°" [ref=e553]
+              - generic [ref=e555]: "2"
+              - generic [ref=e558]: "3"
+              - img "6.77%" [ref=e560]
+              - generic [ref=e564]: "20"
+              - generic [ref=e565]: "964"
+            - generic [ref=e566]:
+              - generic [ref=e567]: 11h
+              - img "61°" [ref=e569]
+              - generic [ref=e571]: "1"
+              - generic [ref=e574]: "2"
+              - img "4.05%" [ref=e576]
+              - generic [ref=e580]: "26"
+              - generic [ref=e581]: "964"
+            - generic [ref=e582]:
+              - generic [ref=e583]: 14h
+              - img "323.73°" [ref=e585]
+              - generic [ref=e587]: "4"
+              - generic [ref=e590]: "8"
+              - img "0.1%" [ref=e592]
+              - generic [ref=e596]: "29"
+              - generic [ref=e597]: "964"
+            - generic [ref=e598]:
+              - generic [ref=e599]: 17h
+              - img "325.64°" [ref=e601]
+              - generic [ref=e603]: "6"
+              - generic [ref=e606]: "10"
+              - img "0.05%" [ref=e608]
+              - generic [ref=e612]: "29"
+              - generic [ref=e613]: "964"
+            - generic [ref=e614]:
+              - generic [ref=e615]: 20h
+              - img "310.86°" [ref=e617]
+              - generic [ref=e619]: "1"
+              - generic [ref=e622]: "1"
+              - img "1.53%" [ref=e624]
+              - generic [ref=e628]: "25"
+              - generic [ref=e629]: "965"
+            - generic [ref=e630]:
+              - generic [ref=e631]: 23h
+              - img "201.92°" [ref=e633]
+              - generic [ref=e635]: "4"
+              - generic [ref=e638]: "4"
+              - img "18.57%" [ref=e640]
+              - generic [ref=e644]: "20"
+              - generic [ref=e645]: "966"
+        - generic [ref=e646]:
+          - heading "Sunday, Jun 21" [level=2] [ref=e648]
+          - generic [ref=e649]:
+            - generic [ref=e650]:
+              - generic [ref=e651]: 02h
+              - img "195.4°" [ref=e653]
+              - generic [ref=e655]: "4"
+              - generic [ref=e658]: "4"
+              - img "1.52%" [ref=e660]
+              - generic [ref=e664]: "18"
+              - generic [ref=e665]: "967"
+            - generic [ref=e666]:
+              - generic [ref=e667]: 05h
+              - img "182.04°" [ref=e669]
+              - generic [ref=e671]: "3"
+              - generic [ref=e674]: "3"
+              - img "0.7%" [ref=e676]
+              - generic [ref=e680]: "17"
+              - generic [ref=e681]: "967"
+            - generic [ref=e682]:
+              - generic [ref=e683]: 08h
+              - img "194.16°" [ref=e685]
+              - generic [ref=e687]: "1"
+              - generic [ref=e690]: "1"
+              - img "0.05%" [ref=e692]
+              - generic [ref=e696]: "22"
+              - generic [ref=e697]: "968"
+            - generic [ref=e698]:
+              - generic [ref=e699]: 11h
+              - img "44.64°" [ref=e701]
+              - generic [ref=e703]: "2"
+              - generic [ref=e706]: "2"
+              - img "3.9%" [ref=e708]
+              - generic [ref=e712]: "27"
+              - generic [ref=e713]: "968"
+            - generic [ref=e714]:
+              - generic [ref=e715]: 14h
+              - img "45.15°" [ref=e717]
+              - generic [ref=e719]: "4"
+              - generic [ref=e722]: "4"
+              - img "3.59%" [ref=e724]
+              - generic [ref=e728]: "30"
+              - generic [ref=e729]: "968"
+            - generic [ref=e730]:
+              - generic [ref=e731]: 17h
+              - img "19.12°" [ref=e733]
+              - generic [ref=e735]: "3"
+              - generic [ref=e738]: "4"
+              - img "0.31%" [ref=e740]
+              - generic [ref=e744]: "30"
+              - generic [ref=e745]: "968"
+            - generic [ref=e746]:
+              - generic [ref=e747]: 20h
+              - img "100.76°" [ref=e749]
+              - generic [ref=e751]: "3"
+              - generic [ref=e754]: "10"
+              - img "99.95%" [ref=e756]
+              - generic [ref=e760]: "20"
+              - generic [ref=e761]: "968"
+            - generic [ref=e762]:
+              - generic [ref=e763]: 23h
+              - img "352.96°" [ref=e765]
+              - generic [ref=e767]: "3"
+              - generic [ref=e770]: "4"
+              - img "99.69%" [ref=e772]
+              - img "Rain" [ref=e774]
+              - generic [ref=e775]: "1"
+              - generic [ref=e777]: "17"
+              - generic [ref=e778]: "970"
+      - generic [ref=e780]:
+        - generic [ref=e781]:
+          - generic [ref=e784]: Local time
+          - link "Wind direction" [ref=e786] [cursor=pointer]:
+            - /url: /wind/windspeed
+          - link "Wind speed (kts)" [ref=e788] [cursor=pointer]:
+            - /url: /wind/windspeed
+          - link "Wind gusts (max kts)" [ref=e790] [cursor=pointer]:
+            - /url: /wind/windspeed
+            - text: Wind gusts
+            - generic [ref=e791]: (max kts)
+          - generic [ref=e793]: Cloud cover
+          - generic [ref=e795]: Precipitation type
+          - generic [ref=e796]:
+            - generic [ref=e797]: Precipitation
+            - text: (mm/3h)
+          - generic [ref=e798]:
+            - generic [ref=e799]: Air temperature
+            - text: (
+            - generic [ref=e800]: °C
+            - text: )
+          - generic [ref=e801]:
+            - generic [ref=e802]: Air pressure
+            - text: (
+            - generic [ref=e803]: hPa
+            - text: )
+        - generic [ref=e804]:
+          - heading "Monday, Jun 22" [level=2] [ref=e806]
+          - generic [ref=e807]:
+            - generic [ref=e808]:
+              - generic [ref=e809]: 02h
+              - img "205.16°" [ref=e811]
+              - generic [ref=e813]: "3"
+              - generic [ref=e816]: "3"
+              - img "83.51%" [ref=e818]
+              - img "Rain" [ref=e820]
+              - generic [ref=e821]: "0.7"
+              - generic [ref=e823]: "17"
+              - generic [ref=e824]: "969"
+            - generic [ref=e825]:
+              - generic [ref=e826]: 05h
+              - img "129.56°" [ref=e828]
+              - generic [ref=e830]: "1"
+              - generic [ref=e833]: "2"
+              - img "4.86%" [ref=e835]
+              - generic [ref=e839]: "16"
+              - generic [ref=e840]: "967"
+            - generic [ref=e841]:
+              - generic [ref=e842]: 08h
+              - img "57.99°" [ref=e844]
+              - generic [ref=e846]: "1"
+              - generic [ref=e849]: "2"
+              - img "45.41%" [ref=e851]
+              - generic [ref=e855]: "19"
+              - generic [ref=e856]: "968"
+            - generic [ref=e857]:
+              - generic [ref=e858]: 11h
+              - img "46.03°" [ref=e860]
+              - generic [ref=e862]: "3"
+              - generic [ref=e865]: "3"
+              - img "5.52%" [ref=e867]
+              - generic [ref=e871]: "25"
+              - generic [ref=e872]: "967"
+            - generic [ref=e873]:
+              - generic [ref=e874]: 14h
+              - img "35.81°" [ref=e876]
+              - generic [ref=e878]: "4"
+              - generic [ref=e881]: "4"
+              - img "4.96%" [ref=e883]
+              - generic [ref=e887]: "28"
+              - generic [ref=e888]: "966"
+            - generic [ref=e889]:
+              - generic [ref=e890]: 17h
+              - img "18.06°" [ref=e892]
+              - generic [ref=e894]: "4"
+              - generic [ref=e897]: "4"
+              - img "3.93%" [ref=e899]
+              - generic [ref=e903]: "29"
+              - generic [ref=e904]: "965"
+            - generic [ref=e905]:
+              - generic [ref=e906]: 20h
+              - img "36.32°" [ref=e908]
+              - generic [ref=e910]: "2"
+              - generic [ref=e913]: "3"
+              - img "5.73%" [ref=e915]
+              - img "Rain" [ref=e917]
+              - generic [ref=e918]: "0.6"
+              - generic [ref=e920]: "24"
+              - generic [ref=e921]: "964"
+            - generic [ref=e922]:
+              - generic [ref=e923]: 23h
+              - img "138.44°" [ref=e925]
+              - generic [ref=e927]: "2"
+              - generic [ref=e930]: "2"
+              - img "13.77%" [ref=e932]
+              - generic [ref=e936]: "19"
+              - generic [ref=e937]: "965"
+        - generic [ref=e938]:
+          - heading "Tuesday, Jun 23" [level=2] [ref=e940]
+          - generic [ref=e941]:
+            - generic [ref=e942]:
+              - generic [ref=e943]: 02h
+              - img "193.91°" [ref=e945]
+              - generic [ref=e947]: "3"
+              - generic [ref=e950]: "3"
+              - img "73.26%" [ref=e952]
+              - generic [ref=e956]: "18"
+              - generic [ref=e957]: "964"
+            - generic [ref=e958]:
+              - generic [ref=e959]: 05h
+              - img "187.4°" [ref=e961]
+              - generic [ref=e963]: "3"
+              - generic [ref=e966]: "3"
+              - img "13.35%" [ref=e968]
+              - generic [ref=e972]: "17"
+              - generic [ref=e973]: "964"
+            - generic [ref=e974]:
+              - generic [ref=e975]: 08h
+              - img "213.09°" [ref=e977]
+              - generic [ref=e979]: "1"
+              - generic [ref=e982]: "2"
+              - img "1.02%" [ref=e984]
+              - img "Rain" [ref=e986]
+              - generic [ref=e987]: "1.1"
+              - generic [ref=e989]: "20"
+              - generic [ref=e990]: "964"
+            - generic [ref=e991]:
+              - generic [ref=e992]: 11h
+              - img "66.97°" [ref=e994]
+              - generic [ref=e996]: "3"
+              - generic [ref=e999]: "3"
+              - img "1.07%" [ref=e1001]
+              - img "Rain" [ref=e1003]
+              - generic [ref=e1004]: "0.5"
+              - generic [ref=e1006]: "25"
+              - generic [ref=e1007]: "964"
+            - generic [ref=e1008]:
+              - generic [ref=e1009]: 14h
+              - img "63.4°" [ref=e1011]
+              - generic [ref=e1013]: "3"
+              - generic [ref=e1016]: "4"
+              - img "4.43%" [ref=e1018]
+              - img "Rain" [ref=e1020]
+              - generic [ref=e1021]: "1.7"
+              - generic [ref=e1023]: "27"
+              - generic [ref=e1024]: "964"
+            - generic [ref=e1025]:
+              - generic [ref=e1026]: 17h
+              - img "15.5°" [ref=e1028]
+              - generic [ref=e1030]: "4"
+              - generic [ref=e1033]: "4"
+              - img "99.95%" [ref=e1035]
+              - generic [ref=e1039]: "28"
+              - generic [ref=e1040]: "962"
+            - generic [ref=e1041]:
+              - generic [ref=e1042]: 20h
+              - img "59.82°" [ref=e1044]
+              - generic [ref=e1046]: "2"
+              - generic [ref=e1049]: "2"
+              - img "31.87%" [ref=e1051]
+              - generic [ref=e1055]: "24"
+              - generic [ref=e1056]: "963"
+            - generic [ref=e1057]:
+              - generic [ref=e1058]: 23h
+              - img "164.1°" [ref=e1060]
+              - generic [ref=e1062]: "3"
+              - generic [ref=e1065]: "3"
+              - img "0.05%" [ref=e1067]
+              - generic [ref=e1071]: "19"
+              - generic [ref=e1072]: "963"
+    - generic [ref=e1085]:
+      - generic [ref=e1086]:
+        - generic [ref=e1087]:
+          - heading "Other spots and locations nearby or around Waginger See" [level=2] [ref=e1088]
+          - list [ref=e1089]:
+            - listitem [ref=e1090]:
+              - link "Wolkersdorf-Waging am See 2.1 km / Weather station Live measurements" [ref=e1092] [cursor=pointer]:
+                - /url: /forecast/wolkersdorf-waging_am_see_bavaria_germany
+                - generic [ref=e1094]:
+                  - generic [ref=e1095]: Wolkersdorf-Waging am See
+                  - generic [ref=e1096]:
+                    - img [ref=e1097]
+                    - generic [ref=e1100]: 2.1 km
+                    - generic [ref=e1101]: /
+                    - text: Weather station
+                  - generic [ref=e1103]: Live measurements
+            - listitem [ref=e1104]:
+              - link "Kirchanschöring 2.7 km" [ref=e1106] [cursor=pointer]:
+                - /url: /forecast/kirchanschoring_bavaria_germany
+                - generic [ref=e1108]:
+                  - generic [ref=e1109]: Kirchanschöring
+                  - generic [ref=e1110]:
+                    - img [ref=e1111]
+                    - generic [ref=e1114]: 2.7 km
+            - listitem [ref=e1115]:
+              - link "Fridolfing 4.6 km" [ref=e1117] [cursor=pointer]:
+                - /url: /forecast/fridolfing_bavaria_germany
+                - generic [ref=e1119]:
+                  - generic [ref=e1120]: Fridolfing
+                  - generic [ref=e1121]:
+                    - img [ref=e1122]
+                    - generic [ref=e1125]: 4.6 km
+            - listitem [ref=e1126]:
+              - link "Taching am See 5.3 km" [ref=e1128] [cursor=pointer]:
+                - /url: /forecast/taching_am_see_bavaria_germany
+                - generic [ref=e1130]:
+                  - generic [ref=e1131]: Taching am See
+                  - generic [ref=e1132]:
+                    - img [ref=e1133]
+                    - generic [ref=e1136]: 5.3 km
+            - listitem [ref=e1137]:
+              - link "Petting 5.4 km" [ref=e1139] [cursor=pointer]:
+                - /url: /forecast/petting_bavaria_germany
+                - generic [ref=e1141]:
+                  - generic [ref=e1142]: Petting
+                  - generic [ref=e1143]:
+                    - img [ref=e1144]
+                    - generic [ref=e1147]: 5.4 km
+            - listitem [ref=e1148]:
+              - link "Waging am See 5.7 km" [ref=e1150] [cursor=pointer]:
+                - /url: /forecast/waging_am_see
+                - generic [ref=e1152]:
+                  - generic [ref=e1153]: Waging am See
+                  - generic [ref=e1154]:
+                    - img [ref=e1155]
+                    - generic [ref=e1158]: 5.7 km
+            - listitem [ref=e1159]:
+              - link "Eching 6.7 km" [ref=e1161] [cursor=pointer]:
+                - /url: /forecast/eching_salzburg_austria
+                - generic [ref=e1163]:
+                  - generic [ref=e1164]: Eching
+                  - generic [ref=e1165]:
+                    - img [ref=e1166]
+                    - generic [ref=e1169]: 6.7 km
+            - listitem [ref=e1170]:
+              - link "Sankt Leonhard am Wonneberg 7.8 km" [ref=e1172] [cursor=pointer]:
+                - /url: /forecast/sankt_leonhard_am_wonneberg_bavaria_germany
+                - generic [ref=e1174]:
+                  - generic [ref=e1175]: Sankt Leonhard am Wonneberg
+                  - generic [ref=e1176]:
+                    - img [ref=e1177]
+                    - generic [ref=e1180]: 7.8 km
+            - listitem [ref=e1181]:
+              - link "Bürmoos 9.2 km" [ref=e1183] [cursor=pointer]:
+                - /url: /forecast/buermoos_salzburg_austria
+                - generic [ref=e1185]:
+                  - generic [ref=e1186]: Bürmoos
+                  - generic [ref=e1187]:
+                    - img [ref=e1188]
+                    - generic [ref=e1191]: 9.2 km
+        - generic [ref=e1192]:
+          - heading "Find more spots like this" [level=2] [ref=e1193]
+          - paragraph [ref=e1194]: Look at our wind map to find more spots among our 160,000 spots.
+          - link "Find spot or weather station" [ref=e1195] [cursor=pointer]:
+            - /url: /#12/47.9600/12.8000/spot/sp:P894
+            - img [ref=e1196]
+            - text: Find spot or weather station
+        - generic [ref=e1198]:
+          - heading "Waginger See popularity" [level=2] [ref=e1199]
+          - link "# 52 In Bavaria Most visited spots in Bavaria" [ref=e1202] [cursor=pointer]:
+            - /url: /locations/germany/bavaria
+            - generic [ref=e1203]:
+              - generic [ref=e1204]: "# 52"
+              - generic [ref=e1205]: In Bavaria
+              - generic [ref=e1206]:
+                - text: Most visited spots in Bavaria
+                - img [ref=e1207]
+      - generic [ref=e1209]:
+        - heading "Additional information" [level=2] [ref=e1210]
+        - generic [ref=e1211]:
+          - heading "General" [level=3] [ref=e1212]
+          - paragraph [ref=e1213]: This is the wind, wave and weather forecast for Waginger See in Bavaria, Germany. Windfinder specializes in wind, waves, tides and weather reports & forecasts for wind related sports like kitesurfing, windsurfing, surfing, sailing, fishing or paragliding.
+          - heading "Forecast" [level=3] [ref=e1214]
+          - paragraph [ref=e1215]: This forecast is based on the GFS model. Forecasts are available worldwide. The horizontal resolution is about 13 km. Forecasts are computed 4 times a day, at about 01:00, 07:00, 13:00 and 19:00 Central European Summer Time. Predictions are available in time steps of 6 hours for up to 10 days into the future. The arrows point in the direction in which the wind is blowing.
+          - paragraph [ref=e1216]: Check the wind forecast for Waginger See when you search for the best travel destinations for your kiteboarding, windsurfing or sailing vacations in Germany. Or use our wind forecast to find the wind speed today in Waginger See or to have a look at the wind direction tomorrow at Waginger See.
+          - heading "Statistics" [level=3] [ref=e1217]
+          - paragraph [ref=e1218]:
+            - text: For statistical and historical real weather data see the
+            - link "wind and weather statistics" [ref=e1219] [cursor=pointer]:
+              - /url: /windstatistics/waginger_see
+            - text: for this location.
+          - heading "Severe Weather Warnings" [level=3] [ref=e1220]
+          - paragraph [ref=e1221]: When a severe weather warning or advisory is provided by the local meteorological institute, we display it as a banner above the wind forecast.
+          - paragraph [ref=e1222]:
+            - text: The weather warning, for example a high wind warning, can help you prepare for dangerous weather conditions and avoid weather-related risks. The color scale indicates the intensity of the predicted weather event. For more details click or tap on the warning. General information about severe weather warnings can be found in our
+            - link "help section" [ref=e1223] [cursor=pointer]:
+              - /url: /help/usage/severe-weather-warnings
+            - text: .
+          - paragraph [ref=e1224]: Please be aware that severe weather may occur without a prior severe weather warning being reported.
+          - heading "Units" [level=3] [ref=e1225]
+          - paragraph [ref=e1226]:
+            - text: We use knots and degrees Celsius as our default units. These units are often used by sailors, kiters, surfers, windsurfers and paragliders. Use website settings to switch between units and 7 different languages at any time. For converting between wind speed units such as knots, km/h (kilometers per hour), m/s (meters per second), and mph (miles per hour) use our
+            - link "wind speed calculator" [ref=e1227] [cursor=pointer]:
+              - /url: /wind/windspeed
+            - text: .
+          - heading "Help" [level=3] [ref=e1228]
+          - paragraph [ref=e1229]:
+            - text: If you need more information about our wind forecast for Waginger See, have a look at our
+            - link "help section" [ref=e1230] [cursor=pointer]:
+              - /url: /help/usage/forecast-superforecast
+            - text: .
+  - contentinfo [ref=e1232]:
+    - generic [ref=e1234]:
+      - navigation [ref=e1238]:
+        - list [ref=e1239]:
+          - listitem [ref=e1240]:
+            - link "Home" [ref=e1241] [cursor=pointer]:
+              - /url: /
+              - generic [ref=e1242]: Home
+          - listitem [ref=e1243]:
+            - link "Germany" [ref=e1244] [cursor=pointer]:
+              - /url: /locations/germany
+              - generic [ref=e1245]: Germany
+          - listitem [ref=e1246]:
+            - link "Bavaria" [ref=e1247] [cursor=pointer]:
+              - /url: /locations/germany/bavaria
+              - generic [ref=e1248]: Bavaria
+          - listitem [ref=e1249]:
+            - generic [ref=e1250]: Waginger See
+      - generic [ref=e1251]:
+        - generic [ref=e1252]:
+          - generic [ref=e1253]: Windfinder apps
+          - link "Learn more about our apps" [ref=e1254] [cursor=pointer]:
+            - /url: /apps
+        - generic [ref=e1255]:
+          - link "Download the Windfinder App for iOS on the Appstore" [ref=e1256] [cursor=pointer]:
+            - /url: https://apps.apple.com/app/windfinder/id336829635
+            - img "Download the Windfinder App for iOS on the Appstore" [ref=e1257]
+          - link "Download the Windfinder App for Android on Google Play" [ref=e1258] [cursor=pointer]:
+            - /url: https://play.google.com/store/apps/details?id=com.studioeleven.windfinder&referrer=utm_source%3Dfooter%26utm_medium%3Dweb%26utm_content%3Dbutton
+            - img "Download the Windfinder App for Android on Google Play" [ref=e1259]
+    - generic [ref=e1261]:
+      - generic [ref=e1262]:
+        - generic [ref=e1263]: Wind and weather
+        - list [ref=e1264]:
+          - listitem [ref=e1265]:
+            - link "Weather maps" [ref=e1266] [cursor=pointer]:
+              - /url: /
+          - listitem [ref=e1267]:
+            - link "Forecasts & reports" [ref=e1268] [cursor=pointer]:
+              - /url: /forecasts
+          - listitem [ref=e1269]:
+            - link "Locations" [ref=e1270] [cursor=pointer]:
+              - /url: /locations
+      - generic [ref=e1271]:
+        - generic [ref=e1272]: Services
+        - list [ref=e1273]:
+          - listitem [ref=e1274]:
+            - link "Help & FAQs" [ref=e1275] [cursor=pointer]:
+              - /url: /help
+          - listitem [ref=e1276]:
+            - link "Windfinder apps" [ref=e1277] [cursor=pointer]:
+              - /url: /apps
+          - listitem [ref=e1278]:
+            - link "Historical weather data" [ref=e1279] [cursor=pointer]:
+              - /url: /historical-weather-data
+          - listitem [ref=e1280]:
+            - link "Weather widgets" [ref=e1281] [cursor=pointer]:
+              - /url: /apps/homepageweather
+          - listitem [ref=e1282]:
+            - link "Wind speed tables" [ref=e1283] [cursor=pointer]:
+              - /url: /wind/windspeed
+          - listitem [ref=e1284]:
+            - link "For businesses / API" [ref=e1285] [cursor=pointer]:
+              - /url: /about/windfinder-for-businesses
+      - generic [ref=e1286]:
+        - generic [ref=e1287]: Company
+        - list [ref=e1288]:
+          - listitem [ref=e1289]:
+            - link "About Windfinder" [ref=e1290] [cursor=pointer]:
+              - /url: /about
+          - listitem [ref=e1291]:
+            - link "History & press" [ref=e1292] [cursor=pointer]:
+              - /url: /about/history-press
+          - listitem [ref=e1293]:
+            - link "Advertise with us!" [ref=e1294] [cursor=pointer]:
+              - /url: /contact/advertising
+          - listitem [ref=e1295]:
+            - link "News and announcements" [ref=e1296] [cursor=pointer]:
+              - /url: https://blog.windfinder.com
+          - listitem [ref=e1297]:
+            - link "Manage Cookies" [ref=e1298] [cursor=pointer]:
+              - /url: "#"
+      - generic [ref=e1299]:
+        - generic [ref=e1300]: Connect with us
+        - list [ref=e1301]:
+          - listitem [ref=e1302]:
+            - link "Share Windfinder on Facebook Facebook" [ref=e1303] [cursor=pointer]:
+              - /url: https://www.facebook.com/Windfindercom/
+              - img "Share Windfinder on Facebook" [ref=e1304]
+              - text: Facebook
+          - listitem [ref=e1305]:
+            - link "Share Windfinder on Instagram Instagram" [ref=e1306] [cursor=pointer]:
+              - /url: https://www.instagram.com/windfindercom/
+              - img "Share Windfinder on Instagram" [ref=e1307]
+              - text: Instagram
+          - listitem [ref=e1308]:
+            - link "Share Windfinder on Instagram Youtube" [ref=e1309] [cursor=pointer]:
+              - /url: https://www.youtube.com/channel/UCq_HcgNXKkujvx9b20Ab5ZA/
+              - img "Share Windfinder on Instagram" [ref=e1310]
+              - text: Youtube
+    - list [ref=e1313]:
+      - listitem [ref=e1314]: © Windfinder.com 2026
+      - listitem [ref=e1315]:
+        - link "Terms of use" [ref=e1316] [cursor=pointer]:
+          - /url: /contact/terms
+      - listitem [ref=e1317]:
+        - link "Privacy Policy" [ref=e1318] [cursor=pointer]:
+          - /url: /contact/privacy_policy
+      - listitem [ref=e1319]:
+        - link "Imprint" [ref=e1320] [cursor=pointer]:
+          - /url: /contact

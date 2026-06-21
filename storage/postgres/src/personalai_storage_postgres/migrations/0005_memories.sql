@@ -1,4 +1,4 @@
--- Long-term semantic memory (M4-2). Embedding dim matches mxbai-embed-large (1024).
+-- Long-term semantic memory (M4-2). Embedding dim matches qwen3-embedding:0.6b (1024).
 -- `source` carries provenance (conversation_id / message id / document id).
 CREATE TABLE IF NOT EXISTS memories (
     id text PRIMARY KEY,

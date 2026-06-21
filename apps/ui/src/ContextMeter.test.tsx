@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, test } from "vitest";
 
 import { ContextMeter } from "./ContextMeter";
@@ -6,6 +6,7 @@ import { ContextMeter } from "./ContextMeter";
 test("shows fill percentage and bar when a context limit is known", () => {
   render(
     <ContextMeter
+      context={null}
       usage={{ prompt_tokens: 8192, completion_tokens: 100, total_tokens: 8292, context_limit: 32768 }}
     />,
   );
@@ -17,9 +18,46 @@ test("shows fill percentage and bar when a context limit is known", () => {
 test("shows raw tokens without a bar when no limit (remote provider)", () => {
   render(
     <ContextMeter
+      context={null}
       usage={{ prompt_tokens: 500, completion_tokens: 20, total_tokens: 520, context_limit: null }}
     />,
   );
   expect(screen.getByTestId("context-meter-label")).toHaveTextContent("500 prompt tokens");
   expect(screen.queryByTestId("context-meter-bar")).not.toBeInTheDocument();
+});
+
+test("shows the context composition breakdown", () => {
+  render(
+    <ContextMeter
+      usage={null}
+      context={{
+        items: [
+          { label: "Grounding", count: 1, chars: 400 },
+          { label: "Documents", count: 4, chars: 1600 },
+        ],
+        total_chars: 2000,
+      }}
+    />,
+  );
+  const breakdown = screen.getByTestId("context-breakdown");
+  expect(breakdown).toHaveTextContent("Grounding");
+  expect(breakdown).toHaveTextContent("Documents (4)");
+  expect(breakdown).toHaveTextContent(/Assembled ~\d+ tokens/);
+  expect(screen.getAllByTestId("context-item")).toHaveLength(2);
+});
+
+test("shows a token overlay when hovering a context category", () => {
+  render(
+    <ContextMeter
+      usage={null}
+      context={{ items: [{ label: "Documents", count: 4, chars: 1600 }], total_chars: 1600 }}
+    />,
+  );
+  expect(screen.queryByTestId("context-tooltip")).toBeNull();
+  fireEvent.mouseEnter(screen.getByTestId("context-item"));
+  const tip = screen.getByTestId("context-tooltip");
+  expect(tip).toHaveTextContent(/tokens/);
+  expect(tip).toHaveTextContent("1,600 chars");
+  fireEvent.mouseLeave(screen.getByTestId("context-item"));
+  expect(screen.queryByTestId("context-tooltip")).toBeNull();
 });

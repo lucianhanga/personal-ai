@@ -143,6 +143,19 @@ export interface UsageInfo {
   context_limit: number | null;
 }
 
+// What was assembled into the model's context this turn (grounding, documents, memory, ...), so the
+// user can see the composition and approximate size as the question is asked.
+export interface ContextItem {
+  label: string;
+  count: number;
+  chars: number;
+}
+
+export interface ContextBreakdown {
+  items: ContextItem[];
+  total_chars: number;
+}
+
 export interface McpServer {
   name: string;
   command: string;
@@ -422,6 +435,138 @@ export async function upsertMcpServer(
   return body.data!.server!;
 }
 
+// Per-tenant preference settings (#289). Every field is optional: null means "inherit the
+// deployment default". Field names mirror the backend CoreConfig so the overlay is a plain copy.
+export interface TenantSettings {
+  model_provider: "ollama" | "openai_compat" | null;
+  default_model: string | null;
+  ollama_host: string | null;
+  ollama_num_ctx: number | null;
+  ollama_keep_alive: string | null;
+  embed_provider: "ollama" | "openai_compat" | null;
+  embed_model: string | null;
+  openai_base_url: string | null;
+  agent_mode: "single" | "multi" | "custom" | null;
+  agent_graph_enabled: boolean | null;
+  agent_human_gate: boolean | null;
+  agent_accuracy_mode: "standard" | "accurate" | null;
+  agent_max_iterations: number | null;
+  agent_timeout_seconds: number | null;
+  memory_enabled: boolean | null;
+  grounding_enabled: boolean | null;
+  max_upload_bytes: number | null;
+  egress_enabled: boolean | null;
+  allowed_egress_hosts: string[] | null;
+}
+
+// The defaults the backend would apply for any field left null (echoed from the boot CoreConfig),
+// so the UI can show the effective value as a placeholder.
+export type TenantSettingsDefaults = {
+  [K in keyof TenantSettings]: NonNullable<TenantSettings[K]>;
+};
+
+/** The request tenant's saved overrides plus the deployment defaults for the unset fields. */
+export async function fetchSettings(
+  token: string,
+): Promise<{ settings: TenantSettings; defaults: TenantSettingsDefaults }> {
+  const res = await fetch(`${API_BASE}/api/v1/settings`, {
+    headers: authHeaders(token),
+    credentials: CREDS,
+  });
+  if (!res.ok) throw new Error(`fetch settings failed: ${res.status}`);
+  const body = (await res.json()) as {
+    data?: { settings: TenantSettings; defaults: TenantSettingsDefaults };
+  };
+  return body.data!;
+}
+
+/** Replace the tenant's overrides (full overwrite; null/omitted fields restore the default). */
+export async function saveSettings(
+  token: string,
+  settings: TenantSettings,
+): Promise<TenantSettings> {
+  const res = await fetch(`${API_BASE}/api/v1/settings`, {
+    method: "PUT",
+    credentials: CREDS,
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) throw new Error(`save settings failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { settings: TenantSettings } };
+  return body.data!.settings;
+}
+
+/** Allow one egress host (interactive allow-on-deny): adds it to the allowlist + enables egress. */
+export async function allowEgressHost(token: string, host: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/settings/egress/allow`, {
+    method: "POST",
+    credentials: CREDS,
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ host }),
+  });
+  if (!res.ok) throw new Error(`allow host failed: ${res.status}`);
+}
+
+/** The blocked host from an egress-denied tool error, or null if it isn't an egress denial. */
+export function blockedEgressHost(error: string | null | undefined): string | null {
+  if (!error || !/egress/i.test(error)) return null;
+  const m =
+    error.match(/host '([^']+)'/) ?? // "host 'X' is not in the egress allowlist"
+    error.match(/attempted host: ([^);\s]+)/) ?? // "egress is disabled (attempted host: X)"
+    error.match(/for host: (\S+)/); // "egress not allowed for host: X" (http_fetch)
+  return m ? m[1].trim().replace(/[.,;]+$/, "") : null;
+}
+
+// Per-tenant multi-agent graph config (#290). One entry per agent the tenant has customized; a null
+// prompt inherits the default, disabled_tools lists the tools that agent must not use.
+export interface AgentConfigEntry {
+  name: string;
+  prompt: string | null;
+  disabled_tools: string[];
+}
+
+export interface AgentGraphConfig {
+  agents: AgentConfigEntry[];
+}
+
+export interface AgentRosterEntry {
+  name: string;
+  uses_tools: boolean;
+}
+
+/** The saved overrides plus the server-side roster, default prompts, and available tool names. */
+export interface AgentConfigView {
+  config: AgentGraphConfig;
+  defaults: Record<string, string>;
+  agents: AgentRosterEntry[];
+  available_tools: string[];
+}
+
+/** The tenant's multi-agent graph config: saved overrides + defaults + roster + available tools. */
+export async function fetchAgentConfig(token: string): Promise<AgentConfigView> {
+  const res = await fetch(`${API_BASE}/api/v1/agents/config`, {
+    headers: authHeaders(token),
+    credentials: CREDS,
+  });
+  if (!res.ok) throw new Error(`fetch agent config failed: ${res.status}`);
+  return ((await res.json()) as { data?: AgentConfigView }).data!;
+}
+
+/** Replace the tenant's agent overrides (full overwrite). */
+export async function saveAgentConfig(
+  token: string,
+  config: AgentGraphConfig,
+): Promise<AgentGraphConfig> {
+  const res = await fetch(`${API_BASE}/api/v1/agents/config`, {
+    method: "PUT",
+    credentials: CREDS,
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) throw new Error(`save agent config failed: ${res.status}`);
+  return ((await res.json()) as { data?: { config: AgentGraphConfig } }).data!.config;
+}
+
 /** Bulk import a standard `mcpServers` map (merge + connect each live). Returns the updated list. */
 export async function importMcpServers(
   token: string,
@@ -604,6 +749,7 @@ export async function streamChat(
   onError?: (message: string) => void,
   onApproval?: (req: ApprovalRequest) => void,
   onAgentStep?: (step: { kind: "plan" | "critique"; text: string }) => void,
+  onContext?: (context: ContextBreakdown) => void,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/chat`, {
     method: "POST",
@@ -635,6 +781,7 @@ export async function streamChat(
     } catch {
       return; // skip a malformed/partial frame rather than aborting the whole stream
     }
+    if (event === "context") return onContext?.(parsed as ContextBreakdown);
     if (event === "citations") return onCitations?.(parsed as Citation[]);
     if (event === "tool") return onToolStep?.(parsed as ToolStep);
     if (event === "plan" || event === "critique") {

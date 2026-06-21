@@ -34,9 +34,10 @@ MAX_TOOL_RESULT_CHARS = 4000
 
 # Used to force a final answer once the tool budget is exhausted (see run_agent).
 _FORCE_ANSWER = (
-    "You have reached the tool-use limit. Answer the user now using the information already "
-    "gathered above; do not call any more tools. If it is insufficient, say what you found and "
-    "what is still missing."
+    "You have reached the tool-use limit. Write the final answer to the user NOW from the "
+    "information already gathered; do not call any more tools and do not say 'let me…' or describe "
+    "further steps. If the information is insufficient, state plainly what you found and what is "
+    "still missing."
 )
 
 
@@ -118,8 +119,10 @@ async def run_agent(
     text = ""
     usage: Mapping[str, int] = {}
     for _ in range(max_iterations):
-        # Stream each model turn so reasoning and the answer arrive token-by-token; tool calls are
-        # parsed from the stream. Reasoning is emitted in order, before this turn's tool calls.
+        # Stream this turn's text live. A turn that ALSO requests tools is the model narrating its
+        # tool use ("let me search…"), not the answer: it streams, then the following tool_call
+        # tells the consumer to drop it from the answer, and it is re-emitted as reasoning so it
+        # lands in the trace. The final turn (no tool calls) is the real answer and stays streamed.
         text = ""
         tool_calls: list[ToolCallRequest] = []
         async for chunk in provider.stream(
@@ -139,9 +142,10 @@ async def run_agent(
             yield AgentEvent(type="final", answer=text, usage=dict(usage))
             return
 
-        # Echo the assistant's (possibly empty) turn, then each tool result as a TOOL-role message
-        # so the model sees the call was answered (native protocol) and produces a final reply.
+        # This turn called tools: the streamed text was narration. Preserve it as reasoning; the
+        # tool_call below signals the consumer to drop that narration from the answer.
         if text.strip():
+            yield AgentEvent(type="reasoning", thinking=text)
             convo.append(ChatMessage(Role.ASSISTANT, text))
         for call in tool_calls:
             yield AgentEvent(type="tool_call", tool=call.name, args=dict(call.arguments))

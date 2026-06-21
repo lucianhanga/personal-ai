@@ -1,6 +1,6 @@
 """Opt-in full RAG pipeline test against REAL Postgres + Ollama embeddings.
 
-Skipped unless PERSONALAI_RAG_IT=1 (and a DB + Ollama with mxbai-embed-large are available):
+Skipped unless PERSONALAI_RAG_IT=1 (and a DB + Ollama with qwen3-embedding:0.6b are available):
 
     PERSONALAI_RAG_IT=1 uv run pytest apps/backend/tests/test_rag_integration.py -q
 
@@ -23,14 +23,14 @@ from personalai_storage_postgres import PgVectorRepository, apply_migrations, cr
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("PERSONALAI_RAG_IT") != "1",
-    reason="set PERSONALAI_RAG_IT=1 (+ Postgres + Ollama mxbai-embed-large) for the full pipeline",
+    reason="set PERSONALAI_RAG_IT=1 (+ Postgres + Ollama qwen3-embedding:0.6b) for the pipeline",
 )
 
 DB_URL = os.environ.get(
     "PERSONALAI_DATABASE_URL", "postgresql://personalai@127.0.0.1:5432/personalai"
 )
 OLLAMA = os.environ.get("PERSONALAI_OLLAMA_HOST", "http://127.0.0.1:11434")
-EMBED_MODEL = os.environ.get("PERSONALAI_EMBED_MODEL", "mxbai-embed-large")
+EMBED_MODEL = os.environ.get("PERSONALAI_EMBED_MODEL", "qwen3-embedding:0.6b")
 
 
 def test_full_rag_pipeline_ingest_then_retrieve() -> None:

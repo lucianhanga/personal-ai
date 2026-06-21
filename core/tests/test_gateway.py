@@ -120,9 +120,94 @@ def test_high_risk_requires_approval() -> None:
 
 
 def test_invalid_input_rejected() -> None:
+    # A non-coercible mismatch (a list where a string is wanted) is still rejected.
     gw, _ = _gateway(RegisteredTool(_manifest(inputs=_STR_SCHEMA, risk=RiskLevel.LOW), _Echo()))
-    result = _run(gw.invoke(ToolCall("echo", "1.0.0", {"x": 123})))  # x must be string
+    result = _run(gw.invoke(ToolCall("echo", "1.0.0", {"x": ["not", "a", "string"]})))
     assert not result.ok and "invalid input" in (result.error or "")
+
+
+def test_number_for_string_arg_is_coerced() -> None:
+    # The model sent a number where the tool wants a string; coerce to "123" and run.
+    gw, _ = _gateway(RegisteredTool(_manifest(inputs=_STR_SCHEMA, risk=RiskLevel.LOW), _Echo()))
+    result = _run(gw.invoke(ToolCall("echo", "1.0.0", {"x": 123})))
+    assert result.ok and result.output == {"echo": "123"}
+
+
+_ARRAY_SCHEMA = {
+    "type": "object",
+    "properties": {"urls": {"type": "array", "items": {"type": "string"}}},
+    "required": ["urls"],
+}
+
+
+class _EchoUrls:
+    name = "echo"
+
+    async def invoke(self, call: ToolCall) -> ToolResult:
+        return ToolResult(ok=True, output={"urls": call.args.get("urls")})
+
+
+def test_scalar_for_array_arg_is_wrapped() -> None:
+    # The model sent a single value where the tool wants an array (e.g. tavily_extract `urls`).
+    tool = RegisteredTool(_manifest(inputs=_ARRAY_SCHEMA, risk=RiskLevel.LOW), _EchoUrls())
+    gw, _ = _gateway(tool)
+    result = _run(gw.invoke(ToolCall("echo", "1.0.0", {"urls": "http://x"})))
+    assert result.ok and result.output == {"urls": ["http://x"]}
+
+
+_ENUM_SCHEMA = {
+    "type": "object",
+    "properties": {"x": {"type": "string"}, "depth": {"enum": ["basic", "advanced"]}},
+    "required": ["x"],
+}
+
+
+def test_enum_violation_error_lists_allowed_values() -> None:
+    # An enum value can't be safely guessed; deny but tell the model the allowed values.
+    gw, _ = _gateway(RegisteredTool(_manifest(inputs=_ENUM_SCHEMA, risk=RiskLevel.LOW), _Echo()))
+    result = _run(gw.invoke(ToolCall("echo", "1.0.0", {"x": "q", "depth": "deep"})))
+    assert not result.ok
+    assert "depth must be one of: basic, advanced" in (result.error or "")
+
+
+def test_invalid_input_error_lists_valid_parameters() -> None:
+    # The error names the valid parameters so the model can fix a wrong argument name next turn.
+    # Empty args can't be auto-coerced (no single mislabeled key), so the call is denied.
+    gw, _ = _gateway(RegisteredTool(_manifest(inputs=_STR_SCHEMA, risk=RiskLevel.LOW), _Echo()))
+    result = _run(gw.invoke(ToolCall("echo", "1.0.0", {})))  # missing `x`, nothing to rename
+    assert not result.ok
+    assert "valid parameters: x (required)" in (result.error or "")
+
+
+def test_single_mislabeled_arg_is_auto_coerced() -> None:
+    # A model sent `input` for the required `x`; the gateway renames the one extra key and runs the
+    # tool (the handler sees the corrected name), instead of failing the call.
+    gw, _ = _gateway(RegisteredTool(_manifest(inputs=_STR_SCHEMA, risk=RiskLevel.LOW), _Echo()))
+    result = _run(gw.invoke(ToolCall("echo", "1.0.0", {"input": "hello"})))
+    assert result.ok and result.output == {"echo": "hello"}
+
+
+_BOUNDED_SCHEMA = {
+    "type": "object",
+    "properties": {"x": {"type": "string"}, "n": {"type": "integer", "minimum": 5, "maximum": 10}},
+    "required": ["x"],
+}
+
+
+class _EchoN:
+    name = "echo"
+
+    async def invoke(self, call: ToolCall) -> ToolResult:
+        return ToolResult(ok=True, output={"n": call.args.get("n")})
+
+
+def test_out_of_range_number_is_clamped_to_the_schema_bound() -> None:
+    # The model asked for n=3 but the tool requires n>=5; clamp to the minimum and run, rather than
+    # failing the call (mirrors tavily's max_results minimum).
+    tool = RegisteredTool(_manifest(inputs=_BOUNDED_SCHEMA, risk=RiskLevel.LOW), _EchoN())
+    gw, _ = _gateway(tool)
+    result = _run(gw.invoke(ToolCall("echo", "1.0.0", {"x": "q", "n": 3})))
+    assert result.ok and result.output == {"n": 5}
 
 
 def test_egress_blocked_denies() -> None:

@@ -23,6 +23,7 @@ from personalai_contracts.schemas.tools import Provenance, RiskLevel, ToolManife
 from personalai_contracts.testing import FakeModelProvider
 from personalai_core import AgentEvent, InProcessExecutor, Registry, ToolGateway, run_graph
 from personalai_core.gateway import RegisteredTool
+from personalai_core.graph import MAX_ATTEMPTS
 from personalai_core.security.audit import AuditLog
 
 ECHO = ToolManifest(
@@ -86,9 +87,10 @@ def test_empty_plan_skips_injection_and_streams_no_answer() -> None:
         gateway=_gateway(),
         tools=[],
     )
-    # No answer delta (empty), but plan + critique steps + the terminal final still flow.
-    assert [e.type for e in events] == ["plan", "critique", "final"]
-    assert events[0].text == ""
+    # An empty planner streams nothing (no plan step); the critic falls back to "Looks sound.",
+    # and the terminal final still flows.
+    assert [e.type for e in events] == ["critique", "final"]
+    assert events[0].text == "Looks sound."
     assert events[-1].usage == {}
 
 
@@ -129,6 +131,123 @@ def test_researcher_tool_steps_flow_and_usage_reaches_final() -> None:
     assert events[1].tool == "echo"
     assert events[2].ok is True
     assert events[-1].usage == {"total_tokens": 7}  # usage from run_agent's final reaches the end
+
+
+class _Recorder(FakeModelProvider):
+    """Records the system prompts each node sends, to assert prompt overrides reach the nodes."""
+
+    def __init__(self) -> None:
+        super().__init__(name="rec")
+        self.system_prompts: list[str] = []
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        self.system_prompts += [m.content for m in request.messages if m.role == Role.SYSTEM]
+        return GenerationResult(text="ok", model=request.model)
+
+
+def test_prompt_overrides_reach_planner_and_critic() -> None:
+    # #290: per-agent prompt overrides replace the defaults in the planner/critic (and researcher).
+    rec = _Recorder()
+    _drain(
+        messages=[ChatMessage(Role.USER, "hi")],
+        provider=rec,
+        model="m",
+        gateway=_gateway(),
+        tools=[],
+        prompts={"planner": "CUSTOM PLANNER", "critic": "CUSTOM CRITIC"},
+    )
+    assert any("CUSTOM PLANNER" in s for s in rec.system_prompts)
+    assert any("CUSTOM CRITIC" in s for s in rec.system_prompts)
+    # An unset agent (researcher) still gets its built-in default prompt.
+    assert any("You are the researcher" in s for s in rec.system_prompts)
+
+
+class _CriticRevises(FakeModelProvider):
+    """Researcher gives a wrong answer; the critic flags it (its review sees 'Draft answer')."""
+
+    def __init__(self) -> None:
+        super().__init__(name="rev")
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        last = request.messages[-1].content if request.messages else ""
+        if "Draft answer to review" in last:
+            return GenerationResult(
+                text="REVISE: the capital is Canberra, not Sydney.", model=request.model
+            )
+        return GenerationResult(text="The capital of Australia is Sydney.", model=request.model)
+
+
+class _ReviseThenAccept(FakeModelProvider):
+    """A weak first answer the critic REVISEs, then an improved retry the critic accepts (OK)."""
+
+    def __init__(self) -> None:
+        super().__init__(name="loop")
+        self.researcher_runs = 0
+        self.critic_runs = 0
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        sys_text = " ".join(m.content for m in request.messages if m.role == Role.SYSTEM)
+        last = request.messages[-1].content if request.messages else ""
+        if "Draft answer to review" in last:
+            self.critic_runs += 1
+            text = "REVISE: only a link, no data." if self.critic_runs == 1 else "OK: looks good."
+            return GenerationResult(text=text, model=request.model)
+        if "You are the planner" in sys_text:
+            return GenerationResult(text="search for it", model=request.model)
+        self.researcher_runs += 1
+        text = "See the website." if self.researcher_runs == 1 else "It is 23C and sunny."
+        return GenerationResult(text=text, model=request.model)
+
+
+def test_reflection_loop_retries_on_revise_then_finalizes_the_improved_answer() -> None:
+    # #290 bounded reflection loop: a "REVISE" verdict sends the researcher back once (with the
+    # critique as feedback); the improved retry is accepted and finalized.
+    provider = _ReviseThenAccept()
+    events = _drain(
+        messages=[ChatMessage(Role.USER, "weather?")],
+        provider=provider,
+        model="m",
+        gateway=_gateway(),
+        tools=[],
+    )
+    assert provider.researcher_runs == 2  # initial + one retry
+    assert provider.critic_runs == 2  # reviewed both attempts
+    final = next(e for e in events if e.type == "final")
+    assert final.answer == "It is 23C and sunny."  # the improved retry, not the weak first draft
+
+
+def test_reflection_loop_is_bounded() -> None:
+    # If the critic always says REVISE, the loop still stops at MAX_ATTEMPTS researcher passes.
+    provider = _CriticRevises()  # always REVISE
+    events = _drain(
+        messages=[ChatMessage(Role.USER, "capital of australia?")],
+        provider=provider,
+        model="m",
+        gateway=_gateway(),
+        tools=[],
+    )
+    # Exactly MAX_ATTEMPTS researcher passes -> two "answer" deltas precede the terminal final.
+    assert sum(1 for e in events if e.type == "answer") == MAX_ATTEMPTS
+    assert any(e.type == "final" for e in events)
+
+
+def test_critic_review_goes_to_the_trace_not_the_answer() -> None:
+    # #290: the critic's review is a critique step (reasoning panel) and must NOT modify the answer:
+    # only the agents' final result is shown; their discussion stays in the trace.
+    events = _drain(
+        messages=[ChatMessage(Role.USER, "capital of australia?")],
+        provider=_CriticRevises(),
+        model="m",
+        gateway=_gateway(),
+        tools=[],
+    )
+    critique = next(e for e in events if e.type == "critique")
+    assert "Canberra" in (critique.text or "")
+    # No "Reviewer" note leaks into the answer stream.
+    assert not any("Reviewer" in (e.answer or "") for e in events if e.type == "answer")
+    # The terminal answer is the researcher's answer, unchanged by the critic.
+    final = next(e for e in events if e.type == "final")
+    assert final.answer == "The capital of Australia is Sydney."
 
 
 def test_human_gate_suspends_then_resumes_durably() -> None:

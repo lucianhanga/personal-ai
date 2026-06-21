@@ -43,6 +43,7 @@ async def run_turn(
     gateway: Any,
     max_iterations: int,
     graph_enabled: bool = False,
+    agent_prompts: Mapping[str, str] | None = None,
     context: AgentContext | None = None,
     checkpointer: Any | None = None,
     thread_id: str | None = None,
@@ -71,6 +72,7 @@ async def run_turn(
                 checkpointer=checkpointer,
                 thread_id=thread_id,
                 resume=resume,
+                prompts=agent_prompts,
             )
             if graph_enabled
             else run_agent(

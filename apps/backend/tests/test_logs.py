@@ -81,3 +81,33 @@ def test_buffer_respects_capacity() -> None:
             logging.LogRecord("personalai.x", logging.INFO, __file__, 0, f"m{i}", None, None)
         )
     assert [r["message"] for r in handler.records] == ["m3", "m4"]
+
+
+def test_mcp_stdio_filter_recovers_raw_offending_line() -> None:
+    # The MCP SDK logs a generic parse-error and drops the bad line; the filter recovers it from the
+    # exception's traceback frame locals so the next bad-server line names itself (MCP hunt #290).
+    from personalai_backend.logbuffer import McpStdioLineFilter
+
+    flt = McpStdioLineFilter()
+    buf = RingBufferHandler()
+    logger = logging.getLogger("mcp.client.stdio.test")
+    logger.addHandler(buf)
+    logger.setLevel(logging.INFO)
+    logger.addFilter(flt)
+    try:
+        # Mirror the SDK: a non-JSON server line fails to parse inside an except block.
+        line = "Browserslist: caniuse-lite is outdated. (a Node banner on stdout)"
+        try:
+            import json
+
+            json.loads(line)
+        except Exception:
+            logger.exception("Failed to parse JSONRPC message from server")
+    finally:
+        logger.removeFilter(flt)
+        logger.removeHandler(buf)
+
+    assert len(buf.records) == 1
+    msg = buf.records[0]["message"]
+    assert "raw stdout line:" in msg
+    assert "caniuse-lite is outdated" in msg  # the culprit's actual output is now visible

@@ -33,7 +33,14 @@ class _Scripted(FakeModelProvider):
 
 
 def _client() -> TestClient:
-    config = CoreConfig(auth_token=TOKEN, model_provider="scripted")
+    # No DB needed (this exercises the agent loop, not storage). Point at an unreachable DB so the
+    # app degrades to storage-less mode and the turn runs purely from config -- never picking up
+    # per-tenant settings persisted in a live database (e.g. agent_mode) that would change the path.
+    config = CoreConfig(
+        auth_token=TOKEN,
+        model_provider="scripted",
+        database_url="postgresql://personalai@127.0.0.1:1/personalai",
+    )
     boot = bootstrap(config=config)
     boot.registries.model_providers.register("scripted", _Scripted())
     return TestClient(create_app(boot))

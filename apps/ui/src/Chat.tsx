@@ -8,24 +8,29 @@ import {
   fetchConversations,
   fetchFiles,
   fetchMemories,
+  allowEgressHost,
   fetchModels,
   fetchProviders,
+  fetchSettings,
   renameConversation,
   resumeChat,
+  saveSettings,
   streamChat,
   uploadFile,
   type ApprovalRequest,
   type ChatMessage,
   type Citation,
+  type ContextBreakdown,
   type ConversationSummary,
   type DocumentInfo,
   type ModelInfo,
+  type TenantSettings,
   type TraceItem,
   type UsageInfo,
 } from "./api";
 import { ChatsPanel } from "./ChatsPanel";
 import { MessageList } from "./MessageList";
-import { SettingsAccordion } from "./SettingsAccordion";
+import { SettingsView } from "./SettingsView";
 import { SidePanel } from "./SidePanel";
 
 // Key for the not-yet-persisted "new" chat (before its conversation id exists).
@@ -38,6 +43,8 @@ interface ChatState {
   // Ordered reasoning + tool-step timeline per assistant message index.
   trace: Record<number, TraceItem[]>;
   usage: UsageInfo | null;
+  // The context composition assembled for the latest turn (what went into the prompt).
+  context: ContextBreakdown | null;
   busy: boolean;
   // Set when a turn is suspended at the durable human gate (M8.1c), awaiting approve/reject.
   pending: ApprovalRequest | null;
@@ -48,15 +55,19 @@ const EMPTY_CHAT: ChatState = {
   citations: {},
   trace: {},
   usage: null,
+  context: null,
   busy: false,
   pending: null,
 };
 
-/** Append a trace item in order, merging consecutive reasoning deltas into one item. */
+// These kinds stream as deltas; consecutive same-kind items are merged into one.
+const STREAMING_KINDS = new Set(["reasoning", "plan", "critique"]);
+
+/** Append a trace item in order, merging consecutive streamed deltas (reasoning/plan/critique). */
 function appendTrace(list: TraceItem[] | undefined, item: TraceItem): TraceItem[] {
   const next = [...(list ?? [])];
   const last = next[next.length - 1];
-  if (item.kind === "reasoning" && last?.kind === "reasoning") {
+  if (STREAMING_KINDS.has(item.kind) && last?.kind === item.kind) {
     next[next.length - 1] = { ...last, text: (last.text ?? "") + (item.text ?? "") };
   } else {
     next.push(item);
@@ -79,6 +90,9 @@ export function Chat({
   const [provider, setProvider] = useState<string>("");
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [model, setModel] = useState<string>("");
+  // The tenant's saved settings, loaded once. The top-bar model selector is the single source of
+  // truth and writes the chosen model back here as the persisted default, so it survives reloads.
+  const settingsRef = useRef<TenantSettings | null>(null);
   const [files, setFiles] = useState<DocumentInfo[]>([]);
   const [useRag, setUseRag] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -89,13 +103,10 @@ export function Chat({
   // over-deliberate and appear to hang. "Off"/"Full" remain selectable.
   const [reasoning, setReasoning] = useState<"off" | "brief" | "full">("brief");
   const [incognito, setIncognito] = useState(false);
-  const [showSettings, setShowSettings] = useState(true);
-  const [showMemory, setShowMemory] = useState(false);
-  const [showTools, setShowTools] = useState(false);
+  // Two-view navigation: the chat workspace vs the full-width Settings view (#290 redesign).
+  const [tab, setTab] = useState<"chat" | "settings">("chat");
   const [showLog, setShowLog] = useState(false);
   const [showAppLogs, setShowAppLogs] = useState(false);
-  const [showMcp, setShowMcp] = useState(false);
-  const [showMcpActivity, setShowMcpActivity] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chatsCollapsed, setChatsCollapsed] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -112,7 +123,7 @@ export function Chat({
 
   const activeKey = activeId ?? NEW_CHAT;
   const view = chats[activeKey] ?? EMPTY_CHAT;
-  const { messages, citations, trace, usage, busy, pending } = view;
+  const { messages, citations, trace, usage, context, busy, pending } = view;
 
   const patchChat = (key: string, fn: (s: ChatState) => ChatState): void => {
     setChats((prev) => ({ ...prev, [key]: fn(prev[key] ?? EMPTY_CHAT) }));
@@ -147,6 +158,33 @@ export function Chat({
       active = false;
     };
   }, [token, provider]);
+
+  // Load the saved settings once so the model selector can persist the chosen default. If storage
+  // is unavailable (no DB), persistence is silently skipped and selection stays session-only.
+  useEffect(() => {
+    fetchSettings(token)
+      .then(({ settings }) => {
+        settingsRef.current = settings;
+      })
+      .catch(() => {
+        settingsRef.current = null;
+      });
+  }, [token]);
+
+  // Persist the chosen model as the tenant default (best-effort; the selection still applies this
+  // session even if the write fails). Merges into the loaded settings so other fields are preserved.
+  function persistDefaultModel(name: string): void {
+    const base = settingsRef.current;
+    if (base === null || name === "") return;
+    const next: TenantSettings = { ...base, default_model: name };
+    settingsRef.current = next;
+    void saveSettings(token, next).catch(() => undefined);
+  }
+
+  function onModelChange(name: string): void {
+    setModel(name);
+    persistDefaultModel(name);
+  }
 
   useEffect(() => {
     let active = true;
@@ -291,6 +329,15 @@ export function Chat({
     }
   }
 
+  async function onAllowHost(host: string): Promise<void> {
+    // Allow-on-deny: add the host to the allowlist (the reasoning-pane prompt shows the outcome).
+    try {
+      await allowEgressHost(token, host);
+    } catch (e: unknown) {
+      setError(String(e));
+    }
+  }
+
   async function send(): Promise<void> {
     const content = input.trim();
     if (!content || !model || view.busy) return;
@@ -346,7 +393,17 @@ export function Chat({
           patchChat(key, (s) => ({ ...s, messages: [...history, { role: "assistant", content: acc }] }));
         },
         (cites) => patchChat(key, (s) => ({ ...s, citations: { ...s.citations, [assistantIndex]: cites } })),
-        (step) =>
+        (step) => {
+          // A tool call means the answer text streamed so far this turn was tool-use narration
+          // (it's kept in the trace as reasoning); drop it from the answer bubble. The final turn
+          // has no tool call, so its streamed answer stays.
+          if (step.phase === "call") {
+            acc = "";
+            patchChat(key, (s) => ({
+              ...s,
+              messages: [...history, { role: "assistant", content: "" }],
+            }));
+          }
           patchChat(key, (s) => ({
             ...s,
             trace: {
@@ -360,7 +417,8 @@ export function Chat({
                 error: step.error,
               }),
             },
-          })),
+          }));
+        },
         (u) => patchChat(key, (s) => ({ ...s, usage: u })),
         (delta) =>
           patchChat(key, (s) => ({
@@ -399,6 +457,8 @@ export function Chat({
               }),
             },
           })),
+        // The context composition for this turn, shown in the side panel as the question is asked.
+        (ctx) => patchChat(key, (s) => ({ ...s, context: ctx })),
       );
       if (persistence) setConversations(await fetchConversations(token));
     } catch (e: unknown) {
@@ -457,96 +517,109 @@ export function Chat({
         }}
       >
         <h1 style={{ margin: 0, fontSize: "1.3rem" }}>Personal AI</h1>
+        {/* Chat | Settings view switch (two-tab navigation). */}
+        <div role="tablist" aria-label="view" style={{ display: "flex", gap: "0.25rem" }}>
+          {(["chat", "settings"] as const).map((v) => (
+            <button
+              key={v}
+              role="tab"
+              aria-selected={tab === v}
+              aria-current={tab === v ? "page" : undefined}
+              data-testid={`nav-${v}`}
+              onClick={() => setTab(v)}
+              style={{
+                padding: "0.25rem 0.6rem",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                fontSize: "0.9rem",
+                fontWeight: tab === v ? 600 : 400,
+                borderBottom: tab === v ? "2px solid #1a7f37" : "2px solid transparent",
+              }}
+            >
+              {v === "chat" ? "Chat" : "Settings"}
+            </button>
+          ))}
+        </div>
+        {/* Backend health as a color dot + label (green ok, red down, amber checking). */}
         <span
           data-testid="backend-status"
           data-status={status}
-          style={{ fontSize: "0.85rem", color: "#555" }}
+          title={statusLabel}
+          style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", fontSize: "0.85rem", color: "#555" }}
         >
+          <span
+            aria-hidden
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background:
+                status === "connected" ? "#1a7f37" : status === "loading" ? "#b06f00" : "#b00",
+            }}
+          />
           {statusLabel}
         </span>
-        <span data-testid="provider-badge" style={{ fontSize: "0.85rem", color: "#555" }}>
-          Local
-        </span>
-        <label style={{ fontSize: "0.85rem" }}>
-          Token:{" "}
-          <input
-            data-testid="token-input"
-            type="password"
-            value={token}
-            placeholder="PERSONALAI_AUTH_TOKEN"
-            onChange={(e) => onToken?.(e.target.value)}
-          />
-        </label>
-        <label htmlFor="provider" style={{ marginLeft: "auto" }}>
-          Provider:
-        </label>
-        <select
-          id="provider"
-          data-testid="provider-select"
-          value={provider}
-          onChange={(e) => setProvider(e.target.value)}
-        >
-          {providers.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
-        <label htmlFor="model">Model:</label>
-        <select
-          id="model"
-          data-testid="model-select"
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-        >
-          {models.map((m) => (
-            <option key={m.name} value={m.name}>
-              {m.name}
-            </option>
-          ))}
-        </select>
-        {selected && (
-          <span data-testid="model-caps" style={{ fontSize: "0.8rem", color: "#555" }}>
-            {[
-              selected.local ? "local" : "remote",
-              selected.capabilities.vision && "vision",
-              selected.capabilities.tool_calling && "tools",
-              selected.capabilities.thinking && "thinking",
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </span>
+        {/* Model selection is a Chat-view concern (per-turn); hidden on the Settings view. */}
+        {tab === "chat" && (
+          <>
+            <label htmlFor="model" style={{ marginLeft: "auto", fontSize: "0.85rem", color: "#555" }}>
+              Model
+            </label>
+            <select
+              id="model"
+              data-testid="model-select"
+              value={model}
+              onChange={(e) => onModelChange(e.target.value)}
+            >
+              {models.map((m) => (
+                <option key={m.name} value={m.name}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+            {/* The provider selector only appears when more than one is configured (local-first:
+                usually just Ollama, so it stays out of the way). */}
+            {providers.length > 1 && (
+              <select
+                data-testid="provider-select"
+                aria-label="provider"
+                value={provider}
+                onChange={(e) => setProvider(e.target.value)}
+              >
+                {providers.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            )}
+            {selected && (
+              <span data-testid="model-caps" style={{ fontSize: "0.8rem", color: "#555" }}>
+                {[
+                  selected.local ? "local" : "remote",
+                  selected.capabilities.vision && "vision",
+                  selected.capabilities.tool_calling && "tools",
+                  selected.capabilities.thinking && "thinking",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            )}
+          </>
         )}
       </header>
 
-      {/* Row 2: global settings (collapsible accordion). */}
-      <SettingsAccordion
-        token={token}
-        showSettings={showSettings}
-        setShowSettings={setShowSettings}
-        files={files}
-        uploading={uploading}
-        onUpload={(f) => void onUpload(f)}
-        useRag={useRag}
-        setUseRag={setUseRag}
-        showTools={showTools}
-        setShowTools={setShowTools}
-        useTools={useTools}
-        setUseTools={setUseTools}
-        approveTools={approveTools}
-        setApproveTools={setApproveTools}
-        showMemory={showMemory}
-        setShowMemory={setShowMemory}
-        useMemory={useMemory}
-        setUseMemory={setUseMemory}
-        reasoning={reasoning}
-        setReasoning={setReasoning}
-        showMcp={showMcp}
-        setShowMcp={setShowMcp}
-      />
-
-      {/* Row 3: workspace — chats (1/6) | chat (3/6) | logs (2/6). */}
-      {token ? (
+      {tab === "settings" ? (
+        <SettingsView
+          token={token}
+          onToken={onToken}
+          files={files}
+          uploading={uploading}
+          onUpload={(f) => void onUpload(f)}
+          onDelete={(id) => void onDelete(id)}
+        />
+      ) : (
         <div
           data-testid="workspace"
           style={{
@@ -583,26 +656,6 @@ export function Chat({
             data-testid="chat-col"
             style={{ flex: 3, minWidth: 0, display: "flex", flexDirection: "column", gap: "0.5rem" }}
           >
-            {files.length > 0 && (
-              <ul
-                data-testid="file-list"
-                style={{ margin: 0, paddingLeft: "1rem", fontSize: "0.8rem" }}
-              >
-                {files.map((f) => (
-                  <li key={f.id} data-testid="file-item">
-                    {f.name} <span style={{ color: "#888" }}>({f.chunk_count} chunks)</span>{" "}
-                    <button
-                      data-testid={`delete-${f.id}`}
-                      onClick={() => void onDelete(f.id)}
-                      style={{ fontSize: "0.75rem" }}
-                    >
-                      remove
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-
             <MessageList
               messages={messages}
               trace={trace}
@@ -610,6 +663,7 @@ export function Chat({
               busy={busy}
               listRef={listRef}
               onScroll={onMessagesScroll}
+              onAllowHost={(host) => void onAllowHost(host)}
             />
 
             {!atBottom && (
@@ -663,18 +717,101 @@ export function Chat({
               </p>
             )}
 
-            <div style={{ display: "flex", gap: "0.5rem" }}>
-              <input
+            {/* Per-session controls strip: these are per-turn toggles, kept next to the composer. */}
+            <div
+              data-testid="session-controls"
+              style={{
+                display: "flex",
+                gap: "0.75rem",
+                alignItems: "center",
+                flexWrap: "wrap",
+                fontSize: "0.85rem",
+                borderTop: "1px solid #eee",
+                paddingTop: "0.4rem",
+              }}
+            >
+              <label>
+                <input
+                  data-testid="rag-toggle"
+                  type="checkbox"
+                  checked={useRag}
+                  onChange={(e) => setUseRag(e.target.checked)}
+                />{" "}
+                Use my documents
+              </label>
+              <label>
+                <input
+                  data-testid="tools-toggle"
+                  type="checkbox"
+                  checked={useTools}
+                  onChange={(e) => setUseTools(e.target.checked)}
+                />{" "}
+                Use tools
+              </label>
+              {useTools && (
+                <label title="Allow high-risk tools (e.g. http_fetch) to run this session">
+                  <input
+                    data-testid="approve-tools-toggle"
+                    type="checkbox"
+                    checked={approveTools}
+                    onChange={(e) => setApproveTools(e.target.checked)}
+                  />{" "}
+                  approve high-risk
+                </label>
+              )}
+              <label>
+                <input
+                  data-testid="memory-toggle"
+                  type="checkbox"
+                  checked={useMemory}
+                  onChange={(e) => setUseMemory(e.target.checked)}
+                />{" "}
+                Use my memory
+              </label>
+              <label
+                style={{ marginLeft: "auto" }}
+                title="How much the model thinks before answering. Off = none; Brief = concise; Full = think freely (slower)."
+              >
+                Reasoning{" "}
+                <select
+                  data-testid="reasoning-select"
+                  value={reasoning}
+                  onChange={(e) => setReasoning(e.target.value as "off" | "brief" | "full")}
+                >
+                  <option value="off">Off</option>
+                  <option value="brief">Brief</option>
+                  <option value="full">Full</option>
+                </select>
+              </label>
+            </div>
+            {files.length > 0 && !useRag && (
+              <span data-testid="rag-hint" style={{ color: "#b06f00", fontSize: "0.8rem" }}>
+                Not using your documents — turn on “Use my documents” to ground answers.
+              </span>
+            )}
+
+            <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-end" }}>
+              <textarea
                 data-testid="composer"
-                style={{ flex: 1 }}
+                rows={4}
+                style={{ flex: 1, resize: "vertical", font: "inherit", padding: "0.4rem" }}
                 value={input}
-                placeholder="Type a message..."
+                placeholder="Type a message...  (Enter to send, Shift+Enter for a new line)"
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") void send();
+                  // Enter sends; Shift+Enter inserts a newline. Ignore Enter mid-IME composition
+                  // (e.g. Japanese/Chinese input) so committing a candidate doesn't send.
+                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    void send();
+                  }
                 }}
               />
-              <button data-testid="send" onClick={() => void send()} disabled={busy || !model}>
+              <button
+                data-testid="send"
+                onClick={() => void send()}
+                disabled={busy || !model || input.trim() === ""}
+              >
                 {busy ? "..." : "Send"}
               </button>
             </div>
@@ -685,20 +822,15 @@ export function Chat({
             token={token}
             conversationId={activeId}
             usage={usage}
+            context={context}
             collapsed={sidebarCollapsed}
             setCollapsed={setSidebarCollapsed}
             showLog={showLog}
             setShowLog={setShowLog}
             showAppLogs={showAppLogs}
             setShowAppLogs={setShowAppLogs}
-            showMcpActivity={showMcpActivity}
-            setShowMcpActivity={setShowMcpActivity}
           />
         </div>
-      ) : (
-        <p data-testid="need-token" style={{ color: "#888" }}>
-          Enter your backend API token to start chatting.
-        </p>
       )}
 
       <p data-testid="security-note" style={{ color: "#555", fontSize: "0.8rem" }}>

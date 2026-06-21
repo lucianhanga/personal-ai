@@ -29,7 +29,10 @@ salience, de-duplicates against what it already knows, and stores them in **pgve
 
 On a later turn, if **"Use my memory"** is on (`use_memory`), the most relevant memories are
 retrieved and injected as a compact *"what you remember about the user"* block. Retrieved memory is
-treated as **untrusted data, not instructions** (prompt-injection guardrail).
+treated as **untrusted data, not instructions** (prompt-injection guardrail). For a follow-up, the
+retrieval is anchored on the **contextualized standalone query** (see
+[the agent guide](./agent.md#query-contextualization-follow-ups)), so a terse reply still recalls the
+right facts.
 
 ### Visualize & erase
 
@@ -57,7 +60,10 @@ Start a chat with the **incognito** switch (or `POST /api/v1/conversations {"inc
 | `PERSONALAI_STM_SUMMARIZE` | `true` | enable the short-term rolling summary |
 | `PERSONALAI_MEMORY_ENABLED` | `true` | extract long-term memories after a turn |
 | `PERSONALAI_MEMORY_TOP_K` | `5` | memories injected when `use_memory` is on |
-| `PERSONALAI_EMBED_MODEL` | `mxbai-embed-large` | embeddings for memory (1024-dim) |
+| `PERSONALAI_EMBED_MODEL` | `qwen3-embedding:0.6b` | embeddings for memory (1024-dim) |
+
+`memory_enabled` is also saved **per-tenant** (Settings → Preferences / Memory); an unset value
+inherits the deployment default above.
 
 ## How it relates to RAG and KAG
 

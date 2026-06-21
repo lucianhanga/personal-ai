@@ -1,4 +1,4 @@
--- Vector store for RAG (pgvector). Dimension matches mxbai-embed-large (1024); changing the
+-- Vector store for RAG (pgvector). Dimension matches qwen3-embedding:0.6b (1024); changing the
 -- embedding model requires a new migration. Metadata carries the chunk text + source/locator.
 CREATE EXTENSION IF NOT EXISTS vector;
 

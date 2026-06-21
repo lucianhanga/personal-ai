@@ -16,7 +16,9 @@ test("renders connected when the backend is healthy", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Personal AI" })).toBeVisible();
   await expect(page.getByTestId("backend-status")).toHaveText(/connected/i);
-  await expect(page.getByTestId("provider-badge")).toHaveText("Local");
+  // The Chat | Settings view switch lives in the top bar.
+  await expect(page.getByTestId("nav-chat")).toBeVisible();
+  await expect(page.getByTestId("nav-settings")).toBeVisible();
 });
 
 test("renders not reachable when the backend is down", async ({ page }) => {

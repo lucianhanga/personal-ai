@@ -1,0 +1,96 @@
+import { useState } from "react";
+
+import { Agents } from "./Agents";
+import { DocumentsPanel } from "./DocumentsPanel";
+import { McpPanel } from "./McpPanel";
+import { Memory } from "./Memory";
+import { Network } from "./Network";
+import { Preferences } from "./Preferences";
+import { Tools } from "./Tools";
+import type { DocumentInfo } from "./api";
+
+type SectionId = "documents" | "tools" | "mcp" | "agents" | "memory" | "network" | "preferences";
+
+const SECTIONS: { id: SectionId; label: string }[] = [
+  { id: "documents", label: "Documents" },
+  { id: "tools", label: "Tools" },
+  { id: "mcp", label: "MCP servers" },
+  { id: "agents", label: "Agents" },
+  { id: "memory", label: "Memory" },
+  { id: "network", label: "Network" },
+  { id: "preferences", label: "Preferences" },
+];
+
+interface SettingsViewProps {
+  token: string;
+  onToken?: (value: string) => void;
+  files: DocumentInfo[];
+  uploading: boolean;
+  onUpload: (file: File | undefined) => void;
+  onDelete: (id: string) => void;
+}
+
+/** Settings as a dedicated full-width view with a section rail + detail pane (#290 redesign). */
+export function SettingsView(props: SettingsViewProps): React.ReactElement {
+  const { token, onToken } = props;
+  const [section, setSection] = useState<SectionId>("documents");
+
+  return (
+    <div
+      data-testid="settings-view"
+      style={{ display: "flex", gap: "1rem", flex: 1, minHeight: 0, alignItems: "stretch", flexWrap: "wrap" }}
+    >
+      {/* Section rail */}
+      <nav
+        data-testid="settings-nav"
+        role="tablist"
+        aria-orientation="vertical"
+        style={{ display: "flex", flexDirection: "column", gap: "0.15rem", minWidth: 140 }}
+      >
+        {SECTIONS.map((s) => {
+          const active = section === s.id;
+          return (
+            <button
+              key={s.id}
+              role="tab"
+              aria-selected={active}
+              aria-current={active ? "page" : undefined}
+              data-testid={`settings-nav-${s.id}`}
+              onClick={() => setSection(s.id)}
+              style={{
+                textAlign: "left",
+                padding: "0.4rem 0.6rem",
+                border: "none",
+                cursor: "pointer",
+                borderLeft: active ? "3px solid #1a7f37" : "3px solid transparent",
+                background: active ? "#f0f6f1" : "none",
+                fontWeight: active ? 600 : 400,
+                fontSize: "0.88rem",
+              }}
+            >
+              {s.label}
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* Detail pane */}
+      <div data-testid="settings-pane" style={{ flex: 1, minWidth: 280, overflowY: "auto" }}>
+        {section === "documents" && (
+          <DocumentsPanel
+            files={props.files}
+            uploading={props.uploading}
+            onUpload={props.onUpload}
+            onDelete={props.onDelete}
+          />
+        )}
+        {section === "tools" && <Tools token={token} />}
+        {section === "mcp" && <McpPanel token={token} />}
+        {section === "agents" && <Agents token={token} />}
+        {section === "memory" && <Memory token={token} />}
+        {section === "network" && <Network token={token} />}
+        {section === "preferences" && <Preferences token={token} onToken={onToken} />}
+      </div>
+    </div>
+  );
+}

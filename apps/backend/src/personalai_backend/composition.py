@@ -13,7 +13,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from personalai_core import CoreConfig, InProcessExecutor, Registries, ToolGateway
-from personalai_core.security import AuditLog, EgressBlockedError, assert_egress_allowed
+from personalai_core.security import (
+    AuditLog,
+    EgressBlockedError,
+    assert_egress_allowed,
+    effective_egress_config,
+)
 
 
 @dataclass(frozen=True)
@@ -82,8 +87,9 @@ def register_adapters(registries: Registries, config: CoreConfig) -> None:
     registries.tools.register("web_search", RegisteredTool(WEB_SEARCH_MANIFEST, WebSearch()))
 
     def _fetch_egress_allowed(host: str) -> bool:
+        # Honor the request tenant's effective egress (#290), falling back to boot config.
         try:
-            assert_egress_allowed(config, host)
+            assert_egress_allowed(effective_egress_config(config), host)
         except EgressBlockedError:
             return False
         return True
@@ -107,7 +113,8 @@ def bootstrap(
     audit = AuditLog(sink_path=audit_path)
 
     def _egress_check(host: str) -> None:
-        assert_egress_allowed(resolved_config, host)
+        # Honor the request tenant's effective egress (#290), falling back to boot config.
+        assert_egress_allowed(effective_egress_config(resolved_config), host)
 
     gateway = ToolGateway(
         registries.tools, InProcessExecutor(), audit=audit, egress_check=_egress_check

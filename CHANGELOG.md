@@ -11,6 +11,54 @@ generated OpenAPI document.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-06-21
+
+Milestone **M8.2** — multi-agent quality, per-tenant configuration, and a streamlined UI.
+
+### Added
+- **Agent mode selector** (`single` | `multi` | `custom`): `single` = the single-agent loop,
+  `multi` = the planner → researcher → critic graph, `custom` = reserved. Per-tenant, persisted;
+  supersedes the `agent_graph_enabled` flag (which still maps to `multi` for back-compat).
+- **Per-tenant agent configuration**: edit each agent's system prompt and scope which tools/MCPs
+  the researcher may use, from a new **Agents** settings panel.
+- **Bounded reflection loop**: when the critic judges an answer materially inadequate (no real
+  data, dead link, doesn't answer), the graph retries the researcher once with the critique as
+  feedback before finalizing. Capped (1 retry) and only on a `REVISE` verdict.
+- **Query understanding (contextualize)**: a follow-up is rewritten into a standalone request to
+  anchor RAG + memory retrieval and tool queries; the original question still drives the answer.
+  Skipped for first/standalone questions. The model is also told to reply in the user's language,
+  and the **current date** is injected so agents don't dismiss recent dates as fabricated.
+- **Per-tenant settings** (Postgres, RLS), in a new **Settings** view: model/agent/behavior
+  preferences, the **document-indexing (embedding) engine**, **network egress** (enable + host
+  allowlist), the API token, and the **turn timeout** (`agent_timeout_seconds`).
+- **Network egress controls**: a Network settings panel (off by default, amber risk warning,
+  confirm-on-enable) **and** one-click **allow-on-deny** — when a tool is blocked, the reasoning
+  pane offers to allow that host from then on. Egress is now enforced **per tenant**.
+- **Context composition view**: the side panel shows what was assembled into the prompt this turn
+  (grounding, documents, memory, the interpreted request, …) with per-component token estimates and
+  a hover overlay.
+- **Schema-driven tool-argument auto-fix**: the gateway reads each tool's JSON Schema and repairs
+  common model slips (rename a mislabeled argument, coerce a scalar to an array or a numeric string
+  to a number, clamp a number to the min/max), re-validating so a wrong fix is never used; enum
+  errors list the allowed values.
+
+### Changed
+- **UI redesign**: a **Chat | Settings** two-view split (settings moved out of the inline accordion
+  into a dedicated view); a slimmer top bar with a single model selector that persists the choice;
+  per-session toggles moved next to a **4-line composer** (Enter sends, Shift+Enter newline). The
+  reasoning pane streams all agents with a faded per-agent color code (shared with the Agents
+  config), a bigger font/window, and only the final agreed answer is shown as the reply.
+- **Default embedding model** is now `qwen3-embedding:0.6b` (1024-dim, same schema as before).
+- The backend now **loads `.env`** on startup, so documented `PERSONALAI_*` settings actually apply.
+
+### Fixed
+- The multi-agent **critic** now actually reviews (it was returning empty / dismissing real data);
+  its review stays in the reasoning pane and never leaks into the answer.
+- The agent no longer ends a turn on a `"let me…"` non-answer; tool-use narration is kept as
+  reasoning, and the final answer streams again.
+- Recognize all egress block message formats (including the built-in `http_fetch`).
+- Diagnostics: surface the raw offending line on MCP stdio JSON-RPC parse errors.
+
 ## [0.6.0] — 2026-06-09
 
 Milestones **M0–M6** complete.

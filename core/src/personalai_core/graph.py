@@ -17,12 +17,12 @@ Topology: **planner -> researcher -> critic -> [human_gate] -> finalize -> END**
 - finalize: emits the single terminal ``final``.
 
 Keeping :func:`run_graph`'s signature stable is the contract that ``apps/backend/.../turn.py`` and
-the SSE mapping rely on; the ``agent_graph_enabled`` flag selects this graph over the single loop.
+the SSE mapping rely on; ``agent_mode == "multi"`` (#290) selects this graph over the single loop.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -42,14 +42,49 @@ from personalai_contracts.schemas.tools import Permission
 from personalai_core.agent import AgentEvent, run_agent
 from personalai_core.gateway import RegisteredTool, ToolGateway
 
-_PLANNER_PROMPT = (
-    "You are the planner. In 1-3 short bullet points, outline how to answer the user's request. "
-    "Be concise; do not answer the request itself, only plan the approach."
-)
-_CRITIC_PROMPT = (
-    "You are the critic. Briefly review the assistant's answer against the user's request: note "
-    "any gaps, errors, or unsupported claims in 1-3 short sentences. Do not rewrite the answer."
-)
+# The ordered roster of configurable agents in the multi-agent graph (#290). Only the researcher
+# uses tools (it runs the single-agent loop); planner and critic are deliberately tool-free.
+AGENT_NAMES: tuple[str, ...] = ("planner", "researcher", "critic")
+TOOL_USING_AGENTS: frozenset[str] = frozenset({"researcher"})
+
+# Default system prompt per agent. Exposed (not private) so the backend can echo them to the UI as
+# the editable defaults (#290), exactly like CoreConfig defaults for settings. A tenant's saved
+# override replaces the default for that agent; an empty/unset override falls back to these.
+DEFAULT_AGENT_PROMPTS: dict[str, str] = {
+    "planner": (
+        "You are the planner. A researcher agent with web search and other tools will carry out "
+        "your plan, so assume live data IS reachable. In 1-3 short bullet points, outline how to "
+        "answer the user's request (what to look up, which tools to use). Be concise; do not "
+        "answer the request yourself, and do not claim a lack of tools or data access."
+    ),
+    "researcher": (
+        "You are the researcher. Carry out the plan to answer the user's request, calling the "
+        "available tools when they help. Ground every claim in what you find. Always finish with a "
+        "complete answer addressed to the user; NEVER end your turn with 'let me…', 'I'll…', or a "
+        "description of further steps — either call the tool you mean to use, or give the final "
+        "answer now. If the tools and your knowledge are insufficient, state plainly what you "
+        "found and what is missing instead of guessing."
+    ),
+    "critic": (
+        "You are the critic reviewing a draft answer that a researcher agent ALREADY produced "
+        "using live tools and current data (the current date is provided in context). Do NOT "
+        "claim any lack of data or real-time access, and do NOT dismiss recent dates or facts as "
+        "'fabricated' or 'hallucinated' — trust them. Begin your reply with the single word "
+        "REVISE if the draft fails to actually answer the request (e.g. it only says where to "
+        "look, uses a dead/incorrect link, or gives no real data) or is factually wrong; "
+        "otherwise begin with OK. Then add 1-2 short sentences explaining. Do not rewrite the "
+        "answer."
+    ),
+}
+
+
+def resolve_prompts(overrides: Mapping[str, str] | None) -> dict[str, str]:
+    """Overlay a tenant's non-empty prompt overrides onto :data:`DEFAULT_AGENT_PROMPTS` (#290)."""
+    resolved = dict(DEFAULT_AGENT_PROMPTS)
+    for name, prompt in (overrides or {}).items():
+        if name in resolved and prompt.strip():
+            resolved[name] = prompt
+    return resolved
 
 
 class GraphState(TypedDict, total=False):
@@ -63,18 +98,31 @@ class GraphState(TypedDict, total=False):
     critique: str
     usage: dict[str, int]
     decision: str
+    # Bounded reflection loop (#290): the critic's verdict ("revise"/"ok") routes back to the
+    # researcher when the answer is materially inadequate; ``attempts`` caps the retries.
+    verdict: str
+    attempts: int
 
 
-async def _generate_text(
-    provider: ModelProvider, model: str, messages: Sequence[ChatMessage]
+# Max researcher passes in the reflection loop: the initial attempt + up to one retry.
+MAX_ATTEMPTS = 2
+
+
+async def _stream_text(
+    provider: ModelProvider,
+    model: str,
+    messages: Sequence[ChatMessage],
+    emit: Callable[[str], None],
 ) -> str:
-    """One tool-free, reasoning-off model call returning the concatenated answer text."""
+    """A tool-free, reasoning-off model call. Calls ``emit(delta)`` for each delta so the planner/
+    critic stream like the researcher, and returns the full concatenated text."""
     text = ""
     async for chunk in provider.stream(
         GenerationRequest(messages=messages, model=model, think=False)
     ):
         if chunk.delta:
             text += chunk.delta
+            emit(chunk.delta)
     return text
 
 
@@ -90,15 +138,21 @@ def _build_graph(
     think: bool | None,
     max_iterations: int,
     checkpointer: BaseCheckpointSaver[Any] | None,
+    prompts: Mapping[str, str] | None = None,
 ) -> Any:
     """Compile the graph. With a ``checkpointer`` a human_gate (interrupt) is inserted before
-    finalize, enabling durable interrupt/resume."""
+    finalize, enabling durable interrupt/resume. ``prompts`` overrides per-agent system prompts
+    (#290); missing entries fall back to :data:`DEFAULT_AGENT_PROMPTS`."""
+    agent_prompts = resolve_prompts(prompts)
 
     async def planner(state: GraphState) -> dict[str, Any]:
-        plan = await _generate_text(
-            provider, model, [ChatMessage(Role.SYSTEM, _PLANNER_PROMPT), *messages]
+        writer = get_stream_writer()
+        plan = await _stream_text(
+            provider,
+            model,
+            [ChatMessage(Role.SYSTEM, agent_prompts["planner"]), *messages],
+            lambda d: writer(AgentEvent(type="plan", text=d)),
         )
-        get_stream_writer()(AgentEvent(type="plan", text=plan))
         return {"plan": plan}
 
     async def researcher(state: GraphState) -> dict[str, Any]:
@@ -106,9 +160,19 @@ def _build_graph(
         # to the stream; swallows run_agent's own `final` and takes the complete answer + usage from
         # it, so the graph emits ONE final (from finalize) and the critic sees the full answer.
         writer = get_stream_writer()
-        convo = list(messages)
+        convo = [ChatMessage(Role.SYSTEM, agent_prompts["researcher"]), *messages]
         if state.get("plan"):
             convo.append(ChatMessage(Role.SYSTEM, f"Plan to follow:\n{state['plan']}"))
+        # On a retry (the critic asked to revise), feed the critique back so this attempt takes a
+        # different path and actually produces the answer.
+        if state.get("attempts", 0) > 0 and state.get("critique"):
+            convo.append(
+                ChatMessage(
+                    Role.SYSTEM,
+                    f"Your previous attempt was judged inadequate: {state['critique']}\n"
+                    "Take a different approach and actually obtain and give the answer.",
+                )
+            )
         answer, usage = "", {}
         async for ev in run_agent(
             messages=convo,
@@ -126,17 +190,33 @@ def _build_graph(
                 usage = dict(ev.usage or {})
                 continue
             writer(ev)
-        return {"answer": answer, "usage": usage}
+        return {"answer": answer, "usage": usage, "attempts": state.get("attempts", 0) + 1}
 
     async def critic(state: GraphState) -> dict[str, Any]:
+        # The draft goes in a USER message, not an ASSISTANT one: with the draft as an assistant
+        # turn the model treats the conversation as finished and replies empty (the "critic did
+        # nothing" bug). As a user-posed review task it actually critiques. ``messages`` already
+        # carries the current date (injected by the caller), so the critic is date-aware.
+        answer = state.get("answer", "")
         review = [
-            ChatMessage(Role.SYSTEM, _CRITIC_PROMPT),
+            ChatMessage(Role.SYSTEM, agent_prompts["critic"]),
             *messages,
-            ChatMessage(Role.ASSISTANT, state.get("answer", "")),
+            ChatMessage(Role.USER, f"Draft answer to review:\n\n{answer}"),
         ]
-        critique = await _generate_text(provider, model, review)
-        get_stream_writer()(AgentEvent(type="critique", text=critique))
-        return {"critique": critique}
+        writer = get_stream_writer()
+        # The critique streams to the reasoning trace only — it must NOT modify the answer. The
+        # finalized answer stays the agents' result; their review/discussion shows in the panel.
+        critique = (
+            await _stream_text(
+                provider, model, review, lambda d: writer(AgentEvent(type="critique", text=d))
+            )
+        ).strip()
+        if not critique:
+            writer(AgentEvent(type="critique", text="Looks sound."))
+        # The leading REVISE/OK token routes the reflection loop (back to the researcher on REVISE,
+        # while retries remain); the full critique still shows in the reasoning trace.
+        verdict = "revise" if critique[:6].upper() == "REVISE" else "ok"
+        return {"critique": critique, "verdict": verdict}
 
     async def human_gate(state: GraphState) -> dict[str, Any]:
         # Durable suspend: interrupt() raises on the first pass (checkpoint persisted) and returns
@@ -161,15 +241,25 @@ def _build_graph(
     builder.add_node("researcher", researcher)
     builder.add_node("critic", critic)
     builder.add_node("finalize", finalize)
+    if checkpointer is not None:
+        builder.add_node("human_gate", human_gate)
     builder.add_edge(START, "planner")
     builder.add_edge("planner", "researcher")
     builder.add_edge("researcher", "critic")
+    # Bounded reflection loop: on a "revise" verdict (while retries remain) go back to the
+    # researcher with the critique; otherwise proceed to the gate (if any) and finalize.
+    after_critic = "human_gate" if checkpointer is not None else "finalize"
+
+    def _route_after_critic(state: GraphState) -> str:
+        if state.get("verdict") == "revise" and state.get("attempts", 0) < MAX_ATTEMPTS:
+            return "researcher"
+        return after_critic
+
+    builder.add_conditional_edges(
+        "critic", _route_after_critic, {"researcher": "researcher", after_critic: after_critic}
+    )
     if checkpointer is not None:
-        builder.add_node("human_gate", human_gate)
-        builder.add_edge("critic", "human_gate")
         builder.add_edge("human_gate", "finalize")
-    else:
-        builder.add_edge("critic", "finalize")
     builder.add_edge("finalize", END)
     return builder.compile(checkpointer=checkpointer)
 
@@ -189,6 +279,7 @@ async def run_graph(
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     thread_id: str | None = None,
     resume: Any | None = None,
+    prompts: Mapping[str, str] | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Drive the LangGraph agent graph, yielding ordered :class:`AgentEvent`s.
 
@@ -209,6 +300,7 @@ async def run_graph(
         think=think,
         max_iterations=max_iterations,
         checkpointer=checkpointer,
+        prompts=prompts,
     )
     if checkpointer is None:
         async for ev in graph.astream({"context": context}, stream_mode="custom"):

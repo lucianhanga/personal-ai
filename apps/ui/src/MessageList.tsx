@@ -9,6 +9,7 @@ interface MessageListProps {
   busy: boolean;
   listRef: React.RefObject<HTMLDivElement | null>;
   onScroll: () => void;
+  onAllowHost?: (host: string) => void;
 }
 
 /** The scrollable transcript: user + assistant messages with reasoning/tool details + citations. */
@@ -19,6 +20,7 @@ export function MessageList({
   busy,
   listRef,
   onScroll,
+  onAllowHost,
 }: MessageListProps): React.ReactElement {
   return (
     <div
@@ -44,6 +46,7 @@ export function MessageList({
               steps={m.meta?.tool_steps}
               thinking={m.meta?.thinking}
               defaultOpen={busy && i === messages.length - 1}
+              onAllowHost={onAllowHost}
             />
             <Markdown content={m.content} />
             {citations[i]?.length ? (

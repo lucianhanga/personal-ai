@@ -1,6 +1,6 @@
 """Opt-in long-term memory pipeline test against REAL Postgres + Ollama.
 
-Run only when asked (a DB + Ollama with the chat + mxbai-embed-large models must be available):
+Run only when asked (a DB + Ollama with the chat + qwen3-embedding:0.6b models must be available):
 
     PERSONALAI_MEMORY_IT=1 uv run pytest apps/backend/tests/test_memory_integration.py -q
 
@@ -30,7 +30,7 @@ DB_URL = os.environ.get(
 )
 OLLAMA = os.environ.get("PERSONALAI_OLLAMA_HOST", "http://127.0.0.1:11434")
 CHAT_MODEL = os.environ.get("PERSONALAI_MEMORY_IT_MODEL", "qwen3:8b")
-EMBED_MODEL = os.environ.get("PERSONALAI_EMBED_MODEL", "mxbai-embed-large")
+EMBED_MODEL = os.environ.get("PERSONALAI_EMBED_MODEL", "qwen3-embedding:0.6b")
 
 
 def test_remember_then_recall_across_turns() -> None:

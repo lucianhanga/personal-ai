@@ -93,10 +93,10 @@ HTTP — give a `url` (and optional `headers`) instead of a `command`:
 }
 ```
 
-The URL's host goes through the **egress allowlist** (loopback passes; other hosts need
-`PERSONALAI_EGRESS_ENABLED` + `PERSONALAI_ALLOWED_EGRESS_HOSTS`). Header values are masked like env
-secrets. Configure remote servers via the **Edit JSON** / **Import** view (the Add form is for local
-commands).
+The URL's host goes through the **egress allowlist** (loopback passes; other hosts need egress on
+and the host allow-listed — `PERSONALAI_EGRESS_ENABLED` + `PERSONALAI_ALLOWED_EGRESS_HOSTS`, or the
+tenant's **Settings → Network** allowlist). Header values are masked like env secrets. Configure
+remote servers via the **Edit JSON** / **Import** view (the Add form is for local commands).
 
 ### Tavily (web search/extract/crawl for agents)
 
@@ -141,6 +141,9 @@ with sources). Add it like:
 - All MCP tool calls go through the gateway: **HIGH‑risk approval**, least‑privilege permissions,
   egress allowlist (for HTTP servers), JSON‑Schema validation, timeout, and audit.
 - Tool **output is untrusted data**, never instructions (same guard as RAG/web search).
+- MCP tool calls also get the gateway's **schema-driven arg auto-fix** (rename a mislabeled arg,
+  coerce types, clamp numbers, then re-validate; enum errors list the allowed values) — it reads the
+  server's JSON Schema, so it works for third-party tools too. See [Tools](./tools.md).
 
 ## Verify against a real server (opt‑in)
 
