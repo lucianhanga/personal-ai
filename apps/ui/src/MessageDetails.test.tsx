@@ -49,6 +49,27 @@ test("renders M8 multi-agent / verification kinds + a generic fallback for unkno
   expect(screen.getByTestId("details-other")).toHaveTextContent("future-kind");
 });
 
+test("labels the researcher's block with a 'Researcher' header in the multi-agent trace", () => {
+  render(
+    <MessageDetails
+      defaultOpen
+      trace={[
+        { kind: "plan", text: "do the thing" },
+        // The researcher's reasoning/tool steps follow the planner -> get a "Researcher" header.
+        { kind: "reasoning", text: "let me search" },
+        { kind: "tool_call", tool: "web_search", args: {} },
+        { kind: "critique", text: "ok" },
+      ]}
+    />,
+  );
+  expect(screen.getByTestId("details-researcher")).toHaveTextContent("Researcher");
+});
+
+test("single-agent reasoning has no Researcher header (no planner/critic boundary)", () => {
+  render(<MessageDetails defaultOpen trace={[{ kind: "reasoning", text: "thinking..." }]} />);
+  expect(screen.queryByTestId("details-researcher")).toBeNull();
+});
+
 
 test("renders an ordered trace: reasoning, tool call, more reasoning", () => {
   render(
