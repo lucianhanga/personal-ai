@@ -494,6 +494,9 @@ export interface TenantSettings {
   max_upload_bytes: number | null;
   egress_enabled: boolean | null;
   allowed_egress_hosts: string[] | null;
+  transcribe_enabled: boolean | null;
+  transcribe_base_url: string | null;
+  transcribe_model: string | null;
 }
 
 // The defaults the backend would apply for any field left null (echoed from the boot CoreConfig),

@@ -48,6 +48,13 @@ class TenantSettings(StrictModel):
     grounding_enabled: bool | None = None
     max_upload_bytes: int | None = Field(default=None, ge=1, le=1_000_000_000)
 
+    # --- Voice / speech-to-text (M9.2) ---
+    # transcribe_base_url points at an OpenAI-compatible /v1 transcription endpoint (a local whisper
+    # server, or OpenAI). The API key stays env-only (secret), like openai_api_key. None inherits.
+    transcribe_enabled: bool | None = None
+    transcribe_base_url: str | None = Field(default=None, min_length=1, max_length=500)
+    transcribe_model: str | None = Field(default=None, min_length=1, max_length=200)
+
     # --- Network egress (security-sensitive) ---
     # When egress_enabled is on, outbound calls from in-process tools are permitted only to hosts in
     # allowed_egress_hosts (empty = fail-closed, deny all). None on either inherits the deployment

@@ -27,6 +27,9 @@ const SETTINGS: TenantSettings = {
   max_upload_bytes: null,
   egress_enabled: null,
   allowed_egress_hosts: null,
+  transcribe_enabled: null,
+  transcribe_base_url: null,
+  transcribe_model: null,
 };
 
 const VIEW: AgentConfigView = {

@@ -410,8 +410,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.get(
         "/api/v1/status", response_model=StructuredResult, dependencies=[Depends(require_context)]
     )
-    def api_status() -> StructuredResult:
-        config: CoreConfig = app.state.config
+    async def api_status() -> StructuredResult:
+        config = await _effective_config()
         return StructuredResult(
             ok=True,
             data={
@@ -419,8 +419,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 "vector_repository": config.vector_repository,
                 "bind_host": config.bind_host,
                 "egress_enabled": config.egress_enabled,
-                # Voice input availability (M9.2), so the UI only shows the mic when configured.
-                "transcribe_enabled": app.state.bootstrap.transcriber is not None,
+                # Voice input availability (M9.2), reflecting the tenant's effective setting so the
+                # UI only shows the mic when transcription is on.
+                "transcribe_enabled": config.transcribe_enabled,
             },
         )
 
@@ -674,6 +675,19 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         if storage is None:
             return base
         return effective_config(base, await storage.settings.get())
+
+    def _build_transcriber(config: CoreConfig) -> Any:
+        """Build the speech-to-text transcriber from the effective config (#298). The endpoint
+        (whisper server URL) + model are per-tenant; the API key stays env-only. A local server on
+        loopback works with egress disabled; remote endpoints are egress-guarded."""
+        from personalai_provider_openai import OpenAICompatTranscriber
+
+        return OpenAICompatTranscriber(
+            model=config.transcribe_model,
+            api_key=config.transcribe_api_key or config.openai_api_key or "",
+            base_url=config.transcribe_base_url or config.openai_base_url,
+            egress_guard=lambda host: assert_egress_allowed(config, host),
+        )
 
     @app.post("/api/v1/chat", dependencies=[Depends(require_context)])
     async def chat(req: ChatRequest) -> StreamingResponse:
@@ -1107,20 +1121,21 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         dependencies=[Depends(require_context)],
     )
     async def transcribe_audio(file: UploadFile = File(...)) -> StructuredResult:
-        # Speech-to-text (M9.2): transcribe a recorded audio blob via the configured transcriber.
-        transcriber = app.state.bootstrap.transcriber
-        if transcriber is None:
+        # Speech-to-text (M9.2): transcribe a recorded audio blob. The transcriber is built from the
+        # tenant's effective config (#298), so the whisper endpoint/model are settable per-tenant.
+        config = await _effective_config()
+        if not config.transcribe_enabled:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="transcription is not enabled (set PERSONALAI_TRANSCRIBE_ENABLED)",
+                detail="transcription is disabled (enable it in Settings)",
             )
-        config: CoreConfig = app.state.config
         audio = await file.read(config.max_upload_bytes + 1)
         if len(audio) > config.max_upload_bytes:
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail=f"audio exceeds {config.max_upload_bytes} bytes",
             )
+        transcriber = _build_transcriber(config)
         try:
             result = await transcriber.transcribe(
                 audio,
@@ -1131,6 +1146,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             return StructuredResult(
                 ok=False, error=ErrorInfo(code="E_TRANSCRIBE", message=str(exc))
             )
+        finally:
+            await transcriber.aclose()
         return StructuredResult(ok=True, data={"text": result.text, "language": result.language})
 
     @app.get(

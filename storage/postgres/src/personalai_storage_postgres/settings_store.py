@@ -34,6 +34,9 @@ _FIELDS = (
     "max_upload_bytes",
     "egress_enabled",
     "allowed_egress_hosts",
+    "transcribe_enabled",
+    "transcribe_base_url",
+    "transcribe_model",
 )
 _COLS = ", ".join(_FIELDS)
 

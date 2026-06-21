@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
 
+import httpx
 import pytest
+import respx
 from fastapi.testclient import TestClient
 
 from personalai_backend import create_app
@@ -340,23 +342,21 @@ def test_chat_passes_attached_images_to_the_provider() -> None:
     assert seen and img in seen[0]
 
 
+@respx.mock
 def test_transcribe_endpoint_returns_text() -> None:
-    # M9.2: POST audio to /api/v1/audio/transcribe -> the configured transcriber's text.
-    import dataclasses
-
-    from personalai_contracts.ports import Transcription
-
-    class _FakeTranscriber:
-        name = "fake"
-
-        async def transcribe(
-            self, audio: bytes, *, mime_type: str, filename: str = "audio.webm"
-        ) -> Transcription:
-            return Transcription(text="hello from audio", language="en")
-
-    boot = bootstrap(config=CoreConfig(auth_token=TOKEN))
-    boot = dataclasses.replace(boot, transcriber=_FakeTranscriber())
-    client = TestClient(create_app(boot))
+    # M9.2/#298: the endpoint builds the transcriber from the effective config (whisper base_url +
+    # model) and returns the transcript. Mock the configured /audio/transcriptions endpoint.
+    route = respx.post("http://whisper.test/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(200, json={"text": "hello from audio", "language": "en"})
+    )
+    config = CoreConfig(
+        auth_token=TOKEN,
+        transcribe_enabled=True,
+        transcribe_base_url="http://whisper.test/v1",
+        egress_allow_any=True,  # the test endpoint is non-loopback; allow it for the test
+        egress_enabled=True,
+    )
+    client = TestClient(create_app(bootstrap(config=config)))
     resp = client.post(
         "/api/v1/audio/transcribe",
         headers={"Authorization": f"Bearer {TOKEN}"},
@@ -364,11 +364,14 @@ def test_transcribe_endpoint_returns_text() -> None:
     )
     assert resp.status_code == 200
     assert resp.json()["data"]["text"] == "hello from audio"
+    assert route.called
 
 
 def test_transcribe_endpoint_503_when_disabled() -> None:
-    # No transcriber configured (default) -> 503, and /status reports it disabled.
-    client = TestClient(create_app(bootstrap(config=CoreConfig(auth_token=TOKEN))))
+    # transcribe_enabled=False -> 503, and /status reports it disabled.
+    client = TestClient(
+        create_app(bootstrap(config=CoreConfig(auth_token=TOKEN, transcribe_enabled=False)))
+    )
     resp = client.post(
         "/api/v1/audio/transcribe",
         headers={"Authorization": f"Bearer {TOKEN}"},
@@ -379,6 +382,13 @@ def test_transcribe_endpoint_503_when_disabled() -> None:
         "data"
     ]
     assert status_data["transcribe_enabled"] is False
+
+
+def test_status_reports_transcribe_enabled_by_default() -> None:
+    # #298: STT is enabled by default, so /status reports it on (the UI shows the mic).
+    client = TestClient(create_app(bootstrap(config=CoreConfig(auth_token=TOKEN))))
+    data = client.get("/api/v1/status", headers={"Authorization": f"Bearer {TOKEN}"}).json()["data"]
+    assert data["transcribe_enabled"] is True
 
 
 def test_chat_empty_completion_emits_notice() -> None:

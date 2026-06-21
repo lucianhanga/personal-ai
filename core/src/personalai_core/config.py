@@ -191,7 +191,7 @@ class CoreConfig(StrictModel):
     # Speech-to-text (M9.2): opt-in voice input via an OpenAI-compatible /audio/transcriptions
     # endpoint (OpenAI or a local whisper server). Off by default; a local server on loopback works
     # with egress disabled. Empty base/key fall back to the OpenAI provider's base/key.
-    transcribe_enabled: bool = Field(default=False, description="Enable speech-to-text input.")
+    transcribe_enabled: bool = Field(default=True, description="Enable speech-to-text input.")
     transcribe_model: str = Field(default="whisper-1", description="Transcription model name.")
     transcribe_base_url: str = Field(
         default="", description="Transcription endpoint base URL; empty = use openai_base_url."
