@@ -7,7 +7,6 @@ near-identical memories. Depends only on contracts ports/schemas — testable wi
 from __future__ import annotations
 
 import json
-import uuid
 from collections.abc import Mapping, Sequence
 
 from personalai_contracts.ports import (
@@ -20,6 +19,7 @@ from personalai_contracts.ports import (
     Role,
 )
 from personalai_contracts.schemas.memory import ExtractedFact, ExtractionResult
+from personalai_core.memory_consolidation import consolidate_fact
 
 
 async def recall(
@@ -80,27 +80,25 @@ async def remember(
     store: MemoryStore,
     source: Mapping[str, str],
     min_confidence: float = 0.5,
-    dedup_threshold: float = 0.92,
 ) -> list[MemoryItem]:
-    """Extract facts, embed them, skip near-duplicates, and store the rest."""
+    """Extract facts and consolidate each into long-term memory (dedup + conflicts, #310)."""
     facts = await extract_facts(gen_provider, gen_model, messages, min_confidence=min_confidence)
     stored: list[MemoryItem] = []
     for fact in facts:
-        embeddings = await embed_provider.embed([fact.text], embed_model)
-        if not embeddings.vectors:
-            continue
-        vector = embeddings.vectors[0]
-        similar = await store.search(vector, top_k=1)
-        if similar and (similar[0].score or 0.0) >= dedup_threshold:
-            continue  # already remembered something near-identical
-        stored.append(
-            await store.add(
-                id=str(uuid.uuid4()),
+        try:
+            outcome = await consolidate_fact(
+                text=fact.text,
                 kind=MemoryKind(fact.kind),
-                text=fact.text.strip(),
-                embedding=vector,
                 confidence=fact.confidence,
                 source=source,
+                store=store,
+                embed_provider=embed_provider,
+                embed_model=embed_model,
+                judge_provider=gen_provider,
+                judge_model=gen_model,
             )
-        )
+        except ValueError:
+            continue  # could not embed this fact; skip (memory is best-effort)
+        if outcome.item is not None:
+            stored.append(outcome.item)
     return stored

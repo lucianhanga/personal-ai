@@ -12,6 +12,15 @@ generated OpenAPI document.
 ## [Unreleased]
 
 ### Added
+- **Memory dedup + conflict reconciliation (#310)**: both memory write paths — the `remember` tool
+  and the background extractor — now route every fact through a shared `consolidate_fact()` that
+  decides **ADD / UPDATE / NOOP**. A near-duplicate is dropped (no more accumulating copies); a fact
+  that **contradicts** an existing memory **supersedes** it and stores the correction (e.g. a changed
+  spouse/job/status), instead of leaving two conflicting entries; independent facts are added. The
+  decision uses the schema-constrained LLM judge (`generate_structured`) and **fails closed to
+  dedup-only** if the judge is unavailable, so it never regresses. New `MemoryStore.supersede()`
+  (the `superseded` column was already filtered by search/list). The `remember` tool reports whether
+  it added, updated, or found the fact already known.
 - **`remember` tool (#308)**: the agent can now **save a fact to long-term memory on request** via a
   new built-in tool (behind the gateway). Previously, asking it to "remember that …" produced a
   confident "Done" with **nothing actually written** — memory was only populated by a separate,

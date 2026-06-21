@@ -71,6 +71,14 @@ class PgMemoryStore:
         )
         return _to_memory(row) if row is not None else None
 
+    async def supersede(self, memory_id: str) -> MemoryItem | None:
+        row = await self._pool.fetchrow(
+            f"UPDATE memories SET superseded = true, updated_at = now() WHERE id = $1 "
+            f"RETURNING {_COLS}",
+            memory_id,
+        )
+        return _to_memory(row) if row is not None else None
+
     async def delete(self, memory_id: str) -> None:
         await self._pool.execute("DELETE FROM memories WHERE id = $1", memory_id)
 
