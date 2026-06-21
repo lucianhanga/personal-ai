@@ -12,6 +12,14 @@ generated OpenAPI document.
 ## [Unreleased]
 
 ### Added
+- **`remember` tool (#308)**: the agent can now **save a fact to long-term memory on request** via a
+  new built-in tool (behind the gateway). Previously, asking it to "remember that …" produced a
+  confident "Done" with **nothing actually written** — memory was only populated by a separate,
+  non-deterministic background extraction. Now "remember this" triggers a real `remember` tool call
+  that writes a `MemoryItem` (confidence 1.0, `source=user_request`) and returns its id, so the
+  confirmation is grounded in the tool result, shows in the trace, and appears in Settings → Memory
+  immediately. Requires tools enabled; the tool is wired once storage is available. (LOW risk, no
+  egress.)
 - **Read answers aloud (M9.3)**: a **read-aloud** control on each assistant answer, powered by the
   browser's built-in speech synthesis — fully client-side, zero-setup, no new dependencies. Play
   (`▶`) / stop (`■`) monochrome glyphs matching the voice-input controls; one answer reads at a time.
