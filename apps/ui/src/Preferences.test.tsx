@@ -27,6 +27,9 @@ const EMPTY: TenantSettings = {
   max_upload_bytes: null,
   egress_enabled: null,
   allowed_egress_hosts: null,
+  transcribe_enabled: null,
+  transcribe_base_url: null,
+  transcribe_model: null,
 };
 
 const DEFAULTS: TenantSettingsDefaults = {
@@ -49,6 +52,9 @@ const DEFAULTS: TenantSettingsDefaults = {
   max_upload_bytes: 10000000,
   egress_enabled: false,
   allowed_egress_hosts: [],
+  transcribe_enabled: false,
+  transcribe_base_url: "",
+  transcribe_model: "whisper-1",
 };
 
 function mockLoad(settings: TenantSettings = EMPTY): void {

@@ -61,6 +61,9 @@ def test_settings_round_trip_and_partial_inherit() -> None:
                         grounding_enabled=False,
                         egress_enabled=True,
                         allowed_egress_hosts=("api.example.com", "files.example.org"),
+                        transcribe_enabled=True,
+                        transcribe_base_url="http://127.0.0.1:8000/v1",
+                        transcribe_model="whisper-1",
                     )
                 )
                 assert saved.default_model == "qwen3:14b"
@@ -70,6 +73,10 @@ def test_settings_round_trip_and_partial_inherit() -> None:
                 # The text[] allowlist round-trips back as a tuple.
                 assert saved.egress_enabled is True
                 assert saved.allowed_egress_hosts == ("api.example.com", "files.example.org")
+                # Voice (speech-to-text) settings round-trip (#298).
+                assert saved.transcribe_enabled is True
+                assert saved.transcribe_base_url == "http://127.0.0.1:8000/v1"
+                assert saved.transcribe_model == "whisper-1"
                 # Unset fields stay None (inherit the deployment default).
                 assert saved.ollama_host is None
                 assert saved.memory_enabled is None

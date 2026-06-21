@@ -56,6 +56,15 @@ const GROUPS: Group[] = [
     ],
   },
   {
+    title: "Voice (speech-to-text)",
+    note: "Records voice and transcribes it via an OpenAI-compatible /v1 endpoint — point it at a local whisper server (e.g. http://127.0.0.1:8000/v1, fully local) or leave blank to use the OpenAI provider. The mic button appears in the composer when enabled.",
+    fields: [
+      { key: "transcribe_enabled", label: "Enable voice input", kind: "bool" },
+      { key: "transcribe_base_url", label: "Whisper server URL", kind: "text", help: "e.g. http://127.0.0.1:8000/v1" },
+      { key: "transcribe_model", label: "Transcription model", kind: "text" },
+    ],
+  },
+  {
     title: "Document indexing engine (advanced)",
     note: "How documents are embedded for search — not the chat model (that's in the top bar). Changing this re-defines indexing; existing documents were embedded with the current setting, so you may need to re-upload them. Endpoint changes apply after a backend restart.",
     fields: [
