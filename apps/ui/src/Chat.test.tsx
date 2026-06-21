@@ -210,6 +210,12 @@ test("auto-sends the transcript after the grace period if untouched (M9.2c)", as
   });
   await waitFor(() => expect(stream).toHaveBeenCalled());
   expect(stream.mock.calls[0][0].messages.at(-1)?.content).toContain("auto sent text");
+  // The countdown must fire the send exactly once — a double-fire would create a duplicate
+  // (empty) conversation. Let any extra timer ticks run to be sure no second send sneaks in.
+  await act(async () => {
+    vi.advanceTimersByTime(3000);
+  });
+  expect(stream).toHaveBeenCalledTimes(1);
   vi.useRealTimers();
 });
 
