@@ -111,7 +111,7 @@ class ToolEquippedFrontierAdapter:
 
     def _chat(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         body: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -126,18 +126,23 @@ class ToolEquippedFrontierAdapter:
             body.pop("temperature", None)
             resp = self._client.post(url, headers=headers, json=body)
         resp.raise_for_status()
-        message: dict[str, Any] = resp.json()["choices"][0]["message"]
-        return message
+        data = resp.json()
+        return data["choices"][0]["message"], (data.get("usage") or {})
 
     def run(self, messages: Sequence[Mapping[str, str]], overrides: Mapping[str, Any]) -> RunResult:
         started = time.perf_counter()
+        usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         try:
             specs, _, _, name_map = self._load_tools()
             convo: list[dict[str, Any]] = [dict(m) for m in messages]
             tool_calls_made: list[dict[str, Any]] = []
             for step in range(self._max_steps):
                 # On the last allowed step, drop tools so the model must produce a final answer.
-                message = self._chat(convo, specs if step < self._max_steps - 1 else None)
+                message, step_usage = self._chat(
+                    convo, specs if step < self._max_steps - 1 else None
+                )
+                for k in usage:
+                    usage[k] += int(step_usage.get(k) or 0)  # sum tokens across the loop's calls
                 convo.append(message)
                 calls = message.get("tool_calls") or []
                 if not calls:
@@ -146,6 +151,7 @@ class ToolEquippedFrontierAdapter:
                         answer=str(message.get("content") or ""),
                         trace=[{"kind": "tool_call", **tc} for tc in tool_calls_made],
                         tool_calls=tool_calls_made,
+                        usage=usage,
                         latency_ms=round(latency, 1),
                         config_used={
                             "provider": self.provider.name,
