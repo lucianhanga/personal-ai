@@ -36,6 +36,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--base-url", default="http://127.0.0.1:8765", help="personalIA backend URL")
     run.add_argument("--token", default=None, help="bearer token (or PERSONALAI_AUTH_TOKEN)")
+    run.add_argument(
+        "--repeats",
+        type=int,
+        default=1,
+        help="run each (task, mode) N times for pass@k + pass-rate (default: 1)",
+    )
     run.add_argument("--out", default="benchmark-results", help="output directory for reports")
     sub.add_parser("list-modes", help="list available benchmark modes")
     return parser
@@ -69,13 +75,16 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     adapter = PersonalIAAdapter(base_url=args.base_url, token=args.token)
-    suite = run_suite(tasks=tasks, modes=modes, sut=adapter)
+    suite = run_suite(tasks=tasks, modes=modes, sut=adapter, repeats=args.repeats)
     json_path, md_path = write_report(suite, args.out)
 
     total = len(suite.records)
     passed = sum(1 for r in suite.records if r.passed)
     errored = sum(1 for r in suite.records if r.error is not None)
-    print(f"ran {total} task-runs: {passed} passed, {total - passed} failed ({errored} errored)")
+    print(
+        f"ran {total} attempts ({len(tasks)} tasks × {len(modes)} modes × {args.repeats} repeats): "
+        f"{passed} passed, {total - passed} failed ({errored} errored)"
+    )
     print(f"wrote {json_path}")
     print(f"wrote {md_path}")
     return 0

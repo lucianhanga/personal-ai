@@ -9,7 +9,7 @@ from typing import Any
 
 from personalai_benchmarks.adapters import RunResult
 from personalai_benchmarks.modes import ALL_MODES, MULTI_TOOLS_MCP, SINGLE_NO_TOOLS, with_memory
-from personalai_benchmarks.report import to_markdown, write_report
+from personalai_benchmarks.report import cells, to_markdown, write_report
 from personalai_benchmarks.runner import run_suite
 from personalai_benchmarks.tasks import Task
 
@@ -32,6 +32,21 @@ class _FakeSUT:
             tool_calls=[{"tool": "calculator"}] if overrides.get("use_tools") else [],
             config_used=dict(overrides),
         )
+
+
+class _FlakySUT:
+    """Cycles through a list of answers, so repeated attempts at one cell pass/fail differently."""
+
+    name = "flaky"
+
+    def __init__(self, answers: list[str]) -> None:
+        self._answers = answers
+        self._i = 0
+
+    def run(self, messages: Sequence[Mapping[str, str]], overrides: Mapping[str, Any]) -> RunResult:
+        ans = self._answers[self._i % len(self._answers)]
+        self._i += 1
+        return RunResult(answer=ans, latency_ms=5.0)
 
 
 def _task(tid: str = "t1", expected: str = "62") -> Task:
@@ -90,3 +105,44 @@ def test_report_groups_by_tier_and_writes_files(tmp_path: Path) -> None:
     assert payload["metadata"]["sut"] == "fake"
     assert len(payload["records"]) == 2
     assert payload["records"][0]["task_id"] == "t1"
+
+
+def test_repeats_runs_each_cell_n_times() -> None:
+    suite = run_suite(
+        tasks=[_task()], modes=[SINGLE_NO_TOOLS], sut=_FakeSUT(answer="62"), repeats=3
+    )
+    assert len(suite.records) == 3  # one task × one mode × 3 attempts
+    assert sorted(r.attempt for r in suite.records) == [0, 1, 2]
+    assert suite.metadata["repeats"] == 3
+
+
+def test_pass_at_k_vs_pass_rate_on_a_flaky_cell() -> None:
+    # Expected "62"; attempts answer 62 / 99 / 62 -> 2 of 3 pass.
+    suite = run_suite(
+        tasks=[_task(expected="62")],
+        modes=[SINGLE_NO_TOOLS],
+        sut=_FlakySUT(["62", "99", "62"]),
+        repeats=3,
+    )
+    (cell,) = cells(suite)
+    assert cell.n == 3
+    assert cell.passes == 2
+    assert cell.pass_at_k is True  # at least one attempt passed
+    assert cell.pass_rate == 2 / 3  # reliability
+
+    md = to_markdown(suite)
+    assert "pass@k" in md and "repeats: 3" in md
+    assert "2/3" in md  # the per-task cell / pass counts
+    assert "Flaky (passed some attempts, not all)" in md  # 2/3 -> flaky section
+
+
+def test_never_passing_cell_is_a_hard_failure() -> None:
+    suite = run_suite(
+        tasks=[_task(expected="62")],
+        modes=[SINGLE_NO_TOOLS],
+        sut=_FakeSUT(answer="99"),  # never matches
+        repeats=2,
+    )
+    (cell,) = cells(suite)
+    assert cell.pass_at_k is False and cell.passes == 0
+    assert "Failures (never passed)" in to_markdown(suite)

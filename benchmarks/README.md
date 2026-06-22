@@ -20,6 +20,9 @@ uv run python -m personalai_benchmarks run \
     --task-ids reasoning_arithmetic_order,tool_calc_large_product \
     --modes single_no_tools,single_tools_mcp \
     --base-url http://127.0.0.1:8765 --out ./benchmark-results
+
+# Local models are stochastic — run each cell several times for pass@k + pass-rate:
+uv run python -m personalai_benchmarks run --repeats 5
 ```
 
 Auth: pass `--token` or set `PERSONALAI_AUTH_TOKEN` (only needed if the backend requires a token).
@@ -57,9 +60,12 @@ axis: a memory-on mode gets a `…+memory` tier so it isn't blended with the mem
 
 ## Reading the leaderboard
 
-Each tier lists its modes with pass-rate, mean score, and mean latency. A per-task matrix shows
-pass/FAIL per mode for drill-down, and a Failures section gives the grader's explanation. Compare
-*within* a tier; compare tiers side by side, not by a blended average.
+Each tier lists its modes with **pass@k** (fraction of tasks any attempt solved — capability) and
+**pass-rate** (fraction of all attempts that passed — reliability), plus mean latency. With
+`--repeats 1` the two are identical; with more repeats they diverge for stochastic models. The
+per-task matrix shows `passes/attempts` per cell; a Failures section lists cells that never passed,
+and a Flaky section lists cells that passed some attempts but not all. Compare *within* a tier;
+compare tiers side by side, not by a blended average.
 
 ### Raw-LLM vs assistant-mode (Phase 2)
 
