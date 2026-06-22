@@ -358,6 +358,17 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             "an auth token; set PERSONALAI_AUTH_TOKEN, PERSONALAI_APP_MODE=hosted, or bind loopback"
         )
 
+    # Refuse a wildcard CORS origin: with allow_credentials=True (below), Starlette reflects any
+    # request Origin and returns Access-Control-Allow-Credentials, opening credentialed CORS to the
+    # whole web. The explicit allowlist is the only control that keeps allow_credentials safe, so a
+    # '*' origin must never boot (THREAT-MODEL: fail-closed).
+    if any(o.strip() == "*" for o in boot.config.allowed_origins):
+        raise RuntimeError(
+            "refusing to start: allowed_origins contains '*' with credentialed CORS "
+            "(allow_credentials=True) — Starlette would reflect any origin and expose credentialed "
+            "responses to the whole web; set an explicit ALLOWED_ORIGINS allowlist instead"
+        )
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Best-effort storage startup: connect to Postgres, migrate, register the vector repo.
