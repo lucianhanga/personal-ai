@@ -12,8 +12,25 @@ from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from personalai_contracts.ports import AgentContext, GenerationRequest, ModelProvider
+from personalai_contracts.ports import (
+    AgentContext,
+    ChatMessage,
+    GenerationRequest,
+    ModelProvider,
+    Role,
+)
 from personalai_core import run_agent, run_graph
+
+# The single-agent loop has no agent persona, so without a nudge the model answers from "head" even
+# when a tool would be exact — tools end up enabled but unused (#318). Encourage tool use here; the
+# multi-agent researcher already carries its own tool-use prompt, so this stays scoped to single
+# mode and is only added when tools are actually offered.
+_SINGLE_AGENT_TOOL_PROMPT = (
+    "You have tools available. Use them whenever they make the answer more accurate or current — "
+    "for exact arithmetic call the calculator; for facts you are unsure of or that may have "
+    "changed, use the available lookup tools — rather than guessing. If no tool is needed, answer "
+    "directly."
+)
 
 
 @dataclass(frozen=True)
@@ -88,7 +105,11 @@ async def run_turn(
             )
             if graph_enabled
             else run_agent(
-                messages=generation.messages,
+                # Prepend the tool-use nudge so the single-agent model actually calls tools (#318).
+                messages=[
+                    ChatMessage(Role.SYSTEM, _SINGLE_AGENT_TOOL_PROMPT),
+                    *generation.messages,
+                ],
                 provider=provider,
                 model=generation.model,
                 gateway=gateway,

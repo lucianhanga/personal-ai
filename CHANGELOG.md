@@ -11,6 +11,16 @@ generated OpenAPI document.
 
 ## [Unreleased]
 
+### Fixed
+- **Single-agent tools were enabled but never used (#318)**: the single-agent loop offered tools to
+  the model but gave it no instruction to use them, so with reasoning off it answered from "head"
+  (e.g. guessing a compound multiplication) instead of calling the calculator — making "single +
+  tools" slower *and* less accurate than no-tools. Surfaced by the M-Bench benchmark (single-agent
+  made 0 tool calls; multi-agent used tools and scored higher). The single-agent path now injects a
+  brief tool-use instruction when tools are enabled (scoped to single mode — the multi-agent
+  researcher already has its own). Measured effect: tool-call rate on a compound-arithmetic task went
+  from 0% to ~80%, fixing the wrong answers it used to guess.
+
 ### Added
 - **Agent memory editing + saved dates (#314)**: the agent can now **correct or forget** a memory,
   not just add one. Two new built-in tools — `update_memory` (describe the memory + give the
