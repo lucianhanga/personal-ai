@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -158,6 +159,57 @@ class ResumeRequest(BaseModel):
 
     decision: str = "approve"
     conversation_id: str | None = None
+
+
+# Built-in tools (vs MCP-provided ones). Used by /assistant/execute to honour `use_mcp=False`.
+BUILTIN_TOOL_NAMES = frozenset({"calculator", "web_search", "http_fetch", "remember"})
+
+
+class ExecuteRequest(BaseModel):
+    """One-shot, non-streaming assistant run with per-run overrides (M-Bench, #313).
+
+    Unlike /chat (SSE, settings from the tenant), this applies overrides to a per-request config
+    copy that is NEVER persisted, runs the same turn engine, and returns the final answer + trace +
+    usage + the config used. The human gate is always off (automated runs never suspend). A system
+    prompt/persona is supplied by the caller as a ``role: "system"`` message in ``messages``."""
+
+    messages: list[ChatMessageIn]
+    model: str | None = None
+    provider: str | None = None
+    think: bool | None = False
+    reasoning: Literal["off", "brief", "full"] | None = None
+    agent_mode: Literal["single", "multi", "custom"] | None = None
+    use_tools: bool = False
+    approve_tools: bool = False
+    use_mcp: bool = True
+    use_rag: bool = False
+    rag_top_k: int = 4
+    use_memory: bool = False
+    # Override the tenant's long-term-memory setting for this run (the write/extraction path);
+    # `use_memory` controls whether memories are read into THIS turn's context. Both are benchmark
+    # dimensions. None inherits the tenant's effective config.
+    memory_enabled: bool | None = None
+    grounding: bool | None = None
+    max_iterations: int | None = None
+    accuracy_mode: Literal["standard", "accurate"] | None = None
+    temperature: float | None = None
+    metadata: dict[str, Any] = {}
+
+    def to_chat_request(self) -> ChatRequest:
+        """A ChatRequest mirror (no persistence) so the chat context helpers can be reused as-is."""
+        return ChatRequest(
+            messages=self.messages,
+            model=self.model,
+            provider=self.provider,
+            think=self.think,
+            reasoning=self.reasoning,
+            use_rag=self.use_rag,
+            rag_top_k=self.rag_top_k,
+            conversation_id=None,
+            use_memory=self.use_memory,
+            use_tools=self.use_tools,
+            approve_tools=self.approve_tools,
+        )
 
 
 class McpServerIn(BaseModel):
@@ -1107,6 +1159,194 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 current_conversation.reset(cv_token)
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    @app.post(
+        "/api/v1/assistant/execute",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def assistant_execute(req: ExecuteRequest) -> StructuredResult:
+        # One-shot, non-streaming run with per-run overrides on a config COPY (never persisted) so a
+        # benchmark/automation can sweep modes without mutating the tenant's saved settings (#313).
+        base = await _effective_config()
+        overrides: dict[str, Any] = {"agent_human_gate": False}  # automated runs never suspend
+        if req.agent_mode is not None:
+            overrides["agent_mode"] = req.agent_mode
+        if req.max_iterations is not None:
+            overrides["agent_max_iterations"] = req.max_iterations
+        if req.accuracy_mode is not None:
+            overrides["agent_accuracy_mode"] = req.accuracy_mode
+        if req.grounding is not None:
+            overrides["grounding_enabled"] = req.grounding
+        if req.memory_enabled is not None:
+            overrides["memory_enabled"] = req.memory_enabled
+        config = base.model_copy(update=overrides)
+
+        chat_req = req.to_chat_request()
+        provider = _resolve_provider(req.provider)
+        graph_enabled = config.agent_mode == "multi"
+        agent_cfg = (
+            await app.state.storage.agent_config.get()
+            if graph_enabled and app.state.storage is not None
+            else AgentGraphConfig()
+        )
+        agent_prompts = agent_cfg.prompt_overrides()
+        researcher_disabled = agent_cfg.disabled_tools("researcher")
+
+        # Assemble the generation context exactly like /chat (minus persistence + STM-from-a-conv).
+        last_user = next((m.content for m in reversed(chat_req.messages) if m.role == "user"), None)
+        standalone = await _standalone_query(chat_req, provider)
+        hint_messages = (
+            [
+                ChatMessage(
+                    Role.SYSTEM,
+                    f"Interpreted request (standalone, for retrieval/tools): {standalone}",
+                )
+            ]
+            if standalone and standalone != last_user
+            else []
+        )
+        context_messages, _citations = await _retrieve_context(chat_req, query=standalone)
+        memory_messages = await _memory_context(chat_req, False, query=standalone)
+        stm_messages = await _assemble_stm(chat_req, provider, None)
+        think_effective = (
+            chat_req.think if chat_req.reasoning is None else chat_req.reasoning != "off"
+        )
+        brief_messages = (
+            [
+                ChatMessage(
+                    Role.SYSTEM, "Keep your reasoning brief and focused; do not over-deliberate."
+                )
+            ]
+            if chat_req.reasoning == "brief"
+            else []
+        )
+        grounding_messages = (
+            [ChatMessage(Role.SYSTEM, _GROUNDING)] if config.grounding_enabled else []
+        )
+        date_messages = [ChatMessage(Role.SYSTEM, f"Today's date is {date.today().isoformat()}.")]
+        generation = GenerationRequest(
+            messages=[
+                *date_messages,
+                *grounding_messages,
+                *hint_messages,
+                *brief_messages,
+                *context_messages,
+                *memory_messages,
+                *stm_messages,
+            ],
+            model=req.model or config.default_model,
+            think=think_effective,
+            temperature=req.temperature,
+        )
+
+        registries: Registries = app.state.bootstrap.registries
+        tool_list = [registries.tools.get(n) for n in registries.tools.names()]
+        if not req.use_mcp:  # honour "no MCP" by keeping only the built-in tools
+            tool_list = [rt for rt in tool_list if rt.manifest.name in BUILTIN_TOOL_NAMES]
+        if graph_enabled and researcher_disabled:
+            tool_list = [rt for rt in tool_list if rt.manifest.name not in researcher_disabled]
+        grants = [p for rt in tool_list for p in rt.manifest.permissions]
+
+        answer = ""
+        usage: Mapping[str, int] = {}
+        trace: list[dict[str, Any]] = []
+        tool_calls: list[dict[str, Any]] = []
+
+        def _add_text(kind: str, text: str) -> None:
+            if trace and trace[-1].get("kind") == kind and "text" in trace[-1]:
+                trace[-1]["text"] += text
+            else:
+                trace.append({"kind": kind, "text": text})
+
+        error: ErrorInfo | None = None
+        started = time.perf_counter()
+        eg_token = current_egress.set(config)
+        try:
+            async with asyncio.timeout(config.agent_timeout_seconds):
+                async for ev in run_turn(
+                    generation=generation,
+                    provider=provider,
+                    use_tools=req.use_tools,
+                    approve_tools=req.approve_tools,
+                    tools=tool_list,
+                    grants=grants,
+                    gateway=app.state.bootstrap.gateway,
+                    max_iterations=config.agent_max_iterations,
+                    graph_enabled=graph_enabled,
+                    agent_prompts=agent_prompts,
+                    accuracy_mode=config.agent_accuracy_mode,
+                    context=_agent_context(None),
+                    checkpointer=None,  # no durable gate for automated runs
+                    thread_id=None,
+                ):
+                    if ev.kind == "reasoning":
+                        _add_text("reasoning", ev.text)
+                    elif ev.kind == "answer":
+                        answer += ev.text
+                    elif ev.kind == "tool":
+                        if ev.phase == "call":
+                            answer = ""  # any pre-tool text was narration, not the answer
+                            tool_calls.append({"tool": ev.tool, "args": ev.args})
+                        trace.append(
+                            {
+                                "kind": f"tool_{ev.phase}",
+                                "tool": ev.tool,
+                                "args": ev.args,
+                                "ok": ev.ok,
+                                "output": ev.output,
+                                "error": ev.error,
+                            }
+                        )
+                    elif ev.kind in ("plan", "critique"):
+                        _add_text(ev.kind, ev.text)
+                    elif ev.kind == "verification":
+                        trace.append(
+                            {"kind": "verification", "text": ev.text, "verdict": ev.verdict}
+                        )
+                    else:  # final
+                        if ev.usage:
+                            usage = ev.usage
+        except TimeoutError:
+            error = ErrorInfo(
+                code="E_TIMEOUT", message="The run exceeded the time limit and was stopped."
+            )
+        except Exception as exc:  # noqa: BLE001 - surface as a structured error, never raise out
+            error = ErrorInfo(code="E_GENERATION", message=f"{type(exc).__name__}: {exc}")
+        finally:
+            current_egress.reset(eg_token)
+        latency_ms = round((time.perf_counter() - started) * 1000.0, 1)
+
+        config_used = {
+            "model": req.model or config.default_model,
+            "provider": provider.name,
+            "agent_mode": config.agent_mode,
+            "use_tools": req.use_tools,
+            "use_mcp": req.use_mcp,
+            "use_rag": req.use_rag,
+            "use_memory": req.use_memory,
+            "memory_enabled": config.memory_enabled,
+            "reasoning": req.reasoning or ("on" if req.think else "off"),
+            "max_iterations": config.agent_max_iterations,
+            "accuracy_mode": config.agent_accuracy_mode,
+            "grounding": config.grounding_enabled,
+            "temperature": req.temperature,
+            "tools_available": sorted(rt.manifest.name for rt in tool_list),
+        }
+        if error is not None:
+            return StructuredResult(ok=False, error=error)
+        return StructuredResult(
+            ok=True,
+            data={
+                "answer": answer,
+                "trace": trace,
+                "tool_calls": tool_calls,
+                "usage": usage,
+                "latency_ms": latency_ms,
+                "config_used": config_used,
+                "metadata": req.metadata,
+            },
+        )
 
     def _require_storage() -> Storage:
         storage: Storage | None = app.state.storage

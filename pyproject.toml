@@ -3,7 +3,7 @@
 # docs/architecture/PersonalAI-Architecture-Research.md (Section 22).
 
 [tool.uv.workspace]
-members = ["contracts", "core", "apps/backend", "providers/ollama", "providers/openai_compat", "providers/whisper_local", "storage/postgres", "modalities/files", "tools/builtin", "tools/mcp"]
+members = ["contracts", "core", "apps/backend", "providers/ollama", "providers/openai_compat", "providers/whisper_local", "storage/postgres", "modalities/files", "tools/builtin", "tools/mcp", "benchmarks"]
 
 [dependency-groups]
 dev = [
@@ -60,7 +60,7 @@ warn_unused_configs = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 show_error_codes = true
-mypy_path = ["contracts/src", "core/src", "apps/backend/src", "providers/ollama/src", "providers/openai_compat/src", "providers/whisper_local/src", "storage/postgres/src", "modalities/files/src", "tools/builtin/src", "tools/mcp/src"]
+mypy_path = ["contracts/src", "core/src", "apps/backend/src", "providers/ollama/src", "providers/openai_compat/src", "providers/whisper_local/src", "storage/postgres/src", "modalities/files/src", "tools/builtin/src", "tools/mcp/src", "benchmarks/src"]
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
@@ -71,13 +71,17 @@ ignore_missing_imports = true
 module = "faster_whisper.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "yaml.*"
+ignore_missing_imports = true
+
 # ---------------------------------------------------------------------------
 # pytest + coverage.
 # ---------------------------------------------------------------------------
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-ra -q --import-mode=importlib --cov --cov-report=term-missing --cov-report=xml"
-testpaths = ["contracts/tests", "core/tests", "apps/backend/tests", "providers/ollama/tests", "providers/openai_compat/tests", "storage/postgres/tests", "modalities/files/tests", "tools/builtin/tests", "tools/mcp/tests", "tools/markitdown-ollama/tests"]
+testpaths = ["contracts/tests", "core/tests", "apps/backend/tests", "providers/ollama/tests", "providers/openai_compat/tests", "storage/postgres/tests", "modalities/files/tests", "tools/builtin/tests", "tools/mcp/tests", "tools/markitdown-ollama/tests", "benchmarks/tests"]
 filterwarnings = [
     # Third-party: starlette's TestClient warns to migrate to httpx2; tracked, not ours.
     "ignore:Using `httpx` with `starlette.testclient`.*",

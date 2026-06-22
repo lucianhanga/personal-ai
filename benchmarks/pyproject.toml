@@ -1,0 +1,18 @@
+[project]
+name = "personalai-benchmarks"
+version = "0.0.0"
+description = "PersonalAI benchmark harness (M-Bench): drive personalIA via /assistant/execute and score it."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [{ name = "Lucian Hanga" }]
+# Dev-only tool. Talks to the running backend over HTTP — it deliberately does NOT depend on any
+# app package (no `personalai-*`), so it stays decoupled and could test a remote deployment.
+dependencies = ["httpx>=0.27", "pyyaml>=6", "pydantic>=2"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/personalai_benchmarks"]

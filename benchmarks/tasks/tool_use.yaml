@@ -1,0 +1,33 @@
+# Tool-use tasks: a correct answer is reachable with the calculator. Run these in a tool-enabled
+# mode (single_tools_mcp / multi_tools_mcp) to reward tool use; in single_no_tools they probe
+# whether the raw model gets it right unaided. `expects_tool` flags which tool *should* be used (for
+# trajectory scoring once tool-trajectory grading lands in Phase 2).
+- id: tool_calc_large_product
+  category: tool_use
+  capability_tier: tools
+  version: v1
+  input:
+    - role: user
+      content: "What is 1234 * 5678? Reply with ONLY the integer result."
+  expected: "7006652"
+  metadata: { match: includes, expects_tool: calculator }
+
+- id: tool_calc_compound
+  category: tool_use
+  capability_tier: tools
+  version: v1
+  input:
+    - role: user
+      content: "Compute (98765 - 4321) * 3 and reply with ONLY the integer."
+  expected: "283332"
+  metadata: { match: includes, expects_tool: calculator }
+
+- id: tool_calc_percentage
+  category: tool_use
+  capability_tier: tools
+  version: v1
+  input:
+    - role: user
+      content: "What is 17.5% of 2480? Reply with ONLY the number."
+  expected: "434"
+  metadata: { match: includes, expects_tool: calculator }

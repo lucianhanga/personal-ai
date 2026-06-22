@@ -81,3 +81,6 @@ Thumbs.db
 !.vscode/extensions.json
 !.vscode/settings.shared.json
 *.swp
+
+# Benchmark harness output (M-Bench)
+benchmark-results/

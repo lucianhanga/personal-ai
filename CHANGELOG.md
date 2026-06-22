@@ -12,6 +12,18 @@ generated OpenAPI document.
 ## [Unreleased]
 
 ### Added
+- **Benchmark harness — M-Bench Phase 1 (#313)**: a new dev-only `benchmarks/` workspace package
+  that benchmarks personalIA in multiple configurations and produces a capability-tier leaderboard.
+  It drives the backend through a new **`POST /api/v1/assistant/execute`** endpoint — non-streaming,
+  one JSON response, with **per-run overrides applied to a config copy that is never persisted** (so
+  a run can sweep model / reasoning / agent mode / tools / MCP / RAG / **memory on-off** / grounding
+  / max-iterations / accuracy / temperature without mutating saved settings; the human gate is forced
+  off). It returns the final answer, trace, tool calls, usage, latency, and the exact `config_used`.
+  The harness ships declarative YAML tasks, pluggable scorers (exact / includes / regex / model-graded),
+  a runner with reproducibility metadata (git commit, timestamp, platform), JSON + Markdown
+  leaderboards grouped by capability tier (never averaged across tiers — memory-on is its own tier),
+  and a CLI (`python -m personalai_benchmarks run`). Runs fully local; frontier-model adapters and
+  cost/latency-adjusted leaderboards are Phase 2. No new third-party dependency.
 - **Memory dedup + conflict reconciliation (#310)**: both memory write paths — the `remember` tool
   and the background extractor — now route every fact through a shared `consolidate_fact()` that
   decides **ADD / UPDATE / NOOP**. A near-duplicate is dropped (no more accumulating copies); a fact
