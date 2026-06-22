@@ -12,6 +12,14 @@ generated OpenAPI document.
 ## [Unreleased]
 
 ### Added
+- **Agent memory editing + saved dates (#314)**: the agent can now **correct or forget** a memory,
+  not just add one. Two new built-in tools — `update_memory` (describe the memory + give the
+  correction → the closest match is superseded and the correction stored) and `forget_memory`
+  (describe it → the closest match is hidden) — resolve *which* memory by semantic search and act
+  deterministically, so "no, it's actually …" / "forget that" replaces or removes instead of piling
+  up duplicates. Both are reversible (superseded rows are kept, just hidden) and LOW risk; they
+  require tools enabled. The **Memory panel** now shows **when each memory was saved** (and marks
+  ones that were later edited).
 - **Benchmark harness — M-Bench Phase 1 (#313)**: a new dev-only `benchmarks/` workspace package
   that benchmarks personalIA in multiple configurations and produces a capability-tier leaderboard.
   It drives the backend through a new **`POST /api/v1/assistant/execute`** endpoint — non-streaming,
