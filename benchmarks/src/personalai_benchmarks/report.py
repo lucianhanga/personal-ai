@@ -10,6 +10,7 @@ produce a misleading single-sample pass/FAIL. A per-task matrix + failures list 
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import html
 import json
 from collections import defaultdict
@@ -256,23 +257,45 @@ def write_markdown(suite: Suite, path: str | Path) -> Path:
 # Color code (matches the app): green = good, amber = middling, red = poor.
 _OK, _WARN, _BAD = "#1a7f37", "#b06f00", "#b00020"
 
+# Per-vendor bar colors for the ranked chart (distinct hues so each provider reads at a glance);
+# the local model gets our green. Unknown vendors fall back to a hashed hue.
+_VENDOR_COLORS = {
+    "personalia": "#1a7f37",  # local PersonalAI (our brand green)
+    "openai": "#10a37f",
+    "anthropic": "#d97757",
+    "gemini": "#4285f4",
+    "google": "#4285f4",
+    "deepseek": "#7c3aed",
+    "xai": "#1f2933",
+    "groq": "#f55036",
+}
+
 
 def _grade_color(fraction: float) -> str:
     return _OK if fraction >= 0.8 else _WARN if fraction >= 0.5 else _BAD
 
 
-def _quality_chart_html(rows: list[tuple[str, float]], esc: Callable[[str], str]) -> str:
-    """A horizontal bar chart of mean score per system (already ranked), color-coded by grade."""
+def _vendor_color(series: str) -> str:
+    """A stable bar color from the contestant's vendor (e.g. ``openai+tools:gpt-4o`` -> openai)."""
+    vendor = series.split("/", 1)[0].split(":", 1)[0].replace("+tools", "")
+    if vendor in _VENDOR_COLORS:
+        return _VENDOR_COLORS[vendor]
+    hue = int(hashlib.md5(vendor.encode()).hexdigest(), 16) % 360  # noqa: S324 - non-crypto, color only
+    return f"hsl({hue}, 55%, 45%)"
+
+
+def _ranked_bar_chart_html(rows: list[tuple[str, float]], esc: Callable[[str], str]) -> str:
+    """An artificialanalysis-style ranked bar chart: one vendor-colored vertical bar per contestant,
+    score (x100) on top, system label beneath, tallest (best) first. ``rows`` is already ranked."""
     if not rows:
         return ""
-    parts = ['<div class=chart aria-label="mean score by system">']
+    parts = ['<div class=vchart aria-label="mean score (x100) by system, ranked">']
     for series, score in rows:
-        width = max(2, round(score * 100))
+        height = max(2, round(score * 200))  # px; a perfect 1.0 score is a 200px bar
         parts.append(
-            f"<div class=crow><span class=clabel><code>{esc(series)}</code></span>"
-            f'<span class=cbar><span style="width:{width}%;background:{_grade_color(score)}">'
-            f"</span></span>"
-            f"<span class=cval>{score:.2f}</span></div>"
+            f"<div class=vbar><span class=v>{round(score * 100)}</span>"
+            f'<span class=b style="height:{height}px;background:{_vendor_color(series)}"></span>'
+            f"<span class=l><code>{esc(series)}</code></span></div>"
         )
     parts.append("</div>")
     return "".join(parts)
@@ -313,16 +336,19 @@ def to_html(suite: Suite) -> str:
         ".barfill{display:block;height:100%;border-radius:3px}",
         ".best{font-size:.72rem;color:#1a7f37;font-weight:700;text-transform:uppercase}",
         ".delta{font-variant-numeric:tabular-nums;color:#888}",
-        # Per-tier quality bar chart (artificialanalysis-style horizontal bars).
-        ".chart{margin:.1rem 0 1.4rem}",
-        ".crow{display:flex;align-items:center;gap:.6rem;margin:.18rem 0}",
-        ".clabel{flex:0 0 15rem;text-align:right;font-size:.82rem;overflow:hidden;"
-        "text-overflow:ellipsis;white-space:nowrap}",
-        ".cbar{flex:1;height:1rem;background:#eef0f2;border-radius:3px;overflow:hidden}",
-        ".cbar>span{display:block;height:100%;border-radius:3px}",
-        ".cval{flex:0 0 6.5rem;font-variant-numeric:tabular-nums;font-size:.82rem}",
+        # Ranked bar chart (artificialanalysis-style vertical bars: score on top, label beneath).
+        ".vchart{display:flex;align-items:flex-end;gap:.45rem;margin:.5rem 0 1.4rem;"
+        "overflow-x:auto;padding:.2rem 0}",
+        ".vbar{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;"
+        "min-width:46px}",
+        ".vbar .v{font-size:.82rem;font-weight:700;margin-bottom:.25rem;"
+        "font-variant-numeric:tabular-nums}",
+        ".vbar .b{width:62%;min-width:18px;border-radius:4px 4px 0 0}",
+        ".vbar .l{font-size:.6rem;color:#555;margin-top:.35rem;max-width:5.5rem;text-align:center;"
+        "line-height:1.15;word-break:break-word}",
+        ".vbar code{background:none;padding:0}",
         "@media print{body{margin:0;max-width:none}h2{page-break-after:avoid}"
-        ".chart{break-inside:avoid}}",
+        ".vchart{break-inside:avoid}}",
         "</style></head><body>",
         "<h1>PersonalAI benchmark leaderboard</h1>",
         (
@@ -339,6 +365,21 @@ def to_html(suite: Suite) -> str:
         f"· repeats: {repeats} · judge: {esc(str(meta.get('judge', 'off')))}",
         "</div>",
     ]
+
+    # Headline: every contestant (PersonalAI configs + frontier models) ranked together by mean
+    # score — the "who's best on these tasks" overview. Per-tier tables below keep the like-for-like
+    # comparison (a tool-equipped or multi-agent run isn't apples-to-apples with a no-tools one).
+    overall = sorted(
+        (
+            (series, _mean([c.mean_score for c in cs]))
+            for series_map in by_tier_series.values()
+            for series, cs in series_map.items()
+        ),
+        key=lambda sv: (-sv[1], sv[0]),
+    )
+    if len(overall) > 1:
+        out.append("<h2>Overall ranking <small>(mean score ×100, all contestants)</small></h2>")
+        out.append(_ranked_bar_chart_html(overall, esc))
 
     for tier in sorted(by_tier_series):
         out.append(f"<h2>Tier <span class=tier>{esc(tier)}</span></h2>")
@@ -382,7 +423,7 @@ def to_html(suite: Suite) -> str:
                 f"<td class=num>{_fmt_speed(_mean_opt([c.mean_speed for c in cs]))}</td></tr>"
             )
         out.append("</table>")
-        out.append(_quality_chart_html(chart_rows, esc))
+        out.append(_ranked_bar_chart_html(chart_rows, esc))
 
     # Per-task matrix.
     series_cols = sorted({c.series for c in cell_list})
