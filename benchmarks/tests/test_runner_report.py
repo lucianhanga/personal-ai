@@ -181,3 +181,20 @@ def test_comparison_grader_receives_the_system_name() -> None:
         grader=grader,
     )
     assert set(seen) == {"a", "b"}  # the grader can route by system (self-preference)
+
+
+def test_on_progress_fires_start_and_result_per_attempt() -> None:
+    events: list[tuple[str, str | None]] = []
+    run_suite(
+        tasks=[_task(expected="62")],
+        modes=[SINGLE_NO_TOOLS],
+        sut=_FakeSUT(answer="62"),
+        repeats=2,
+        on_progress=lambda label, result: events.append((label, result)),
+    )
+    # 2 attempts × (start, result) = 4 callbacks.
+    starts = [e for e in events if e[1] is None]
+    results = [e for e in events if e[1] is not None]
+    assert len(starts) == 2 and len(results) == 2
+    assert all("fake · single_no_tools · t1" in label for label, _ in events)
+    assert all(r is not None and r.startswith("ok (") for _, r in events if r is not None)
