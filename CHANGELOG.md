@@ -11,6 +11,15 @@ generated OpenAPI document.
 
 ## [Unreleased]
 
+### Added
+- **Tool-equipped frontier "chat" variant (#328)**: benchmark frontier models *with tools* (the
+  Claude.ai / ChatGPT-style assistant), not just `raw`. `compare --frontier-tools` runs each frontier
+  model through a function-calling loop that executes **PersonalAI's own tools** over HTTP
+  (`/api/v1/tools` + `/api/v1/tools/invoke`) — so frontier models use the same calculator / web_search
+  / MCP tools as PersonalAI (no extra search key), landing in a `frontier_tools` tier next to
+  PersonalAI's tool modes. Tool names are sanitized for the model (dotted MCP names → safe names,
+  mapped back on invoke). Needs the backend running, like the rest of `compare`.
+
 ### Changed
 - **Benchmark live progress (#326)**: the `compare`/`run` commands now print a per-attempt line to
   stderr as each one runs — `[ 3/42] openai:gpt-4o · raw · quality_explain_recursion … ok (1240ms)`

@@ -17,10 +17,10 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from personalai_benchmarks import frontier
+from personalai_benchmarks import frontier, frontier_tools
 from personalai_benchmarks.adapters import PersonalIAAdapter
 from personalai_benchmarks.judge import default_judge
-from personalai_benchmarks.modes import ALL_MODES, RAW
+from personalai_benchmarks.modes import ALL_MODES, FRONTIER_TOOLS, RAW
 from personalai_benchmarks.report import write_report
 from personalai_benchmarks.runner import (
     Grader,
@@ -56,6 +56,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     cmp.add_argument(
         "--no-personalia", action="store_true", help="skip the local PersonalAI system"
+    )
+    cmp.add_argument(
+        "--frontier-tools",
+        action="store_true",
+        help="also run each frontier model with PersonalAI's tools (the assistant/'chat' variant)",
     )
     cmp.add_argument("--no-judge", action="store_true", help="skip LLM-judge quality grading")
 
@@ -157,9 +162,27 @@ def _compare(args: argparse.Namespace) -> int:
         front = [a for a in (frontier.build(p) for p in wanted) if a is not None]
     else:
         front = frontier.available()
+        wanted = [a.provider.name for a in front]
+    # Optional tool-equipped ("chat") frontier contestants, using PersonalAI's tools over HTTP.
+    front_tools = (
+        [
+            a
+            for a in (
+                frontier_tools.build(p, backend_url=args.base_url, backend_token=args.token)
+                for p in wanted
+            )
+            if a is not None
+        ]
+        if args.frontier_tools
+        else []
+    )
 
     reps = max(1, args.repeats)
-    total = (len(p_modes) * len(tasks) * reps if p_modes else 0) + len(front) * len(tasks) * reps
+    total = (
+        (len(p_modes) * len(tasks) * reps if p_modes else 0)
+        + len(front) * len(tasks) * reps
+        + len(front_tools) * len(tasks) * reps
+    )
     progress = _make_progress(total)
 
     records: list[RunRecord] = []
@@ -187,6 +210,17 @@ def _compare(args: argparse.Namespace) -> int:
         )
         records.extend(suite.records)
         systems.extend(a.name for a in front)
+    if front_tools:
+        suite = run_comparison(
+            tasks=tasks,
+            modes=[FRONTIER_TOOLS],
+            systems=front_tools,
+            grader=grader,
+            repeats=args.repeats,
+            on_progress=progress,
+        )
+        records.extend(suite.records)
+        systems.extend(a.name for a in front_tools)
 
     if not records:
         print("no systems to run (PersonalAI skipped and no frontier key present)", file=sys.stderr)
