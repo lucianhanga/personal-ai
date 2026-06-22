@@ -19,6 +19,7 @@ from pathlib import Path
 
 from personalai_benchmarks import frontier, frontier_tools
 from personalai_benchmarks.adapters import PersonalIAAdapter
+from personalai_benchmarks.analysis import length_bias
 from personalai_benchmarks.judge import default_judge
 from personalai_benchmarks.modes import ALL_MODES, FRONTIER_TOOLS, RAW
 from personalai_benchmarks.report import write_report
@@ -129,6 +130,9 @@ def _summary(suite: Suite, out: str) -> int:
     passed = sum(1 for r in suite.records if r.passed)
     errored = sum(1 for r in suite.records if r.error is not None)
     print(f"ran {total} attempts: {passed} passed, {total - passed} failed ({errored} errored)")
+    bias = length_bias(suite.records)
+    if bias is not None:
+        print(bias.summary())
     print(f"wrote {json_path}")
     print(f"wrote {md_path}")
     print(f"wrote {html_path}  (open in a browser; print to PDF to share)")

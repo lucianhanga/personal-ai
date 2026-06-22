@@ -46,6 +46,7 @@ class RunRecord:
     error: str | None
     attempt: int = 0
     system: str = ""  # the system-under-test (e.g. "personalia", "openai:gpt-4o")
+    scorer: str = ""  # which scorer graded it (e.g. "llm_judge", "includes"); for bias analysis
 
 
 @dataclass(frozen=True)
@@ -119,6 +120,7 @@ def run_suite(
                         error=result.error,
                         attempt=attempt,
                         system=sut.name,
+                        scorer=score.scorer,
                     )
                 )
     metadata = {
