@@ -7,12 +7,31 @@ import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from personalai_benchmarks.adapters import SystemUnderTest
+from personalai_benchmarks.cache import cell_key
 from personalai_benchmarks.modes import Mode
 from personalai_benchmarks.scoring import Judge, Score, score_task
 from personalai_benchmarks.tasks import Task
+
+if TYPE_CHECKING:  # the type only; ResultCache's runtime use is duck-typed (avoids an import cycle)
+    from personalai_benchmarks.cache import ResultCache
+
+
+def _cell_key(system: str, mode: Mode, task: Task, cache_tag: str, repeats: int) -> str:
+    # Judged cells fold in the grading fingerprint (so a judge change re-runs them); exact-match
+    # cells don't depend on the judge.
+    fingerprint = cache_tag if task.rubric else "exact"
+    return cell_key(
+        system=system,
+        mode=mode.name,
+        task_id=task.id,
+        task_version=task.version,
+        fingerprint=fingerprint,
+        repeats=repeats,
+    )
+
 
 # A grader scores a task's answer given the system that produced it (so the judge can apply its
 # self-preference fallback). Takes precedence over the simple ``judge`` when provided.
@@ -77,19 +96,37 @@ def run_suite(
     repeats: int = 1,
     on_progress: OnProgress | None = None,
     sink: list[RunRecord] | None = None,
+    cache: ResultCache | None = None,
+    cache_tag: str = "",
 ) -> Suite:
     """Run every (task, mode) pair through ``sut`` ``repeats`` times, scoring each attempt; errors
     are recorded, not raised. Each attempt is its own record (the report reduces them to pass@k).
     ``grader`` (system-aware, e.g. the LLM judge) takes precedence over the simple ``judge``.
     ``on_progress`` is called at the start (result=None) and end of each attempt for live output.
     ``sink``: if given, each record is appended to it as produced, so a caller still holds the
-    partial results if a :class:`KeyboardInterrupt` unwinds mid-run (Ctrl-C → partial report)."""
+    partial results if a :class:`KeyboardInterrupt` unwinds mid-run (Ctrl-C → partial report).
+    ``cache``: if given, each (system, mode, task) cell is reused from / stored to it (only pass a
+    cache for deterministic systems — never the local model); ``cache_tag`` fingerprints the grading
+    config so a judge change invalidates judged cells."""
     n = max(1, repeats)
     records: list[RunRecord] = []
     for task in tasks:
         for mode in modes:
+            label = f"{sut.name} · {mode.name} · {task.id}"
+            key = _cell_key(sut.name, mode, task, cache_tag, n) if cache is not None else None
+            if cache is not None and key is not None:
+                hit = cache.get(key)
+                if hit is not None:  # reuse — no API call; emit a tick per cached attempt
+                    for rec in hit:
+                        if on_progress is not None:
+                            on_progress(label, None)
+                            on_progress(label, "cached")
+                        records.append(rec)
+                        if sink is not None:
+                            sink.append(rec)
+                    continue
+            cell: list[RunRecord] = []
             for attempt in range(n):
-                label = f"{sut.name} · {mode.name} · {task.id}"
                 if on_progress is not None:
                     on_progress(label, None)
                 result = sut.run(task.as_messages(), mode.overrides)
@@ -124,9 +161,12 @@ def run_suite(
                     system=sut.name,
                     scorer=score.scorer,
                 )
+                cell.append(record)
                 records.append(record)
                 if sink is not None:
                     sink.append(record)
+            if cache is not None and key is not None:
+                cache.put(key, cell)
     metadata = {
         "git_commit": _git_commit(),
         "timestamp": datetime.now(UTC).isoformat(),
@@ -150,10 +190,14 @@ def run_comparison(
     repeats: int = 1,
     on_progress: OnProgress | None = None,
     sink: list[RunRecord] | None = None,
+    cache: ResultCache | None = None,
+    cache_tag: str = "",
 ) -> Suite:
     """Run the same tasks×modes against several systems into one combined, system-tagged suite, so a
     single leaderboard can compare PersonalAI against frontier contestants. ``sink`` (if given)
-    accumulates records live across all systems so a Ctrl-C still yields a partial report."""
+    accumulates records live across all systems so a Ctrl-C still yields a partial report. ``cache``
+    is forwarded per system — only pass it for deterministic (frontier) systems, never the local
+    model."""
     records: list[RunRecord] = []
     for system in systems:
         suite = run_suite(
@@ -165,6 +209,8 @@ def run_comparison(
             repeats=repeats,
             on_progress=on_progress,
             sink=sink,
+            cache=cache,
+            cache_tag=cache_tag,
         )
         records.extend(suite.records)
     metadata = {

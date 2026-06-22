@@ -80,6 +80,14 @@ tier) over the same tasks, then writes one combined leaderboard grouped by capab
 - **Length-bias check** (`analysis.py`): every `compare` run reports the Pearson correlation between
   answer word-count and judge score across judged answers, and **flags** a strong correlation — a
   tell-tale of verbosity bias. It prints in the summary and the Markdown report header.
+- **Frontier result cache** (`cache.py`): frontier models are deterministic (temperature 0), so the
+  *raw* frontier tier is **cached and reused across runs** — re-running `compare` re-runs only the
+  **local model** (which changes constantly) and any **new tasks**; already-benchmarked frontier
+  cells are served from `benchmark-results/cache.json` with no API call. The key folds in the task
+  `version` and a grading fingerprint, so editing a task (bump its `version`) or changing the judge
+  re-runs just that cell. Tool-equipped frontier runs depend on local tools, so they are not cached.
+  `--no-cache` re-runs everything; `--refresh` re-runs frontier and refreshes the cache (use when a
+  provider actually changes a model); `--cache-file` sets the path.
 - These are **billed** by each provider. Start small: a couple of task ids, `--repeats 1`, a few
   providers — check cost/latency before a larger sweep.
 
