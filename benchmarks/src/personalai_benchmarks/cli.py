@@ -56,6 +56,13 @@ def _build_parser() -> argparse.ArgumentParser:
         f"Known: {', '.join(frontier.PROVIDERS)}",
     )
     cmp.add_argument(
+        "--model-tier",
+        default="default",
+        choices=["default", *frontier.MODEL_TIERS, "all"],
+        help="frontier model(s) per provider: 'default' = one representative; a tier "
+        "(cheapest/medium/best); or 'all' = the full per-provider lineup (more cost).",
+    )
+    cmp.add_argument(
         "--no-personalia", action="store_true", help="skip the local PersonalAI system"
     )
     cmp.add_argument(
@@ -167,12 +174,15 @@ def _compare(args: argparse.Namespace) -> int:
     p_modes = None if args.no_personalia else _personal_modes(args)
     if not args.no_personalia and p_modes is None:
         return 2
-    if args.providers:
-        wanted = [p.strip() for p in args.providers.split(",") if p.strip()]
+    wanted = (
+        [p.strip() for p in args.providers.split(",") if p.strip()]
+        if args.providers
+        else list(frontier.PROVIDERS)
+    )
+    if args.model_tier == "default":
         front = [a for a in (frontier.build(p) for p in wanted) if a is not None]
     else:
-        front = frontier.available()
-        wanted = [a.provider.name for a in front]
+        front = [a for p in wanted for a in frontier.build_tier(p, args.model_tier)]
     # Optional tool-equipped ("chat") frontier contestants, using PersonalAI's tools over HTTP.
     front_tools = (
         [

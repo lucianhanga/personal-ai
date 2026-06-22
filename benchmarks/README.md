@@ -33,6 +33,9 @@ uv run --env-file .env python -m personalai_benchmarks compare \
 # Also run frontier models WITH tools (the assistant/"chat" variant — they call PersonalAI's tools):
 uv run --env-file .env python -m personalai_benchmarks compare --frontier-tools
 
+# Sweep a whole price/quality tier across providers (cheapest | medium | best | all):
+uv run --env-file .env python -m personalai_benchmarks compare --no-personalia --model-tier best
+
 # Prefer clicking over flags? Open the local launcher UI (dev-only, localhost, no auth):
 uv run --env-file .env python -m personalai_benchmarks ui   # then open http://127.0.0.1:8900/
 make run-bench-ui                                           # same thing, from the repo root
@@ -55,7 +58,14 @@ tier) over the same tasks, then writes one combined leaderboard grouped by capab
 - **Providers** (`frontier.py`): one OpenAI-compatible adapter reaches OpenAI / Anthropic / DeepSeek
   / xAI (Grok) / Groq / Gemini. Keys come from the environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
   `DEEPSEEK_API_KEY`, `XAI_API_KEY`, `GROQ_API_KEY`, `GEMINI_API_KEY`); a provider without a key is
-  skipped and reported. Default model names are starting points — override per provider as needed.
+  skipped and reported.
+- **Model lineup + `--model-tier`**: each provider carries a curated lineup tagged `cheapest` /
+  `medium` / `best` (up to 5 models, current + older, validated against each provider's live
+  `/models`; DeepSeek has 2 and xAI 4, not padded). `compare --model-tier cheapest|medium|best`
+  runs just that tier across providers, `--model-tier all` runs the full spread (more cost), and the
+  **default** runs a single representative per provider (unchanged cost). With the cost + quality
+  bars, this is the artificialanalysis-style cheapest→best comparison. Model ids change fast — edit
+  `PROVIDERS` in `frontier.py` and prices in `pricing.py` as they move.
 - **LLM judge** (`judge.py`): grades open-ended (rubric) tasks — **form-filling** (a one-sentence
   justification is written *before* each criterion's 1–5 score, the G-Eval pattern, for steadier and
   auditable grades), reference-guided, temperature 0, pinned `JUDGE_PROMPT_VERSION` (now `v2`; parsing

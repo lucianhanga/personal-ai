@@ -25,6 +25,9 @@ _OUT_DIR = "benchmark-results"
 _DEFAULT_TASKS = Path(__file__).resolve().parents[2] / "tasks"
 
 
+_MODEL_TIERS = ("default", *frontier.MODEL_TIERS, "all")
+
+
 def build_compare_args(
     *,
     providers: list[str],
@@ -35,6 +38,7 @@ def build_compare_args(
     frontier_tools: bool,
     no_personalia: bool,
     base_url: str,
+    model_tier: str = "default",
     out: str = _OUT_DIR,
 ) -> list[str]:
     """Validate the form selections and build the `compare` CLI args (raises ValueError if bad)."""
@@ -44,9 +48,12 @@ def build_compare_args(
     bad_m = [m for m in modes if m not in ALL_MODES]
     if bad_m:
         raise ValueError(f"unknown modes: {', '.join(bad_m)}")
+    if model_tier not in _MODEL_TIERS:
+        raise ValueError(f"unknown model tier: {model_tier}")
     if repeats < 1:
         raise ValueError("repeats must be >= 1")
     args = ["compare", "--out", out, "--base-url", base_url, "--repeats", str(repeats)]
+    args += ["--model-tier", model_tier]
     if providers:
         args += ["--providers", ",".join(providers)]
     if modes:
@@ -73,6 +80,7 @@ def _render_page(base_url: str) -> str:
         "providers": providers,
         "modes": modes,
         "tasks": task_ids,
+        "modelTiers": list(_MODEL_TIERS),
         "baseUrl": base_url,
     }
     return _PAGE.replace("/*DATA*/", json.dumps(data)).replace("__BASE__", html.escape(base_url))
@@ -135,6 +143,7 @@ class _Handler(BaseHTTPRequestHandler):
                 judge=one("judge") == "1",
                 frontier_tools=one("frontier_tools") == "1",
                 no_personalia=one("no_personalia") == "1",
+                model_tier=one("model_tier", "default") or "default",
                 base_url=self.base_url,
             )
         except (ValueError, TypeError) as exc:
@@ -199,6 +208,7 @@ Run the server with <code>uv run --env-file .env …</code> so the benchmark get
 <fieldset><legend>PersonalAI modes</legend><div id=modes></div></fieldset>
 <fieldset><legend>Tasks (none = all)</legend><div id=tasks></div></fieldset>
 <fieldset><legend>Options</legend>
+<label>model tier <select id=model_tier></select></label>
 <label>repeats <input id=repeats type=number min=1 value=1></label>
 <label><input id=judge type=checkbox checked> LLM judge</label>
 <label><input id=frontier_tools type=checkbox> frontier with tools</label>
@@ -215,15 +225,19 @@ function chk(id, items, val, lbl){const el=document.getElementById(id);
 chk('providers', D.providers, x=>x, x=>x);
 chk('modes', D.modes, x=>x[0], x=>`${x[0]} <small style=color:#888>(${x[1]})</small>`);
 chk('tasks', D.tasks, x=>x[0], x=>`${x[0]} <small style=color:#888>(${x[1]})</small>`);
+document.getElementById('model_tier').innerHTML =
+  D.modelTiers.map(t=>`<option value="${t}">${t}</option>`).join('');
 function picked(id){
   return [...document.querySelectorAll(`input[data-g=${id}]:checked`)].map(e=>e.value);}
 function params(){return {
   providers:picked('providers'), modes:picked('modes'), task_ids:picked('tasks'),
+  model_tier:document.getElementById('model_tier').value,
   repeats:document.getElementById('repeats').value,
   judge:document.getElementById('judge').checked?'1':'0',
   frontier_tools:document.getElementById('frontier_tools').checked?'1':'0',
   no_personalia:document.getElementById('no_personalia').checked?'1':'0'};}
-function preview(){const p=params(); let a=['compare','--repeats',p.repeats];
+function preview(){const p=params();
+  let a=['compare','--repeats',p.repeats,'--model-tier',p.model_tier];
   if(p.providers.length)a.push('--providers',p.providers.join(','));
   if(p.modes.length)a.push('--modes',p.modes.join(','));
   if(p.task_ids.length)a.push('--task-ids',p.task_ids.join(','));

@@ -80,7 +80,7 @@ def test_runs_the_tool_loop_and_returns_the_final_answer() -> None:
     adapter = frontier_tools.build(
         "openai", api_key="sk", backend_url="http://bk", client=_client(_calc_then_answer())
     )
-    assert adapter is not None and adapter.name == "openai+tools:gpt-4o"
+    assert adapter is not None and adapter.name == "openai+tools:gpt-5.4-mini"
     result = adapter.run([{"role": "user", "content": "what is 1234*5678?"}], {})
     assert result.error is None
     assert "7006652" in result.answer

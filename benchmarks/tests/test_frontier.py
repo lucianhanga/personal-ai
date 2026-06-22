@@ -5,10 +5,12 @@ from __future__ import annotations
 import httpx
 import pytest
 from personalai_benchmarks.frontier import (
+    MODEL_TIERS,
     PROVIDERS,
     OpenAICompatAdapter,
     available,
     build,
+    build_tier,
     missing_keys,
 )
 
@@ -79,6 +81,37 @@ def test_available_includes_only_providers_with_keys(monkeypatch: pytest.MonkeyP
     names = {a.provider.name for a in available(client=_client(_ok_handler))}
     assert names == {"openai", "groq"}
     assert set(missing_keys()) >= {"anthropic", "deepseek", "xai", "gemini"}
+
+
+def test_every_provider_has_a_valid_tagged_lineup() -> None:
+    for p in PROVIDERS.values():
+        assert p.models, f"{p.name} has no models"
+        tiers = {m.tier for m in p.models}
+        assert tiers <= set(MODEL_TIERS), f"{p.name} has an unknown tier: {tiers}"
+        assert "cheapest" in tiers, f"{p.name} has no cheapest model"
+        # default_model resolves to a real id in the lineup (back-compat for single-model runs).
+        assert p.default_model in {m.id for m in p.models}
+
+
+def test_provider_tier_selects_the_right_models() -> None:
+    openai = PROVIDERS["openai"]
+    assert openai.tier("best") == ["gpt-5.5", "gpt-4.1"]  # 2 best models
+    assert openai.tier("cheapest") == ["gpt-5.4-nano"]
+    assert openai.tier("all") == [m.id for m in openai.models]  # everything, in order
+    # DeepSeek is genuinely 2-tier — no medium, not padded.
+    assert PROVIDERS["deepseek"].tier("medium") == []
+
+
+def test_build_tier_builds_an_adapter_per_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-x")
+    adapters = build_tier("openai", "best", client=_client(_ok_handler))
+    assert [a.model for a in adapters] == ["gpt-5.5", "gpt-4.1"]
+    assert build_tier("openai", "all", client=_client(_ok_handler)) != []  # full lineup
+
+
+def test_build_tier_skips_a_provider_without_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+    assert build_tier("xai", "best", client=_client(_ok_handler)) == []
 
 
 def test_temperature_override_is_sent() -> None:

@@ -27,6 +27,36 @@ def test_build_args_happy_path() -> None:
     assert "--no-judge" not in args
 
 
+def test_model_tier_is_passed_through_and_validated() -> None:
+    args = ui.build_compare_args(
+        providers=["openai"],
+        modes=[],
+        task_ids=[],
+        repeats=1,
+        judge=True,
+        frontier_tools=False,
+        no_personalia=False,
+        base_url="http://x",
+        model_tier="best",
+    )
+    assert args[args.index("--model-tier") + 1] == "best"
+
+
+def test_unknown_model_tier_rejected() -> None:
+    with pytest.raises(ValueError, match="unknown model tier"):
+        ui.build_compare_args(
+            providers=[],
+            modes=[],
+            task_ids=[],
+            repeats=1,
+            judge=True,
+            frontier_tools=False,
+            no_personalia=False,
+            base_url="http://x",
+            model_tier="ultra",
+        )
+
+
 def test_no_judge_flag_when_judge_off() -> None:
     args = ui.build_compare_args(
         providers=[],
