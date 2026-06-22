@@ -340,6 +340,20 @@ def test_no_cache_means_always_run(tmp_path: Path) -> None:
     assert sut.calls == 2  # the local model (no cache) re-runs every time
 
 
+def test_ranked_chart_colors_by_vendor_and_ranks_overall() -> None:
+    from personalai_benchmarks.report import _ranked_bar_chart_html, _vendor_color
+
+    # Same vendor -> same color; different vendors differ; local gets the brand green.
+    assert _vendor_color("openai:gpt-4o") == _vendor_color("openai+tools:gpt-5.5")
+    assert _vendor_color("anthropic:claude") != _vendor_color("openai:gpt-4o")
+    assert _vendor_color("personalia/single_no_tools") == "#1a7f37"
+
+    html_text = _ranked_bar_chart_html([("openai:gpt-5.5", 0.9), ("groq:llama", 0.2)], str)
+    assert "class=vchart" in html_text
+    assert html_text.index("gpt-5.5") < html_text.index("llama")  # ranked order preserved
+    assert ">90<" in html_text and ">20<" in html_text  # scores shown as x100
+
+
 def test_unicode_bar_scales_to_fraction() -> None:
     from personalai_benchmarks.report import _unicode_bar
 
@@ -372,5 +386,6 @@ def test_leaderboard_renders_bars_and_comparison_marks() -> None:
 
     html_text = to_html(suite)
     assert "barfill" in html_text  # inline score bar in the table
-    assert "class=chart" in html_text and "crow" in html_text  # the per-tier bar chart
+    assert "class=vchart" in html_text and "class=vbar" in html_text  # ranked vertical bar chart
+    assert "Overall ranking" in html_text  # headline all-contestants chart
     assert "<span class=best>best</span>" in html_text  # leader comparison mark
