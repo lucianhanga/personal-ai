@@ -13,6 +13,7 @@ import dataclasses
 import html
 import json
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 
 from personalai_benchmarks import pricing
@@ -133,6 +134,18 @@ def _fmt_speed(value: float | None) -> str:
     return "—" if value is None else f"{value:.0f}"
 
 
+def _unicode_bar(fraction: float, width: int = 12) -> str:
+    """A text bar for the Markdown report: ``width`` block cells scaled to ``fraction`` (0–1)."""
+    fraction = max(0.0, min(1.0, fraction))
+    filled = round(fraction * width)
+    return "█" * filled + "░" * (width - filled)
+
+
+def _delta_mark(value: float, best: float) -> str:
+    """Comparison mark vs the tier leader: ``best`` for the top row, else the signed gap (-0.12)."""
+    return "best" if value >= best else f"{value - best:+.2f}"
+
+
 def to_markdown(suite: Suite) -> str:
     md: list[str] = ["# PersonalAI benchmark leaderboard", ""]
     meta = suite.metadata
@@ -166,24 +179,27 @@ def to_markdown(suite: Suite) -> str:
         md.append(f"### Tier: `{tier}`")
         md.append("")
         md.append(
-            "| system / mode | pass@k | pass rate | mean score | latency (ms) | $ / run | tok/s |"
+            "| system / mode | pass@k | pass rate | mean score | quality | Δ best | "
+            "latency (ms) | $ / run | tok/s |"
         )
-        md.append("|---|---|---|---|---|---|---|")
+        md.append("|---|---|---|---|---|---|---|---|---|")
         # Rank rows within a tier by quality then pass-rate.
         ranked = sorted(
             by_tier_series[tier].items(),
             key=lambda kv: (-_mean([c.mean_score for c in kv[1]]), kv[0]),
         )
+        best_score = _mean([c.mean_score for c in ranked[0][1]]) if ranked else 0.0
         for series, cs in ranked:
             tasks_solved = sum(1 for c in cs if c.pass_at_k)
             attempts = sum(c.n for c in cs)
             attempt_passes = sum(c.passes for c in cs)
             pk = tasks_solved / len(cs) * 100 if cs else 0.0
             pr = attempt_passes / attempts * 100 if attempts else 0.0
+            score = _mean([c.mean_score for c in cs])
             md.append(
                 f"| {series} | {tasks_solved}/{len(cs)} ({pk:.0f}%) | "
                 f"{attempt_passes}/{attempts} ({pr:.0f}%) | "
-                f"{_mean([c.mean_score for c in cs]):.2f} | "
+                f"{score:.2f} | `{_unicode_bar(score)}` | {_delta_mark(score, best_score)} | "
                 f"{_mean([c.mean_latency for c in cs]):.0f} | "
                 f"{_fmt_cost(_mean_opt([c.mean_cost for c in cs]))} | "
                 f"{_fmt_speed(_mean_opt([c.mean_speed for c in cs]))} |"
@@ -242,6 +258,23 @@ def _grade_color(fraction: float) -> str:
     return _OK if fraction >= 0.8 else _WARN if fraction >= 0.5 else _BAD
 
 
+def _quality_chart_html(rows: list[tuple[str, float]], esc: Callable[[str], str]) -> str:
+    """A horizontal bar chart of mean score per system (already ranked), color-coded by grade."""
+    if not rows:
+        return ""
+    parts = ['<div class=chart aria-label="mean score by system">']
+    for series, score in rows:
+        width = max(2, round(score * 100))
+        parts.append(
+            f"<div class=crow><span class=clabel><code>{esc(series)}</code></span>"
+            f'<span class=cbar><span style="width:{width}%;background:{_grade_color(score)}">'
+            f"</span></span>"
+            f"<span class=cval>{score:.2f}</span></div>"
+        )
+    parts.append("</div>")
+    return "".join(parts)
+
+
 def to_html(suite: Suite) -> str:
     """A self-contained, styled HTML leaderboard — open in a browser, or print it to PDF."""
     esc = html.escape
@@ -269,7 +302,22 @@ def to_html(suite: Suite) -> str:
         ".num{font-variant-numeric:tabular-nums;text-align:right}.bar{font-weight:600}",
         ".rank{color:#888;width:1.5rem}.fail{color:#b00020}.pass{color:#1a7f37}",
         "code{background:#f6f8fa;padding:.05rem .3rem;border-radius:3px;font-size:.85em}",
-        "@media print{body{margin:0;max-width:none}h2{page-break-after:avoid}}",
+        # Inline score bar (in the leaderboard table) + comparison marks.
+        ".barwrap{display:inline-block;width:84px;height:.6rem;background:#eef0f2;"
+        "border-radius:3px;vertical-align:middle;overflow:hidden}",
+        ".barfill{display:block;height:100%;border-radius:3px}",
+        ".best{font-size:.72rem;color:#1a7f37;font-weight:700;text-transform:uppercase}",
+        ".delta{font-variant-numeric:tabular-nums;color:#888}",
+        # Per-tier quality bar chart (artificialanalysis-style horizontal bars).
+        ".chart{margin:.1rem 0 1.4rem}",
+        ".crow{display:flex;align-items:center;gap:.6rem;margin:.18rem 0}",
+        ".clabel{flex:0 0 15rem;text-align:right;font-size:.82rem;overflow:hidden;"
+        "text-overflow:ellipsis;white-space:nowrap}",
+        ".cbar{flex:1;height:1rem;background:#eef0f2;border-radius:3px;overflow:hidden}",
+        ".cbar>span{display:block;height:100%;border-radius:3px}",
+        ".cval{flex:0 0 6.5rem;font-variant-numeric:tabular-nums;font-size:.82rem}",
+        "@media print{body{margin:0;max-width:none}h2{page-break-after:avoid}"
+        ".chart{break-inside:avoid}}",
         "</style></head><body>",
         "<h1>PersonalAI benchmark leaderboard</h1>",
         "<div class=meta>",
@@ -285,31 +333,45 @@ def to_html(suite: Suite) -> str:
         out.append(f"<h2>Tier <span class=tier>{esc(tier)}</span></h2>")
         out.append(
             "<table><tr><th class=rank>#</th><th>system / mode</th><th class=num>pass@k</th>"
-            "<th class=num>pass rate</th><th class=num>mean score</th>"
+            "<th class=num>pass rate</th><th class=num>mean score</th><th>quality</th>"
+            "<th class=num>Δ best</th>"
             "<th class=num>latency (ms)</th><th class=num>$ / run</th><th class=num>tok/s</th></tr>"
         )
         ranked = sorted(
             by_tier_series[tier].items(),
             key=lambda kv: (-_mean([c.mean_score for c in kv[1]]), kv[0]),
         )
+        best_score = _mean([c.mean_score for c in ranked[0][1]]) if ranked else 0.0
+        chart_rows: list[tuple[str, float]] = []
         for i, (series, cs) in enumerate(ranked, 1):
             solved = sum(1 for c in cs if c.pass_at_k)
             attempts = sum(c.n for c in cs)
             passes = sum(c.passes for c in cs)
             mean_score = _mean([c.mean_score for c in cs])
+            chart_rows.append((series, mean_score))
+            color = _grade_color(mean_score)
             pr = passes / attempts if attempts else 0.0
+            is_best = mean_score >= best_score
+            delta = (
+                "<span class=best>best</span>"
+                if is_best
+                else f'<span class=delta>{mean_score - best_score:+.2f}</span>'
+            )
             out.append(
                 f"<tr><td class=rank>{i}</td><td><code>{esc(series)}</code></td>"
                 f"<td class=num>{solved}/{len(cs)}</td>"
                 f'<td class="num" style="color:{_grade_color(pr)}">{passes}/{attempts} '
                 f"({pr * 100:.0f}%)</td>"
-                f'<td class="num bar" style="color:{_grade_color(mean_score)}">'
-                f"{mean_score:.2f}</td>"
+                f'<td class="num bar" style="color:{color}">{mean_score:.2f}</td>'
+                f'<td><span class=barwrap><span class=barfill style="width:'
+                f'{max(2, round(mean_score * 100))}%;background:{color}"></span></span></td>'
+                f"<td class=num>{delta}</td>"
                 f"<td class=num>{_mean([c.mean_latency for c in cs]):.0f}</td>"
                 f"<td class=num>{esc(_fmt_cost(_mean_opt([c.mean_cost for c in cs])))}</td>"
                 f"<td class=num>{_fmt_speed(_mean_opt([c.mean_speed for c in cs]))}</td></tr>"
             )
         out.append("</table>")
+        out.append(_quality_chart_html(chart_rows, esc))
 
     # Per-task matrix.
     series_cols = sorted({c.series for c in cell_list})

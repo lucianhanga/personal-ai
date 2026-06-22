@@ -228,3 +228,39 @@ def test_leaderboard_has_cost_and_speed_columns() -> None:
     assert "| — |" in md  # unpriced model -> em dash, not a guessed cost
     assert "500" in md  # 500 completion tokens / 1s = 500 tok/s
     assert "$ / run" in to_html(suite) and "tok/s" in to_html(suite)
+
+
+def test_unicode_bar_scales_to_fraction() -> None:
+    from personalai_benchmarks.report import _unicode_bar
+
+    assert _unicode_bar(1.0, width=10) == "█" * 10
+    assert _unicode_bar(0.0, width=10) == "░" * 10
+    half = _unicode_bar(0.5, width=10)
+    assert half.count("█") == 5 and half.count("░") == 5
+    # out-of-range fractions are clamped, not crashy
+    assert _unicode_bar(2.0, width=4) == "████" and _unicode_bar(-1.0, width=4) == "░░░░"
+
+
+def test_delta_mark_flags_leader_and_gap() -> None:
+    from personalai_benchmarks.report import _delta_mark
+
+    assert _delta_mark(0.9, 0.9) == "best"  # the leader
+    assert _delta_mark(0.7, 0.9) == "-0.20"  # signed gap to the leader
+
+
+def test_leaderboard_renders_bars_and_comparison_marks() -> None:
+    # Two systems with different quality -> a ranked tier with a clear best and a laggard.
+    suite = run_comparison(
+        tasks=[_task(expected="62")],
+        modes=[SINGLE_NO_TOOLS],
+        systems=[_FakeSUT(answer="62", name="good"), _FakeSUT(answer="0", name="bad")],
+    )
+    md = to_markdown(suite)
+    assert "quality" in md and "Δ best" in md
+    assert "best" in md  # the leader is marked
+    assert "█" in md  # text bar present
+
+    html_text = to_html(suite)
+    assert "barfill" in html_text  # inline score bar in the table
+    assert 'class=chart' in html_text and "crow" in html_text  # the per-tier bar chart
+    assert "<span class=best>best</span>" in html_text  # leader comparison mark
