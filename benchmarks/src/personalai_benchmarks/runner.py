@@ -17,7 +17,11 @@ from personalai_benchmarks.tasks import Task
 
 @dataclass(frozen=True)
 class RunRecord:
-    """One (task, mode) result with its score, trajectory, and cost/latency signals."""
+    """One attempt at a (task, mode) with its score, trajectory, and cost/latency signals.
+
+    A cell may have several attempts (``repeats``); the report aggregates them into pass@k +
+    pass-rate. ``attempt`` is the 0-based index within the cell.
+    """
 
     task_id: str
     category: str
@@ -32,6 +36,7 @@ class RunRecord:
     tool_calls: list[dict[str, Any]]
     config_used: dict[str, Any]
     error: str | None
+    attempt: int = 0
 
 
 @dataclass(frozen=True)
@@ -58,33 +63,38 @@ def run_suite(
     modes: Sequence[Mode],
     sut: SystemUnderTest,
     judge: Judge | None = None,
+    repeats: int = 1,
 ) -> Suite:
-    """Run every (task, mode) pair through ``sut``, scoring each; errors recorded, not raised."""
+    """Run every (task, mode) pair through ``sut`` ``repeats`` times, scoring each attempt; errors
+    are recorded, not raised. Each attempt is its own record (the report reduces them to pass@k)."""
+    n = max(1, repeats)
     records: list[RunRecord] = []
     for task in tasks:
         for mode in modes:
-            result = sut.run(task.as_messages(), mode.overrides)
-            if result.error is not None:
-                score = Score(0.0, False, f"run error: {result.error}", "error")
-            else:
-                score = score_task(task, result.answer, judge=judge)
-            records.append(
-                RunRecord(
-                    task_id=task.id,
-                    category=task.category,
-                    mode=mode.name,
-                    capability_tier=mode.capability_tier,
-                    answer=result.answer,
-                    score=score.value,
-                    passed=score.passed,
-                    explanation=score.explanation,
-                    latency_ms=result.latency_ms,
-                    usage=result.usage,
-                    tool_calls=result.tool_calls,
-                    config_used=result.config_used,
-                    error=result.error,
+            for attempt in range(n):
+                result = sut.run(task.as_messages(), mode.overrides)
+                if result.error is not None:
+                    score = Score(0.0, False, f"run error: {result.error}", "error")
+                else:
+                    score = score_task(task, result.answer, judge=judge)
+                records.append(
+                    RunRecord(
+                        task_id=task.id,
+                        category=task.category,
+                        mode=mode.name,
+                        capability_tier=mode.capability_tier,
+                        answer=result.answer,
+                        score=score.value,
+                        passed=score.passed,
+                        explanation=score.explanation,
+                        latency_ms=result.latency_ms,
+                        usage=result.usage,
+                        tool_calls=result.tool_calls,
+                        config_used=result.config_used,
+                        error=result.error,
+                        attempt=attempt,
+                    )
                 )
-            )
     metadata = {
         "git_commit": _git_commit(),
         "timestamp": datetime.now(UTC).isoformat(),
@@ -93,5 +103,6 @@ def run_suite(
         "sut": sut.name,
         "modes": [m.name for m in modes],
         "task_count": len(tasks),
+        "repeats": n,
     }
     return Suite(records=records, metadata=metadata)

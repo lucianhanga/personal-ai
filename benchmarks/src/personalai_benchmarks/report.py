@@ -2,8 +2,9 @@
 
 Fairness rule baked in: results are grouped by ``capability_tier`` and never averaged across tiers,
 so a tool-equipped or multi-agent run is never compared head-to-head with a raw single-agent run.
-Each tier shows its modes with pass-rate, mean score, and mean latency (the cost axis grows in
-Phase 2). A per-task matrix and a failures list give the drill-down.
+With ``repeats`` > 1 each (task, mode) cell has several attempts; they reduce to **pass@k** (did any
+attempt pass — capability) and **pass-rate** (how reliably — passed/N), so stochastic models don't
+produce a misleading single-sample pass/FAIL. A per-task matrix + failures list give the drill-down.
 """
 
 from __future__ import annotations
@@ -14,6 +15,67 @@ from collections import defaultdict
 from pathlib import Path
 
 from personalai_benchmarks.runner import RunRecord, Suite
+
+
+@dataclasses.dataclass(frozen=True)
+class Cell:
+    """The attempts at one (task, mode), reduced to pass@k + pass-rate."""
+
+    mode: str
+    task_id: str
+    category: str
+    capability_tier: str
+    attempts: list[RunRecord]
+
+    @property
+    def n(self) -> int:
+        return len(self.attempts)
+
+    @property
+    def passes(self) -> int:
+        return sum(1 for r in self.attempts if r.passed)
+
+    @property
+    def pass_at_k(self) -> bool:
+        return any(r.passed for r in self.attempts)
+
+    @property
+    def pass_rate(self) -> float:
+        return self.passes / self.n if self.n else 0.0
+
+    @property
+    def mean_latency(self) -> float:
+        return _mean([r.latency_ms for r in self.attempts])
+
+    @property
+    def explanation(self) -> str:
+        # A representative reason a non-passing cell didn't pass (last failed attempt).
+        for r in reversed(self.attempts):
+            if not r.passed:
+                return r.error or r.explanation
+        return ""
+
+
+def cells(suite: Suite) -> list[Cell]:
+    """Group the flat attempt records into (task, mode) cells."""
+    grouped: dict[tuple[str, str], list[RunRecord]] = defaultdict(list)
+    meta: dict[tuple[str, str], RunRecord] = {}
+    for r in suite.records:
+        grouped[(r.mode, r.task_id)].append(r)
+        meta[(r.mode, r.task_id)] = r
+    out: list[Cell] = []
+    for key, attempts in grouped.items():
+        ref = meta[key]
+        out.append(
+            Cell(
+                mode=ref.mode,
+                task_id=ref.task_id,
+                category=ref.category,
+                capability_tier=ref.capability_tier,
+                attempts=attempts,
+            )
+        )
+    return out
 
 
 def to_json(suite: Suite) -> dict[str, object]:
@@ -42,59 +104,74 @@ def to_markdown(suite: Suite) -> str:
         f"· {meta.get('timestamp', '?')}"
     )
     md.append(f"- platform: {meta.get('platform', '?')} · python {meta.get('python', '?')}")
-    md.append(f"- tasks: {meta.get('task_count', '?')} · modes: {', '.join(meta.get('modes', []))}")
+    repeats = int(meta.get("repeats", 1))
+    md.append(
+        f"- tasks: {meta.get('task_count', '?')} · modes: {', '.join(meta.get('modes', []))} "
+        f"· repeats: {repeats}"
+    )
     md.append("")
 
-    # Leaderboard, grouped by capability tier (never averaged across tiers).
-    by_tier: dict[str, dict[str, list[RunRecord]]] = defaultdict(lambda: defaultdict(list))
-    for r in suite.records:
-        by_tier[r.capability_tier][r.mode].append(r)
+    cell_list = cells(suite)
+    by_tier_mode: dict[str, dict[str, list[Cell]]] = defaultdict(lambda: defaultdict(list))
+    for c in cell_list:
+        by_tier_mode[c.capability_tier][c.mode].append(c)
 
+    # Leaderboard, grouped by capability tier (never averaged across tiers). pass@k = fraction of
+    # tasks any attempt solved; pass-rate = fraction of all attempts that passed.
     md.append("## Leaderboard by capability tier")
     md.append("")
-    for tier in sorted(by_tier):
+    for tier in sorted(by_tier_mode):
         md.append(f"### Tier: `{tier}`")
         md.append("")
-        md.append("| mode | pass rate | mean score | mean latency (ms) | n |")
+        md.append("| mode | pass@k | pass rate | mean latency (ms) | tasks×reps |")
         md.append("|---|---|---|---|---|")
-        for mode in sorted(by_tier[tier]):
-            recs = by_tier[tier][mode]
-            n = len(recs)
-            passed = sum(1 for r in recs if r.passed)
+        for mode in sorted(by_tier_mode[tier]):
+            cs = by_tier_mode[tier][mode]
+            tasks_solved = sum(1 for c in cs if c.pass_at_k)
+            attempts = sum(c.n for c in cs)
+            attempt_passes = sum(c.passes for c in cs)
+            pk = tasks_solved / len(cs) * 100 if cs else 0.0
+            pr = attempt_passes / attempts * 100 if attempts else 0.0
             md.append(
-                f"| {mode} | {passed}/{n} ({passed / n * 100:.0f}%) | "
-                f"{_mean([r.score for r in recs]):.2f} | "
-                f"{_mean([r.latency_ms for r in recs]):.0f} | {n} |"
+                f"| {mode} | {tasks_solved}/{len(cs)} ({pk:.0f}%) | "
+                f"{attempt_passes}/{attempts} ({pr:.0f}%) | "
+                f"{_mean([c.mean_latency for c in cs]):.0f} | {len(cs)}×{repeats} |"
             )
         md.append("")
 
-    # Per-task matrix (task x mode -> pass/fail), for drill-down.
-    modes = sorted({r.mode for r in suite.records})
-    md.append("## Per-task results")
+    # Per-task matrix (task x mode -> passes/N), for drill-down.
+    modes = sorted({c.mode for c in cell_list})
+    by_task: dict[str, dict[str, Cell]] = defaultdict(dict)
+    cat: dict[str, str] = {}
+    for c in cell_list:
+        by_task[c.task_id][c.mode] = c
+        cat[c.task_id] = c.category
+    md.append("## Per-task results (passes / attempts)")
     md.append("")
     md.append("| task | category | " + " | ".join(modes) + " |")
     md.append("|---|---|" + "|".join(["---"] * len(modes)) + "|")
-    by_task: dict[str, dict[str, RunRecord]] = defaultdict(dict)
-    cat: dict[str, str] = {}
-    for r in suite.records:
-        by_task[r.task_id][r.mode] = r
-        cat[r.task_id] = r.category
     for task_id in sorted(by_task):
-        cells = []
+        row = []
         for mode in modes:
-            rec = by_task[task_id].get(mode)
-            cells.append("—" if rec is None else ("pass" if rec.passed else "FAIL"))
-        md.append(f"| {task_id} | {cat[task_id]} | " + " | ".join(cells) + " |")
+            cell = by_task[task_id].get(mode)
+            row.append("—" if cell is None else f"{cell.passes}/{cell.n}")
+        md.append(f"| {task_id} | {cat[task_id]} | " + " | ".join(row) + " |")
     md.append("")
 
-    # Failures, with the grader's explanation/error.
-    failures = [r for r in suite.records if not r.passed]
-    if failures:
-        md.append("## Failures")
+    # Hard failures (never passed any attempt) and flaky cells (passed some, not all).
+    hard = [c for c in cell_list if not c.pass_at_k]
+    flaky = [c for c in cell_list if c.pass_at_k and c.pass_rate < 1.0]
+    if hard:
+        md.append("## Failures (never passed)")
         md.append("")
-        for r in failures:
-            why = r.error or r.explanation
-            md.append(f"- `{r.task_id}` / `{r.mode}` — {why}")
+        for c in sorted(hard, key=lambda c: (c.task_id, c.mode)):
+            md.append(f"- `{c.task_id}` / `{c.mode}` ({c.passes}/{c.n}) — {c.explanation}")
+        md.append("")
+    if flaky:
+        md.append("## Flaky (passed some attempts, not all)")
+        md.append("")
+        for c in sorted(flaky, key=lambda c: (c.task_id, c.mode)):
+            md.append(f"- `{c.task_id}` / `{c.mode}` — {c.passes}/{c.n} passed")
         md.append("")
     return "\n".join(md)
 

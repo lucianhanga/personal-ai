@@ -11,6 +11,14 @@ generated OpenAPI document.
 
 ## [Unreleased]
 
+### Added
+- **Benchmark pass@k / repeats (#320)**: the M-Bench runner can now sample each (task, mode) cell
+  multiple times (`--repeats N`), so the stochastic noise of local models no longer produces a
+  misleading single-sample pass/FAIL. The leaderboard reports **pass@k** (did any attempt solve it —
+  capability) alongside **pass-rate** (passed/N — reliability); the per-task matrix shows
+  `passes/attempts`, and a Flaky section flags cells that pass some attempts but not all. Default
+  `repeats=1` keeps prior behavior.
+
 ### Fixed
 - **Single-agent tools were enabled but never used (#318)**: the single-agent loop offered tools to
   the model but gave it no instruction to use them, so with reasoning off it answered from "head"
