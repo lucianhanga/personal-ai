@@ -65,6 +65,12 @@ def _build_parser() -> argparse.ArgumentParser:
     cmp.add_argument("--no-judge", action="store_true", help="skip LLM-judge quality grading")
 
     sub.add_parser("list-modes", help="list available benchmark modes")
+
+    ui = sub.add_parser("ui", help="open a local web page to configure + run a comparison")
+    ui.add_argument("--port", type=int, default=8900, help="port to serve on (default 8900)")
+    ui.add_argument(
+        "--base-url", default="http://127.0.0.1:8765", help="personalIA backend URL for runs"
+    )
     return parser
 
 
@@ -256,6 +262,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "compare":
         return _compare(args)
+    if args.command == "ui":
+        from personalai_benchmarks import ui
+
+        return ui.serve(port=args.port, base_url=args.base_url)
     return _run(args)
 
 
