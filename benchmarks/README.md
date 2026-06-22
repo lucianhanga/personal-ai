@@ -29,6 +29,9 @@ uv run python -m personalai_benchmarks run --repeats 5
 uv run --env-file .env python -m personalai_benchmarks compare
 uv run --env-file .env python -m personalai_benchmarks compare \
     --no-personalia --providers anthropic,openai,deepseek --task-ids quality_explain_recursion
+
+# Also run frontier models WITH tools (the assistant/"chat" variant — they call PersonalAI's tools):
+uv run --env-file .env python -m personalai_benchmarks compare --frontier-tools
 ```
 
 ## Phase 2: frontier comparison + LLM judge

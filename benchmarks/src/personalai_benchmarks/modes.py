@@ -21,6 +21,8 @@ class Mode:
 
 # A raw frontier LLM has no tools/agent/memory — it runs in this single tier (#322).
 RAW = Mode(name="raw", capability_tier="raw", overrides={})
+# A tool-equipped frontier model (the assistant/"chat" variant) — uses PersonalAI's tools (#328).
+FRONTIER_TOOLS = Mode(name="frontier_tools", capability_tier="frontier_tools", overrides={})
 
 
 def with_memory(mode: Mode) -> Mode:
