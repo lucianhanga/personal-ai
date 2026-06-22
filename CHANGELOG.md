@@ -12,6 +12,16 @@ generated OpenAPI document.
 ## [Unreleased]
 
 ### Added
+- **Benchmark Phase 2 — frontier contestants + LLM-judge quality (#322)**: M-Bench can now compare
+  PersonalAI against **frontier models** on answer **quality**, fairly. One OpenAI-compatible adapter
+  reaches OpenAI / Anthropic / DeepSeek / xAI(Grok) / Groq / Gemini (missing keys are skipped). An
+  **LLM judge** grades open-ended (rubric) tasks — CoT-then-score, 1–5 per criterion,
+  reference-guided, temperature 0, pinned prompt version — with a **self-preference guard**: a
+  contestant from the judge's vendor is graded by a fallback judge (Claude→GPT) so a model never
+  judges its own family. A multi-system `run_comparison` + `compare` CLI runs everyone over the same
+  tasks into one capability-tier leaderboard (rows ranked by quality), never merging cells across
+  systems or averaging across tiers. Pairwise/Bradley-Terry ranking and cost/latency Pareto are the
+  planned fast-follow.
 - **Benchmark pass@k / repeats (#320)**: the M-Bench runner can now sample each (task, mode) cell
   multiple times (`--repeats N`), so the stochastic noise of local models no longer produces a
   misleading single-sample pass/FAIL. The leaderboard reports **pass@k** (did any attempt solve it —

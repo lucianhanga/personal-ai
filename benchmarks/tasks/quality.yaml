@@ -1,0 +1,34 @@
+# Open-ended tasks graded by the LLM judge (rubric, reference-guided). These exercise quality, not
+# exact-match — used by `compare`. With no judge configured they score 0 (rubric tasks need a judge).
+- id: quality_explain_recursion
+  category: explanation
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: "Explain recursion to a beginner programmer in 3-4 sentences, with a tiny example."
+  expected: >
+    Recursion is when a function calls itself to solve a smaller version of the same problem, with a
+    base case that stops the recursion. Example: factorial(n) = n * factorial(n-1), with
+    factorial(0) = 1.
+  rubric:
+    type: model_graded
+    criteria: >
+      Correctly explains that a function calls itself, mentions a base case (stopping condition), and
+      gives a small correct example. Clear for a beginner.
+
+- id: quality_summarize_tradeoff
+  category: summarization
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Summarize the trade-off between SQL and NoSQL databases in 2-3 sentences for someone
+        choosing a database for a new app.
+  rubric:
+    type: model_graded
+    criteria: >
+      Accurately contrasts SQL (structured schema, strong consistency, relational/joins) with NoSQL
+      (flexible schema, horizontal scale, varied data models), and frames it as a choice that depends
+      on the app's needs. Balanced and not misleading.
