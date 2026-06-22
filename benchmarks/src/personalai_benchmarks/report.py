@@ -15,7 +15,14 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
+from personalai_benchmarks import pricing
 from personalai_benchmarks.runner import RunRecord, Suite
+
+
+def _mean_opt(values: list[float | None]) -> float | None:
+    """Mean of the non-None values, or None if there are none (so unpriced rows stay '—')."""
+    present = [v for v in values if v is not None]
+    return sum(present) / len(present) if present else None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -57,6 +64,14 @@ class Cell:
     @property
     def mean_latency(self) -> float:
         return _mean([r.latency_ms for r in self.attempts])
+
+    @property
+    def mean_cost(self) -> float | None:
+        return _mean_opt([pricing.cost_usd(r.system, r.usage) for r in self.attempts])
+
+    @property
+    def mean_speed(self) -> float | None:
+        return _mean_opt([pricing.tokens_per_sec(r.usage, r.latency_ms) for r in self.attempts])
 
     @property
     def explanation(self) -> str:
@@ -109,6 +124,14 @@ def _mean(values: list[float]) -> float:
     return sum(values) / len(values) if values else 0.0
 
 
+def _fmt_cost(value: float | None) -> str:
+    return "—" if value is None else (f"${value:.4f}" if value < 1 else f"${value:.2f}")
+
+
+def _fmt_speed(value: float | None) -> str:
+    return "—" if value is None else f"{value:.0f}"
+
+
 def to_markdown(suite: Suite) -> str:
     md: list[str] = ["# PersonalAI benchmark leaderboard", ""]
     meta = suite.metadata
@@ -139,9 +162,9 @@ def to_markdown(suite: Suite) -> str:
         md.append(f"### Tier: `{tier}`")
         md.append("")
         md.append(
-            "| system / mode | pass@k | pass rate | mean score | mean latency (ms) | tasks×reps |"
+            "| system / mode | pass@k | pass rate | mean score | latency (ms) | $ / run | tok/s |"
         )
-        md.append("|---|---|---|---|---|---|")
+        md.append("|---|---|---|---|---|---|---|")
         # Rank rows within a tier by quality then pass-rate.
         ranked = sorted(
             by_tier_series[tier].items(),
@@ -157,7 +180,9 @@ def to_markdown(suite: Suite) -> str:
                 f"| {series} | {tasks_solved}/{len(cs)} ({pk:.0f}%) | "
                 f"{attempt_passes}/{attempts} ({pr:.0f}%) | "
                 f"{_mean([c.mean_score for c in cs]):.2f} | "
-                f"{_mean([c.mean_latency for c in cs]):.0f} | {len(cs)}×{repeats} |"
+                f"{_mean([c.mean_latency for c in cs]):.0f} | "
+                f"{_fmt_cost(_mean_opt([c.mean_cost for c in cs]))} | "
+                f"{_fmt_speed(_mean_opt([c.mean_speed for c in cs]))} |"
             )
         md.append("")
 
@@ -257,7 +282,7 @@ def to_html(suite: Suite) -> str:
         out.append(
             "<table><tr><th class=rank>#</th><th>system / mode</th><th class=num>pass@k</th>"
             "<th class=num>pass rate</th><th class=num>mean score</th>"
-            "<th class=num>latency (ms)</th></tr>"
+            "<th class=num>latency (ms)</th><th class=num>$ / run</th><th class=num>tok/s</th></tr>"
         )
         ranked = sorted(
             by_tier_series[tier].items(),
@@ -276,7 +301,9 @@ def to_html(suite: Suite) -> str:
                 f"({pr * 100:.0f}%)</td>"
                 f'<td class="num bar" style="color:{_grade_color(mean_score)}">'
                 f"{mean_score:.2f}</td>"
-                f"<td class=num>{_mean([c.mean_latency for c in cs]):.0f}</td></tr>"
+                f"<td class=num>{_mean([c.mean_latency for c in cs]):.0f}</td>"
+                f"<td class=num>{esc(_fmt_cost(_mean_opt([c.mean_cost for c in cs])))}</td>"
+                f"<td class=num>{_fmt_speed(_mean_opt([c.mean_speed for c in cs]))}</td></tr>"
             )
         out.append("</table>")
 

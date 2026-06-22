@@ -9,7 +9,7 @@ from typing import Any
 
 from personalai_benchmarks.adapters import RunResult
 from personalai_benchmarks.modes import ALL_MODES, MULTI_TOOLS_MCP, SINGLE_NO_TOOLS, with_memory
-from personalai_benchmarks.report import cells, to_markdown, write_report
+from personalai_benchmarks.report import cells, to_html, to_markdown, write_report
 from personalai_benchmarks.runner import run_comparison, run_suite
 from personalai_benchmarks.tasks import Task
 
@@ -198,3 +198,33 @@ def test_on_progress_fires_start_and_result_per_attempt() -> None:
     assert len(starts) == 2 and len(results) == 2
     assert all("fake · single_no_tools · t1" in label for label, _ in events)
     assert all(r is not None and r.startswith("ok (") for _, r in events if r is not None)
+
+
+class _UsageSUT:
+    """Returns a fixed answer + token usage, so cost/speed columns can be computed."""
+
+    def __init__(self, name: str, usage: dict[str, int]) -> None:
+        self.name = name
+        self._usage = usage
+
+    def run(self, messages: Sequence[Mapping[str, str]], overrides: Mapping[str, Any]) -> RunResult:
+        return RunResult(answer="62", latency_ms=1000.0, usage=self._usage)
+
+
+def test_leaderboard_has_cost_and_speed_columns() -> None:
+    suite = run_comparison(
+        tasks=[_task(expected="62")],
+        modes=[SINGLE_NO_TOOLS],
+        systems=[
+            _UsageSUT("openai:gpt-4o", {"prompt_tokens": 1000, "completion_tokens": 500}),
+            _UsageSUT("personalia", {"completion_tokens": 500}),
+            _UsageSUT("xai:unknown-model", {"completion_tokens": 500}),
+        ],
+    )
+    md = to_markdown(suite)
+    assert "$ / run" in md and "tok/s" in md
+    assert "$0.0075" in md  # gpt-4o: 1000*2.5/1e6 + 500*10/1e6
+    assert "$0.0000" in md  # local PersonalAI is free
+    assert "| — |" in md  # unpriced model -> em dash, not a guessed cost
+    assert "500" in md  # 500 completion tokens / 1s = 500 tok/s
+    assert "$ / run" in to_html(suite) and "tok/s" in to_html(suite)

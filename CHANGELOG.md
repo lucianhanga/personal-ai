@@ -12,6 +12,12 @@ generated OpenAPI document.
 ## [Unreleased]
 
 ### Added
+- **Cost + speed on the leaderboard (#330)**: the benchmark leaderboards (HTML + Markdown) now show
+  **`$ / run`** and **`tok/s`** next to quality and latency — an artificial-analysis-style view of the
+  quality/cost/speed trade-off. Cost comes from token usage × a small **editable** price table
+  (`pricing.py`, approximate — prices change); an unpriced model shows "—" (never a guessed number)
+  and local PersonalAI shows $0. The tool-equipped frontier adapter now sums token usage across its
+  function-calling steps so its cost/speed are accurate.
 - **Tool-equipped frontier "chat" variant (#328)**: benchmark frontier models *with tools* (the
   Claude.ai / ChatGPT-style assistant), not just `raw`. `compare --frontier-tools` runs each frontier
   model through a function-calling loop that executes **PersonalAI's own tools** over HTTP
