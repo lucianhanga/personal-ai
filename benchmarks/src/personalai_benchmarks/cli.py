@@ -20,7 +20,8 @@ from pathlib import Path
 from personalai_benchmarks import frontier, frontier_tools
 from personalai_benchmarks.adapters import PersonalIAAdapter
 from personalai_benchmarks.analysis import length_bias
-from personalai_benchmarks.judge import default_judge
+from personalai_benchmarks.cache import ResultCache
+from personalai_benchmarks.judge import JUDGE_PROMPT_VERSION, default_judge
 from personalai_benchmarks.modes import ALL_MODES, FRONTIER_TOOLS, RAW
 from personalai_benchmarks.report import write_report
 from personalai_benchmarks.runner import (
@@ -71,6 +72,21 @@ def _build_parser() -> argparse.ArgumentParser:
         help="also run each frontier model with PersonalAI's tools (the assistant/'chat' variant)",
     )
     cmp.add_argument("--no-judge", action="store_true", help="skip LLM-judge quality grading")
+    cmp.add_argument(
+        "--cache-file",
+        default="benchmark-results/cache.json",
+        help="frontier result cache (deterministic frontier cells are reused across runs)",
+    )
+    cmp.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="don't reuse or store cached frontier results (re-run everything)",
+    )
+    cmp.add_argument(
+        "--refresh",
+        action="store_true",
+        help="re-run frontier models even if cached, and refresh the cache (models changed)",
+    )
 
     sub.add_parser("list-modes", help="list available benchmark modes")
 
@@ -241,6 +257,12 @@ def _compare(args: argparse.Namespace) -> int:
     systems = ([pa.name] if pa else []) + [a.name for a in front] + [a.name for a in front_tools]
     judge_label = "off" if judge is None else "claude (gpt fallback)"
 
+    # Frontier results are deterministic (temperature 0), so the *raw* frontier tier is cached and
+    # reused across runs — only the local model (always re-run) and tool-equipped frontier (depends
+    # on local tools) skip the cache. The tag invalidates judged cells when the judge changes.
+    cache = ResultCache.load(args.cache_file, enabled=not args.no_cache, refresh=args.refresh)
+    cache_tag = "nojudge" if judge is None else f"judge:{JUDGE_PROMPT_VERSION}"
+
     # Run all contestants into one live `collected` sink, so Ctrl-C (stop) still yields a partial
     # report from whatever finished. Each block contributes its records before the next begins.
     interrupted = False
@@ -264,6 +286,8 @@ def _compare(args: argparse.Namespace) -> int:
                 repeats=args.repeats,
                 on_progress=progress,
                 sink=collected,
+                cache=cache,
+                cache_tag=cache_tag,
             )
         if front_tools:
             run_comparison(
@@ -278,6 +302,8 @@ def _compare(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         interrupted = True
         print("\nstopped — writing a partial report from results so far", file=sys.stderr)
+    finally:
+        cache.save()  # persist completed frontier cells even if the run was stopped
 
     if not collected:
         if interrupted:
@@ -306,6 +332,11 @@ def _compare(args: argparse.Namespace) -> int:
         print(f"skipped frontier providers (no key): {', '.join(skipped)}")
     if judge is None:
         print("LLM judge OFF — quality (rubric) tasks score 0; set ANTHROPIC_API_KEY to enable")
+    if cache.enabled:
+        print(
+            f"frontier cache: reused {cache.hits}, stored {cache.stored} "
+            f"new ({args.cache_file}) — local model always re-runs"
+        )
     return _summary(combined, args.out)
 
 

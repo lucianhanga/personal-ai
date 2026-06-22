@@ -50,6 +50,18 @@ class _InterruptingSUT:
         return RunResult(answer="62", latency_ms=1.0)
 
 
+class _CountingSUT:
+    """Counts how many times it's actually called, to prove cache hits skip the run."""
+
+    def __init__(self, name: str = "openai:x") -> None:
+        self.name = name
+        self.calls = 0
+
+    def run(self, messages: Sequence[Mapping[str, str]], overrides: Mapping[str, Any]) -> RunResult:
+        self.calls += 1
+        return RunResult(answer="62", latency_ms=1.0)
+
+
 class _FlakySUT:
     """Cycles through a list of answers, so repeated attempts at one cell pass/fail differently."""
 
@@ -291,6 +303,41 @@ def test_interrupted_run_shows_a_partial_banner() -> None:
     partial = Suite(records=suite.records, metadata={**suite.metadata, "interrupted": True})
     assert "Partial run" in to_markdown(partial)
     assert "class=partial" in to_html(partial)
+
+
+def test_cache_reuses_a_cell_instead_of_re_running(tmp_path: Path) -> None:
+    from personalai_benchmarks.cache import ResultCache
+
+    cache = ResultCache.load(tmp_path / "c.json")
+    sut = _CountingSUT()
+    tasks = [_task("t1")]
+    first = run_suite(tasks=tasks, modes=[SINGLE_NO_TOOLS], sut=sut, cache=cache)
+    assert sut.calls == 1 and len(first.records) == 1
+    second = run_suite(tasks=tasks, modes=[SINGLE_NO_TOOLS], sut=sut, cache=cache)
+    assert sut.calls == 1  # the second run was served entirely from cache — no extra call
+    assert len(second.records) == 1 and second.records[0].task_id == "t1"
+
+
+def test_cache_misses_only_the_new_task(tmp_path: Path) -> None:
+    from personalai_benchmarks.cache import ResultCache
+
+    cache = ResultCache.load(tmp_path / "c.json")
+    sut = _CountingSUT()
+    run_suite(tasks=[_task("t1")], modes=[SINGLE_NO_TOOLS], sut=sut, cache=cache)
+    assert sut.calls == 1
+    # Adding a new task: only t2 runs; t1 is reused from cache.
+    suite = run_suite(
+        tasks=[_task("t1"), _task("t2")], modes=[SINGLE_NO_TOOLS], sut=sut, cache=cache
+    )
+    assert sut.calls == 2  # one more call (t2) only
+    assert {r.task_id for r in suite.records} == {"t1", "t2"}
+
+
+def test_no_cache_means_always_run(tmp_path: Path) -> None:
+    sut = _CountingSUT()
+    run_suite(tasks=[_task("t1")], modes=[SINGLE_NO_TOOLS], sut=sut)  # no cache passed
+    run_suite(tasks=[_task("t1")], modes=[SINGLE_NO_TOOLS], sut=sut)
+    assert sut.calls == 2  # the local model (no cache) re-runs every time
 
 
 def test_unicode_bar_scales_to_fraction() -> None:
