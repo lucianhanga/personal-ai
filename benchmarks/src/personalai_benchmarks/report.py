@@ -19,13 +19,19 @@ from personalai_benchmarks.runner import RunRecord, Suite
 
 @dataclasses.dataclass(frozen=True)
 class Cell:
-    """The attempts at one (task, mode), reduced to pass@k + pass-rate."""
+    """The attempts at one (system, mode, task), reduced to pass@k + pass-rate."""
 
+    system: str
     mode: str
     task_id: str
     category: str
     capability_tier: str
     attempts: list[RunRecord]
+
+    @property
+    def series(self) -> str:
+        """The system+mode identity used as a leaderboard row / matrix column."""
+        return f"{self.system}/{self.mode}" if self.system else self.mode
 
     @property
     def n(self) -> int:
@@ -44,6 +50,10 @@ class Cell:
         return self.passes / self.n if self.n else 0.0
 
     @property
+    def mean_score(self) -> float:
+        return _mean([r.score for r in self.attempts])
+
+    @property
     def mean_latency(self) -> float:
         return _mean([r.latency_ms for r in self.attempts])
 
@@ -57,17 +67,19 @@ class Cell:
 
 
 def cells(suite: Suite) -> list[Cell]:
-    """Group the flat attempt records into (task, mode) cells."""
-    grouped: dict[tuple[str, str], list[RunRecord]] = defaultdict(list)
-    meta: dict[tuple[str, str], RunRecord] = {}
+    """Group the flat attempt records into (system, mode, task) cells."""
+    grouped: dict[tuple[str, str, str], list[RunRecord]] = defaultdict(list)
+    meta: dict[tuple[str, str, str], RunRecord] = {}
     for r in suite.records:
-        grouped[(r.mode, r.task_id)].append(r)
-        meta[(r.mode, r.task_id)] = r
+        key = (r.system, r.mode, r.task_id)
+        grouped[key].append(r)
+        meta[key] = r
     out: list[Cell] = []
     for key, attempts in grouped.items():
         ref = meta[key]
         out.append(
             Cell(
+                system=ref.system,
                 mode=ref.mode,
                 task_id=ref.task_id,
                 category=ref.category,
@@ -99,9 +111,10 @@ def _mean(values: list[float]) -> float:
 def to_markdown(suite: Suite) -> str:
     md: list[str] = ["# PersonalAI benchmark leaderboard", ""]
     meta = suite.metadata
+    systems = list(meta.get("systems") or [meta.get("sut", "?")])
     md.append(
-        f"- system: `{meta.get('sut', '?')}` · commit: `{str(meta.get('git_commit', '?'))[:12]}` "
-        f"· {meta.get('timestamp', '?')}"
+        f"- systems: {', '.join(f'`{s}`' for s in systems)} "
+        f"· commit: `{str(meta.get('git_commit', '?'))[:12]}` · {meta.get('timestamp', '?')}"
     )
     md.append(f"- platform: {meta.get('platform', '?')} · python {meta.get('python', '?')}")
     repeats = int(meta.get("repeats", 1))
@@ -112,48 +125,56 @@ def to_markdown(suite: Suite) -> str:
     md.append("")
 
     cell_list = cells(suite)
-    by_tier_mode: dict[str, dict[str, list[Cell]]] = defaultdict(lambda: defaultdict(list))
+    by_tier_series: dict[str, dict[str, list[Cell]]] = defaultdict(lambda: defaultdict(list))
     for c in cell_list:
-        by_tier_mode[c.capability_tier][c.mode].append(c)
+        by_tier_series[c.capability_tier][c.series].append(c)
 
-    # Leaderboard, grouped by capability tier (never averaged across tiers). pass@k = fraction of
-    # tasks any attempt solved; pass-rate = fraction of all attempts that passed.
+    # Leaderboard, grouped by capability tier (never averaged across tiers). Within a tier, each
+    # system/mode is a row: pass@k = fraction of tasks any attempt solved; pass-rate = fraction of
+    # all attempts that passed; mean score = quality (judge 0–1 or programmatic 0/1).
     md.append("## Leaderboard by capability tier")
     md.append("")
-    for tier in sorted(by_tier_mode):
+    for tier in sorted(by_tier_series):
         md.append(f"### Tier: `{tier}`")
         md.append("")
-        md.append("| mode | pass@k | pass rate | mean latency (ms) | tasks×reps |")
-        md.append("|---|---|---|---|---|")
-        for mode in sorted(by_tier_mode[tier]):
-            cs = by_tier_mode[tier][mode]
+        md.append(
+            "| system / mode | pass@k | pass rate | mean score | mean latency (ms) | tasks×reps |"
+        )
+        md.append("|---|---|---|---|---|---|")
+        # Rank rows within a tier by quality then pass-rate.
+        ranked = sorted(
+            by_tier_series[tier].items(),
+            key=lambda kv: (-_mean([c.mean_score for c in kv[1]]), kv[0]),
+        )
+        for series, cs in ranked:
             tasks_solved = sum(1 for c in cs if c.pass_at_k)
             attempts = sum(c.n for c in cs)
             attempt_passes = sum(c.passes for c in cs)
             pk = tasks_solved / len(cs) * 100 if cs else 0.0
             pr = attempt_passes / attempts * 100 if attempts else 0.0
             md.append(
-                f"| {mode} | {tasks_solved}/{len(cs)} ({pk:.0f}%) | "
+                f"| {series} | {tasks_solved}/{len(cs)} ({pk:.0f}%) | "
                 f"{attempt_passes}/{attempts} ({pr:.0f}%) | "
+                f"{_mean([c.mean_score for c in cs]):.2f} | "
                 f"{_mean([c.mean_latency for c in cs]):.0f} | {len(cs)}×{repeats} |"
             )
         md.append("")
 
-    # Per-task matrix (task x mode -> passes/N), for drill-down.
-    modes = sorted({c.mode for c in cell_list})
+    # Per-task matrix (task x system/mode -> passes/N), for drill-down.
+    series_cols = sorted({c.series for c in cell_list})
     by_task: dict[str, dict[str, Cell]] = defaultdict(dict)
     cat: dict[str, str] = {}
     for c in cell_list:
-        by_task[c.task_id][c.mode] = c
+        by_task[c.task_id][c.series] = c
         cat[c.task_id] = c.category
     md.append("## Per-task results (passes / attempts)")
     md.append("")
-    md.append("| task | category | " + " | ".join(modes) + " |")
-    md.append("|---|---|" + "|".join(["---"] * len(modes)) + "|")
+    md.append("| task | category | " + " | ".join(series_cols) + " |")
+    md.append("|---|---|" + "|".join(["---"] * len(series_cols)) + "|")
     for task_id in sorted(by_task):
         row = []
-        for mode in modes:
-            cell = by_task[task_id].get(mode)
+        for series in series_cols:
+            cell = by_task[task_id].get(series)
             row.append("—" if cell is None else f"{cell.passes}/{cell.n}")
         md.append(f"| {task_id} | {cat[task_id]} | " + " | ".join(row) + " |")
     md.append("")
@@ -164,14 +185,14 @@ def to_markdown(suite: Suite) -> str:
     if hard:
         md.append("## Failures (never passed)")
         md.append("")
-        for c in sorted(hard, key=lambda c: (c.task_id, c.mode)):
-            md.append(f"- `{c.task_id}` / `{c.mode}` ({c.passes}/{c.n}) — {c.explanation}")
+        for c in sorted(hard, key=lambda c: (c.task_id, c.series)):
+            md.append(f"- `{c.task_id}` / `{c.series}` ({c.passes}/{c.n}) — {c.explanation}")
         md.append("")
     if flaky:
         md.append("## Flaky (passed some attempts, not all)")
         md.append("")
-        for c in sorted(flaky, key=lambda c: (c.task_id, c.mode)):
-            md.append(f"- `{c.task_id}` / `{c.mode}` — {c.passes}/{c.n} passed")
+        for c in sorted(flaky, key=lambda c: (c.task_id, c.series)):
+            md.append(f"- `{c.task_id}` / `{c.series}` — {c.passes}/{c.n} passed")
         md.append("")
     return "\n".join(md)
 
