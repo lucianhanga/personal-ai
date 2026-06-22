@@ -98,13 +98,14 @@ def _personal_modes(args: argparse.Namespace) -> list | None:  # type: ignore[ty
 
 
 def _summary(suite: Suite, out: str) -> int:
-    json_path, md_path = write_report(suite, out)
+    json_path, md_path, html_path = write_report(suite, out)
     total = len(suite.records)
     passed = sum(1 for r in suite.records if r.passed)
     errored = sum(1 for r in suite.records if r.error is not None)
     print(f"ran {total} attempts: {passed} passed, {total - passed} failed ({errored} errored)")
     print(f"wrote {json_path}")
     print(f"wrote {md_path}")
+    print(f"wrote {html_path}  (open in a browser; print to PDF to share)")
     return 0
 
 

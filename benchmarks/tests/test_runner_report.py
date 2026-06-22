@@ -98,8 +98,10 @@ def test_report_groups_by_tier_and_writes_files(tmp_path: Path) -> None:
     assert "single_no_tools" in md and "multi_agent+memory" in md  # tiers shown separately
     assert "Per-task results" in md
 
-    json_path, md_path = write_report(suite, tmp_path)
-    assert json_path.exists() and md_path.exists()
+    json_path, md_path, html_path = write_report(suite, tmp_path)
+    assert json_path.exists() and md_path.exists() and html_path.exists()
+    html_text = html_path.read_text()
+    assert html_text.startswith("<!doctype html>") and "leaderboard" in html_text.lower()
     payload = json.loads(json_path.read_text())  # Any -> indexable in the test
     assert payload["metadata"]["sut"] == "fake"
     assert len(payload["records"]) == 2

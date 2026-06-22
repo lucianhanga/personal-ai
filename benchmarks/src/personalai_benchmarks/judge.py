@@ -164,15 +164,20 @@ def make_call(provider_name: str, model: str | None = None) -> JudgeCall | None:
     return call
 
 
+# Strong judges (best practice: judge ≥ contestants). Pinned alongside JUDGE_PROMPT_VERSION.
+_DEFAULT_PRIMARY_JUDGE_MODEL = "claude-opus-4-6"
+_DEFAULT_FALLBACK_JUDGE_MODEL = "gpt-4.1"
+
+
 def default_judge(
     *,
     primary: str = "anthropic",
-    primary_model: str | None = None,
+    primary_model: str | None = _DEFAULT_PRIMARY_JUDGE_MODEL,
     fallback: str = "openai",
-    fallback_model: str | None = None,
+    fallback_model: str | None = _DEFAULT_FALLBACK_JUDGE_MODEL,
 ) -> LlmJudge | None:
     """The configured judge (primary + self-preference fallback), or None if the primary key is
-    missing (quality grading is then skipped). Defaults: Claude judge, GPT fallback for Claude."""
+    missing (quality grading is then skipped). Defaults: Claude Opus judge, GPT-4.1 fallback."""
     primary_call = make_call(primary, primary_model)
     if primary_call is None:
         return None

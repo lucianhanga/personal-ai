@@ -34,24 +34,25 @@ class Provider:
     default_model: str
 
 
-# OpenAI-compatible endpoints. base_url is the prefix BEFORE "/chat/completions".
+# OpenAI-compatible endpoints. base_url is the prefix BEFORE "/chat/completions". Default models are
+# valid as of 2026-06 but change often — override per run with `--models provider=model`.
 PROVIDERS: dict[str, Provider] = {
     "openai": Provider("openai", "https://api.openai.com/v1", "OPENAI_API_KEY", "gpt-4o"),
     "anthropic": Provider(
-        "anthropic", "https://api.anthropic.com/v1", "ANTHROPIC_API_KEY", "claude-3-5-sonnet-latest"
+        "anthropic", "https://api.anthropic.com/v1", "ANTHROPIC_API_KEY", "claude-sonnet-4-6"
     ),
     "deepseek": Provider(
         "deepseek", "https://api.deepseek.com", "DEEPSEEK_API_KEY", "deepseek-chat"
     ),
-    "xai": Provider("xai", "https://api.x.ai/v1", "XAI_API_KEY", "grok-2-latest"),
+    "xai": Provider("xai", "https://api.x.ai/v1", "XAI_API_KEY", "grok-4.3"),
     "groq": Provider(
-        "groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY", "llama-3.3-70b-versatile"
+        "groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY", "llama-3.1-8b-instant"
     ),
     "gemini": Provider(
         "gemini",
         "https://generativelanguage.googleapis.com/v1beta/openai",
         "GEMINI_API_KEY",
-        "gemini-2.0-flash",
+        "gemini-2.5-flash",
     ),
 }
 
@@ -76,17 +77,28 @@ class OpenAICompatAdapter:
         self._temperature = temperature
         self._client = client or httpx.Client(timeout=timeout)
 
+    def _post(self, body: dict[str, Any]) -> httpx.Response:
+        return self._client.post(
+            f"{self.provider.base_url}/chat/completions",
+            headers={"Authorization": f"Bearer {self._key}"},
+            json=body,
+        )
+
     def run(self, messages: Sequence[Mapping[str, str]], overrides: Mapping[str, Any]) -> RunResult:
         # Raw tier: no tools/memory; overrides are ignored except an explicit temperature.
         temperature = float(overrides.get("temperature", self._temperature))
-        body = {"model": self.model, "messages": list(messages), "temperature": temperature}
+        body: dict[str, Any] = {
+            "model": self.model,
+            "messages": list(messages),
+            "temperature": temperature,
+        }
         started = time.perf_counter()
         try:
-            resp = self._client.post(
-                f"{self.provider.base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self._key}"},
-                json=body,
-            )
+            resp = self._post(body)
+            # Some newer models (e.g. reasoning models) reject `temperature` — retry without it.
+            if resp.status_code == 400 and "temperature" in resp.text.lower():
+                body.pop("temperature", None)
+                resp = self._post(body)
         except httpx.HTTPError as exc:
             return RunResult(error=f"{self.provider.name} request failed: {exc}")
         latency_ms = (time.perf_counter() - started) * 1000.0
