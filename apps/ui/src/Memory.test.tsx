@@ -22,6 +22,24 @@ test("lists remembered facts", async () => {
   await waitFor(() => expect(screen.getByTestId("memory-item")).toHaveTextContent("Hyperneers"));
 });
 
+test("shows when each memory was saved, and marks edited ones (#314)", async () => {
+  vi.spyOn(api, "fetchMemories").mockResolvedValue([
+    MEM, // created == updated -> just the saved date
+    {
+      ...MEM,
+      id: "m2",
+      text: "Lives in Munich",
+      created_at: "2026-06-07T00:00:00Z",
+      updated_at: "2026-06-09T10:00:00Z", // later -> edited
+    },
+  ]);
+  render(<Memory token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("memory-saved-m1")).toBeInTheDocument());
+  expect(screen.getByTestId("memory-saved-m1")).toHaveTextContent(/Saved .*2026/);
+  expect(screen.getByTestId("memory-saved-m1")).not.toHaveTextContent(/edited/);
+  expect(screen.getByTestId("memory-saved-m2")).toHaveTextContent(/edited/);
+});
+
 test("shows empty state when nothing is remembered", async () => {
   vi.spyOn(api, "fetchMemories").mockResolvedValue([]);
   render(<Memory token="demo" />);

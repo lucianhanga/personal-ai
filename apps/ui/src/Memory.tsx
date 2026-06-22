@@ -8,6 +8,19 @@ import {
   type MemoryItem,
 } from "./api";
 
+// When each memory was saved (and whether it has since been edited), for the UI (#314).
+function savedLabel(m: MemoryItem): string {
+  const created = new Date(m.created_at);
+  if (Number.isNaN(created.getTime())) return "";
+  const when = created.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+  const edited = new Date(m.updated_at).getTime() - created.getTime() > 1000;
+  return edited ? `Saved ${when} · edited` : `Saved ${when}`;
+}
+
 /** Visualise and erase long-term memory (M4-4). */
 export function Memory({ token }: { token: string }): React.ReactElement {
   const [items, setItems] = useState<MemoryItem[]>([]);
@@ -114,6 +127,12 @@ export function Memory({ token }: { token: string }): React.ReactElement {
               <span style={{ display: "flex", gap: "0.4rem", alignItems: "baseline" }}>
                 <span style={{ flex: 1 }}>
                   <span style={{ fontSize: "0.7rem", color: "#888" }}>[{m.kind}]</span> {m.text}
+                  <span
+                    data-testid={`memory-saved-${m.id}`}
+                    style={{ display: "block", fontSize: "0.7rem", color: "#aaa" }}
+                  >
+                    {savedLabel(m)}
+                  </span>
                 </span>
                 <button
                   data-testid={`memory-edit-${m.id}`}

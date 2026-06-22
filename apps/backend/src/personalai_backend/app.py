@@ -162,7 +162,9 @@ class ResumeRequest(BaseModel):
 
 
 # Built-in tools (vs MCP-provided ones). Used by /assistant/execute to honour `use_mcp=False`.
-BUILTIN_TOOL_NAMES = frozenset({"calculator", "web_search", "http_fetch", "remember"})
+BUILTIN_TOOL_NAMES = frozenset(
+    {"calculator", "web_search", "http_fetch", "remember", "update_memory", "forget_memory"}
+)
 
 
 class ExecuteRequest(BaseModel):
@@ -387,11 +389,28 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             # model, so it is wired here once storage is up rather than at bootstrap. It lets the
             # agent ground "remember this" in a real write (#308) that is deduped/reconciled against
             # existing memories (#310), instead of only the non-deterministic background extraction.
+            from collections.abc import Sequence as _Seq
+
             from personalai_contracts.ports import MemoryItem, MemoryKind
             from personalai_core import ConsolidationOutcome, RegisteredTool, consolidate_fact
-            from personalai_tool_builtin import REMEMBER_MANIFEST, RememberTool
+            from personalai_tool_builtin import (
+                FORGET_MEMORY_MANIFEST,
+                REMEMBER_MANIFEST,
+                UPDATE_MEMORY_MANIFEST,
+                ForgetMemoryTool,
+                RememberTool,
+                UpdateMemoryTool,
+            )
 
             memories = app.state.storage.memories
+
+            async def _embed_one(text: str) -> _Seq[float]:
+                result = await _resolve_provider(boot.config.embed_provider).embed(
+                    [text], boot.config.embed_model
+                )
+                if not result.vectors or not result.vectors[0]:
+                    raise ValueError("embedding provider returned no vector")
+                return result.vectors[0]
 
             async def _save_memory(text: str, kind: str) -> tuple[str, MemoryItem | None]:
                 gen = _resolve_provider(boot.config.model_provider)
@@ -411,6 +430,17 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             boot.registries.tools.register(
                 "remember",
                 RegisteredTool(REMEMBER_MANIFEST, RememberTool(_save_memory)),
+                overwrite=True,
+            )
+            # Edit existing memories on request (#314): correct (supersede + add) or forget (hide).
+            boot.registries.tools.register(
+                "update_memory",
+                RegisteredTool(UPDATE_MEMORY_MANIFEST, UpdateMemoryTool(memories, _embed_one)),
+                overwrite=True,
+            )
+            boot.registries.tools.register(
+                "forget_memory",
+                RegisteredTool(FORGET_MEMORY_MANIFEST, ForgetMemoryTool(memories, _embed_one)),
                 overwrite=True,
             )
         except Exception as exc:  # noqa: BLE001 - storage is optional; degrade gracefully
