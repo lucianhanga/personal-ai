@@ -1,0 +1,177 @@
+# Everyday communication tasks: tone/style reformulation, email composition, email reply. Open-ended
+# and judge-graded (rubric, reference-guided). Rubrics use per-dimension 1-5 anchors and an explicit
+# "reward content, not length" clause to curb the judge's verbosity bias (G-Eval / MT-Bench style).
+# With no judge configured these score 0 (rubric tasks need a judge). capability_tier: raw (no tools).
+
+# --- Tone / style reformulation: preserve meaning, change register --------------------------------
+- id: comm_reformulate_business
+  category: reformulation
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Rewrite this in a professional, business-appropriate tone, keeping the same meaning:
+        "hey, I can't make the thing tomorrow, something came up, push it?"
+  expected: >
+    A polite formal note that keeps every fact (cannot attend tomorrow, a conflict arose, requests
+    rescheduling) while dropping slang and adding a courteous opener/closer, e.g. "I'm sorry for the
+    short notice, but a conflict has come up and I won't be able to attend tomorrow's meeting. Could
+    we reschedule to a later date? Thank you for your understanding."
+  rubric:
+    type: model_graded
+    criteria: >
+      Score three dimensions and average them. Meaning preservation: 5 = every fact and the request
+      to reschedule are kept with nothing added or dropped, 3 = minor drift, 1 = meaning changed.
+      Target-tone adherence: 5 = consistently professional/formal with no slang or contractions and a
+      courteous frame, 3 = mixed register, 1 = still casual. Fluency: 5 = natural and grammatical.
+      Judge content and tone only; do not reward extra length or invented details.
+
+- id: comm_reformulate_casual
+  category: reformulation
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Rewrite this in a relaxed, casual tone for a friend, keeping the same meaning:
+        "Please be advised that I will be unable to attend the gathering on Saturday due to a prior
+        commitment."
+  expected: >
+    A light, conversational version preserving the facts (can't come Saturday, already has other
+    plans), e.g. "Hey, I won't be able to make it Saturday, I've already got something on. Sorry!"
+  rubric:
+    type: model_graded
+    criteria: >
+      Average three dimensions. Meaning preservation: 5 = keeps that the sender can't attend Saturday
+      because of an existing commitment, 1 = facts changed. Target-tone adherence: 5 = genuinely
+      casual and conversational (everyday words, contractions, no stiff/formal phrasing like "be
+      advised" or "prior commitment"), 3 = half-formal, 1 = still formal. Fluency: 5 = natural.
+      Reward an accurate tone shift, not added length or fabricated specifics.
+
+- id: comm_reformulate_friendly
+  category: reformulation
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Rewrite this so it sounds warm and friendly while staying professional, same meaning:
+        "Your report is late. Send it by end of day."
+  expected: >
+    A warm, encouraging nudge that still conveys the deadline, e.g. "Hi! Just a friendly reminder that
+    your report is now due, could you send it over by end of day? Thanks so much, let me know if you
+    need anything."
+  rubric:
+    type: model_graded
+    criteria: >
+      Average three dimensions. Meaning preservation: 5 = keeps that the report is overdue and is due
+      by end of day, 1 = deadline or ask lost. Target-tone adherence: 5 = warm and friendly (softened
+      opener, please/thanks, supportive) yet still professional and clear about the deadline, 3 =
+      warm but vague or slightly cold, 1 = curt/harsh. Fluency: 5 = natural. Do not reward verbosity;
+      a short warm rewrite that keeps the deadline beats a long padded one.
+
+# --- Email composition: produce BOTH a subject line and a body from a brief -----------------------
+- id: comm_email_compose_meeting
+  category: email_compose
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Write an email from these notes. Include a subject line and the body.
+        - To: Maria, a project stakeholder
+        - Purpose: request a 30-minute meeting next week to review the Q3 roadmap
+        - Offer: Tuesday or Thursday afternoon
+        - Ask her to confirm a slot or propose another time
+  expected: >
+    A clear subject naming the topic (e.g. "Request: 30-min Q3 roadmap review next week") plus a body
+    that greets Maria, states the purpose, offers Tuesday or Thursday afternoon, asks her to confirm
+    or suggest an alternative, and closes with a sign-off.
+  rubric:
+    type: model_graded
+    criteria: >
+      Average five dimensions. Subject line: 5 = specific and informative (topic + intent), 1 =
+      missing or generic. Completeness vs the brief: 5 = includes the purpose, the 30-minute duration,
+      both proposed slots, and the confirm-or-propose ask, 3 = one item missing, 1 = several missing
+      or invented commitments. Tone-appropriateness: 5 = professional and courteous for a stakeholder.
+      Actionability/clarity: 5 = the recipient knows exactly what to do next. Structure: 5 = proper
+      greeting and sign-off. Penalize fabricated details; do not reward length beyond the brief.
+
+- id: comm_email_compose_followup
+  category: email_compose
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Write a follow-up email with a subject line and body.
+        - To: a hiring manager, after a job interview yesterday for a backend engineer role
+        - Goals: thank them for their time, reaffirm interest, briefly note one relevant strength
+          (experience scaling APIs), and politely ask about next steps
+  expected: >
+    A subject like "Thank you - Backend Engineer interview follow-up" and a body that thanks the
+    manager, reaffirms interest in the role, mentions API-scaling experience as a relevant strength,
+    asks about next steps, and signs off. Concise and sincere.
+  rubric:
+    type: model_graded
+    criteria: >
+      Average five dimensions. Subject line: 5 = clear and relevant to a post-interview follow-up.
+      Completeness vs the brief: 5 = thanks them, reaffirms interest, cites the API-scaling strength,
+      and asks about next steps; 3 = one missing; 1 = several missing. Tone-appropriateness: 5 =
+      warm, professional, not pushy. Actionability/clarity: 5 = the next-steps ask is explicit and
+      polite. Structure: 5 = greeting and sign-off present. Reward sincerity and relevance, not
+      length or flattery; penalize invented interview details.
+
+# --- Email reply: respond appropriately to an inbound message -------------------------------------
+- id: comm_email_reply_decline
+  category: email_reply
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Write a reply to this email. Decline politely but keep the relationship warm, and propose an
+        alternative.
+        ---
+        From: Alex
+        Subject: Coffee chat Friday?
+        Hi, would you have time for a 30-minute coffee chat this Friday at 3pm to talk partnerships?
+  expected: >
+    A warm reply that thanks Alex, declines Friday 3pm (e.g. a conflict), signals continued interest
+    in the partnership conversation, and proposes a concrete alternative time, with a friendly
+    sign-off.
+  rubric:
+    type: model_graded
+    criteria: >
+      Average four dimensions. Addresses the inbound points: 5 = responds to the Friday 3pm coffee
+      request specifically, 1 = generic/ignores it. Correct stance: 5 = clearly declines the proposed
+      slot yet proposes a concrete alternative, 3 = declines but vague alternative, 1 = wrong
+      decision (accepts) or no alternative. Tone-appropriateness: 5 = polite and warm, keeps the
+      relationship open, 1 = cold or curt. Conciseness: 5 = gets there without padding. Do not reward
+      extra length; a short warm decline-with-alternative scores highest.
+
+- id: comm_email_reply_answer
+  category: email_reply
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Write a reply to this email answering the question and confirming.
+        ---
+        From: Priya
+        Subject: Demo on Wednesday?
+        Hi, can you run the product demo for the client on Wednesday at 10am? Also, will the new
+        export feature be ready to show?
+  expected: >
+    A reply that confirms availability for Wednesday 10am and directly answers whether the export
+    feature will be ready to demo (a clear yes/no with any caveat), then closes politely.
+  rubric:
+    type: model_graded
+    criteria: >
+      Average four dimensions. Addresses the inbound points: 5 = answers BOTH the Wednesday-10am
+      request and the export-feature question, 3 = answers only one, 1 = neither. Correct stance: 5 =
+      gives a clear, committed answer to each (confirm/decline the slot; a definite yes/no on the
+      feature), 1 = evasive. Tone-appropriateness: 5 = professional and friendly. Conciseness: 5 =
+      direct and complete without filler. Reward clear answers to both questions, not length.

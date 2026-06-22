@@ -32,7 +32,19 @@ uv run --env-file .env python -m personalai_benchmarks compare \
 
 # Also run frontier models WITH tools (the assistant/"chat" variant — they call PersonalAI's tools):
 uv run --env-file .env python -m personalai_benchmarks compare --frontier-tools
+
+# Prefer clicking over flags? Open the local launcher UI (dev-only, localhost, no auth):
+uv run --env-file .env python -m personalai_benchmarks ui   # then open http://127.0.0.1:8900/
 ```
+
+### Launcher UI
+
+`ui` serves a small localhost page (Python stdlib only) where you tick providers, modes, tasks and
+options; it shows the generated `compare` command, runs it, streams the live stdout/stderr into a log
+window (SSE), and links the resulting `leaderboard.html`. The run subprocess is built from a
+validated arg list (no shell), and the server binds `127.0.0.1` only — it is a developer convenience,
+not part of the secured app. Run it with `--env-file .env` so the spawned `compare` inherits the
+frontier API keys.
 
 ## Phase 2: frontier comparison + LLM judge
 
@@ -58,7 +70,10 @@ Output: `results.json` (full per-run bundle + reproducibility metadata) and `lea
 - **Tasks** (`tasks/*.yaml`) — declarative: `id, category, capability_tier, input, expected|rubric,
   version, metadata`. Independent of any model. Grading: `expected` (programmatic; `metadata.match` =
   `includes` (default) | `exact` | `regex`) or `rubric: {type: model_graded, criteria: ...}` (LLM
-  judge — Phase 2).
+  judge — Phase 2). Beyond reasoning/tool-use/quality, `communication.yaml` covers everyday assistant
+  work — **tone reformulation** (business / casual / friendly), **email composition** (subject +
+  body from a brief), and **email reply**; each rubric scores named per-dimension 1–5 anchors against
+  a reference answer and explicitly rewards content over length to curb the judge's verbosity bias.
 - **Modes** (`modes.py`) — named override sets sent to `/assistant/execute`, each with a
   `capability_tier`. Phase 1: `single_no_tools`, `single_tools_mcp`, `multi_tools_mcp`, plus
   **memory-on** variants (`*_memory`).
