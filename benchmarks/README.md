@@ -113,6 +113,12 @@ per-task matrix shows `passes/attempts` per cell; a Failures section lists cells
 and a Flaky section lists cells that passed some attempts but not all. Compare *within* a tier;
 compare tiers side by side, not by a blended average.
 
+**Visual comparison.** Each tier row carries a **quality bar** (mean score, 0–1, color-coded
+green/amber/red) and a **Δ best** comparison mark — `best` for the tier leader, otherwise the signed
+gap to it (e.g. `-0.20`). Below each tier table the HTML report draws a horizontal **bar chart** of
+mean score per system (artificialanalysis-style), so the spread is readable at a glance; the Markdown
+report uses a text bar for the same.
+
 ### Raw-LLM vs assistant-mode (Phase 2)
 
 Phase 1 only benchmarks personalIA (assistant mode). Phase 2 adds raw-LLM adapters (frontier APIs
