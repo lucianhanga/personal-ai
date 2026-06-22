@@ -35,6 +35,7 @@ uv run --env-file .env python -m personalai_benchmarks compare --frontier-tools
 
 # Prefer clicking over flags? Open the local launcher UI (dev-only, localhost, no auth):
 uv run --env-file .env python -m personalai_benchmarks ui   # then open http://127.0.0.1:8900/
+make run-bench-ui                                           # same thing, from the repo root
 ```
 
 ### Launcher UI
