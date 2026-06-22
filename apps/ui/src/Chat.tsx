@@ -145,6 +145,8 @@ export function Chat({
   const [input, setInput] = useState("");
   // Image parts attached to the next turn, as data-URLs (M9.1 vision).
   const [attachedImages, setAttachedImages] = useState<string[]>([]);
+  // True while an image is being dragged over the composer (drop-to-attach affordance, #324).
+  const [dragOver, setDragOver] = useState(false);
   // Voice input (M9.2): whether STT is configured, and the live recording state.
   const [transcribeEnabled, setTranscribeEnabled] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(false);
@@ -1075,43 +1077,86 @@ export function Chat({
             )}
 
             <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-end" }}>
-              <label
-                data-testid="attach-image"
-                title="Attach image(s) for a vision model"
-                style={{ cursor: "pointer", border: "1px solid #ccc", borderRadius: 4, padding: "0.3rem 0.5rem", alignSelf: "stretch", display: "flex", alignItems: "center" }}
-              >
-                Image
-                <input
-                  data-testid="image-input"
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  style={{ display: "none" }}
-                  onChange={(e) => {
-                    onAttachImages(e.target.files);
-                    e.target.value = ""; // allow re-selecting the same file
-                  }}
-                />
-              </label>
-              <textarea
-                data-testid="composer"
-                rows={4}
-                style={{ flex: 1, resize: "vertical", font: "inherit", padding: "0.4rem" }}
-                value={input}
-                placeholder="Type a message...  (Enter to send, Shift+Enter for a new line)"
-                onChange={(e) => {
-                  cancelAutoSend(); // editing the transcript cancels the pending auto-send
-                  setInput(e.target.value);
-                }}
-                onKeyDown={(e) => {
-                  // Enter sends; Shift+Enter inserts a newline. Ignore Enter mid-IME composition
-                  // (e.g. Japanese/Chinese input) so committing a candidate doesn't send.
-                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              {/* Drop images onto the composer to attach them (#324) — replaces the old button. */}
+              <div
+                data-testid="composer-dropzone"
+                style={{ position: "relative", flex: 1 }}
+                onDragOver={(e) => {
+                  if (e.dataTransfer.types.includes("Files")) {
                     e.preventDefault();
-                    void send();
+                    setDragOver(true);
                   }
                 }}
-              />
+                onDragLeave={() => setDragOver(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragOver(false);
+                  onAttachImages(e.dataTransfer.files); // images only; non-images are ignored
+                }}
+              >
+                <textarea
+                  data-testid="composer"
+                  rows={4}
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    resize: "vertical",
+                    font: "inherit",
+                    padding: "0.4rem",
+                    border: dragOver ? "2px dashed #1a7f37" : undefined,
+                  }}
+                  value={input}
+                  placeholder="Type a message...  (Enter to send, Shift+Enter for a new line)"
+                  onChange={(e) => {
+                    cancelAutoSend(); // editing the transcript cancels the pending auto-send
+                    setInput(e.target.value);
+                  }}
+                  onKeyDown={(e) => {
+                    // Enter sends; Shift+Enter inserts a newline. Ignore Enter mid-IME composition
+                    // (e.g. Japanese/Chinese input) so committing a candidate doesn't send.
+                    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                      e.preventDefault();
+                      void send();
+                    }
+                  }}
+                />
+                {/* Faint watermark hint that drag-and-drop is supported. */}
+                <span
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    bottom: 6,
+                    right: 10,
+                    fontSize: "0.72rem",
+                    color: "#aaa",
+                    pointerEvents: "none",
+                    userSelect: "none",
+                  }}
+                >
+                  drag &amp; drop images here
+                </span>
+                {/* Drop-target overlay shown while dragging a file over the composer. */}
+                {dragOver && (
+                  <div
+                    data-testid="drop-overlay"
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      background: "rgba(26,127,55,0.08)",
+                      border: "2px dashed #1a7f37",
+                      borderRadius: 4,
+                      color: "#1a7f37",
+                      fontSize: "0.85rem",
+                      pointerEvents: "none",
+                    }}
+                  >
+                    Drop image(s) to attach
+                  </div>
+                )}
+              </div>
               {/* Mic stacked above Send; both are symbol buttons with the description in the
                   tooltip (monochrome geometric glyphs, not emoji — record dot / stop / send). */}
               <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>

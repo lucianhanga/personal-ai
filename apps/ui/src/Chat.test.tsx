@@ -302,9 +302,11 @@ test("attaches an image and sends it with the user message (vision)", async () =
     expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
   );
 
-  // FileReader yields a data-URL; jsdom supports it. Attach a fake PNG.
+  // Drag-drop a fake PNG onto the composer (FileReader yields a data-URL; jsdom supports it).
   const file = new File(["x"], "cat.png", { type: "image/png" });
-  fireEvent.change(screen.getByTestId("image-input"), { target: { files: [file] } });
+  fireEvent.drop(screen.getByTestId("composer-dropzone"), {
+    dataTransfer: { files: [file], types: ["Files"] },
+  });
   await waitFor(() => expect(screen.getByTestId("image-attachments")).toBeInTheDocument());
 
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "what is this?" } });
@@ -319,6 +321,22 @@ test("attaches an image and sends it with the user message (vision)", async () =
   });
   // The attachment tray clears after sending.
   expect(screen.queryByTestId("image-attachments")).toBeNull();
+});
+
+test("shows a drag-and-drop hint and no Image button (#324)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("composer-dropzone")).toBeInTheDocument());
+  // The drag-drop hint is visible; the old upload button is gone.
+  expect(screen.getByTestId("composer-dropzone")).toHaveTextContent(/drag .* drop images/i);
+  expect(screen.queryByTestId("attach-image")).toBeNull();
+  expect(screen.queryByTestId("image-input")).toBeNull();
+  // Dragging files over the composer shows the drop overlay.
+  fireEvent.dragOver(screen.getByTestId("composer-dropzone"), {
+    dataTransfer: { types: ["Files"] },
+  });
+  expect(screen.getByTestId("drop-overlay")).toBeInTheDocument();
 });
 
 test("sends a message and streams the assistant reply", async () => {

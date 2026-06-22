@@ -11,6 +11,12 @@ generated OpenAPI document.
 
 ## [Unreleased]
 
+### Changed
+- **Drag-and-drop images onto the composer (#324)**: attach image(s) for a vision model by dropping
+  them onto the message box (a faint "drag & drop images here" hint and a drop-target highlight show
+  the affordance). The separate "Image" upload button is removed — drag-drop replaces it. Images
+  only, same handling as before (filtered to image/\*, capped at 4, with the not-a-vision-model hint).
+
 ### Added
 - **Benchmark Phase 2 — frontier contestants + LLM-judge quality (#322)**: M-Bench can now compare
   PersonalAI against **frontier models** on answer **quality**, fairly. One OpenAI-compatible adapter
