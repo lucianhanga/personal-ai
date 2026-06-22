@@ -262,5 +262,5 @@ def test_leaderboard_renders_bars_and_comparison_marks() -> None:
 
     html_text = to_html(suite)
     assert "barfill" in html_text  # inline score bar in the table
-    assert 'class=chart' in html_text and "crow" in html_text  # the per-tier bar chart
+    assert "class=chart" in html_text and "crow" in html_text  # the per-tier bar chart
     assert "<span class=best>best</span>" in html_text  # leader comparison mark

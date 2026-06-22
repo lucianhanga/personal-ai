@@ -355,7 +355,7 @@ def to_html(suite: Suite) -> str:
             delta = (
                 "<span class=best>best</span>"
                 if is_best
-                else f'<span class=delta>{mean_score - best_score:+.2f}</span>'
+                else f"<span class=delta>{mean_score - best_score:+.2f}</span>"
             )
             out.append(
                 f"<tr><td class=rank>{i}</td><td><code>{esc(series)}</code></td>"
