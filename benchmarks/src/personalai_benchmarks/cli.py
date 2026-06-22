@@ -1,93 +1,192 @@
-"""Command-line entry point: run a benchmark suite against a local personalIA and write reports.
+"""Command-line entry point for the benchmark harness.
 
-    python -m personalai_benchmarks run [--tasks DIR] [--modes m1,m2] [--base-url URL]
-                                        [--token T] [--out DIR]
+    python -m personalai_benchmarks run     [--modes …] [--repeats N] …   # PersonalAI only
+    python -m personalai_benchmarks compare [--providers …] [--no-judge] …  # PersonalAI vs frontier
+    python -m personalai_benchmarks list-modes
 
-Phase 1 has no judge wired in (programmatic scorers only); model-graded tasks report "no judge".
+``compare`` runs PersonalAI (across its modes) and each frontier model with a key (raw tier) over
+the same tasks, grades open-ended tasks with the LLM judge (Claude, GPT fallback for Claude's own
+rows), and writes one combined leaderboard. Providers without a key are skipped and reported.
 """
 
 from __future__ import annotations
 
 import argparse
+import platform
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
+from personalai_benchmarks import frontier
 from personalai_benchmarks.adapters import PersonalIAAdapter
-from personalai_benchmarks.modes import ALL_MODES
+from personalai_benchmarks.judge import default_judge
+from personalai_benchmarks.modes import ALL_MODES, RAW
 from personalai_benchmarks.report import write_report
-from personalai_benchmarks.runner import run_suite
-from personalai_benchmarks.tasks import load_tasks
+from personalai_benchmarks.runner import (
+    Grader,
+    RunRecord,
+    Suite,
+    _git_commit,
+    run_comparison,
+    run_suite,
+)
+from personalai_benchmarks.tasks import Task, load_tasks
 
 _DEFAULT_TASKS = Path(__file__).resolve().parents[2] / "tasks"
+_DEFAULT_COMPARE_MODES = "single_no_tools,single_tools_mcp,multi_tools_mcp"
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="personalai_benchmarks")
     sub = parser.add_subparsers(dest="command", required=True)
-    run = sub.add_parser("run", help="run a benchmark suite and write reports")
-    run.add_argument("--tasks", default=str(_DEFAULT_TASKS), help="directory of *.yaml task files")
-    run.add_argument(
-        "--task-ids", default="", help="comma-separated subset of task ids (default: all)"
+
+    run = sub.add_parser("run", help="run PersonalAI across modes and write reports")
+    _add_common(run, modes_default=",".join(ALL_MODES))
+
+    cmp = sub.add_parser(
+        "compare", help="compare PersonalAI vs frontier models (LLM-judge quality)"
     )
-    run.add_argument(
-        "--modes",
-        default=",".join(ALL_MODES),
-        help=f"comma-separated modes (default: all). Available: {', '.join(ALL_MODES)}",
+    _add_common(cmp, modes_default=_DEFAULT_COMPARE_MODES)
+    cmp.add_argument(
+        "--providers",
+        default="",
+        help="comma frontier providers (default: all with a key). "
+        f"Known: {', '.join(frontier.PROVIDERS)}",
     )
-    run.add_argument("--base-url", default="http://127.0.0.1:8765", help="personalIA backend URL")
-    run.add_argument("--token", default=None, help="bearer token (or PERSONALAI_AUTH_TOKEN)")
-    run.add_argument(
-        "--repeats",
-        type=int,
-        default=1,
-        help="run each (task, mode) N times for pass@k + pass-rate (default: 1)",
+    cmp.add_argument(
+        "--no-personalia", action="store_true", help="skip the local PersonalAI system"
     )
-    run.add_argument("--out", default="benchmark-results", help="output directory for reports")
+    cmp.add_argument("--no-judge", action="store_true", help="skip LLM-judge quality grading")
+
     sub.add_parser("list-modes", help="list available benchmark modes")
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _build_parser().parse_args(argv)
+def _add_common(p: argparse.ArgumentParser, *, modes_default: str) -> None:
+    p.add_argument("--tasks", default=str(_DEFAULT_TASKS), help="directory of *.yaml task files")
+    p.add_argument(
+        "--task-ids", default="", help="comma-separated subset of task ids (default: all)"
+    )
+    p.add_argument("--modes", default=modes_default, help="comma-separated PersonalAI modes")
+    p.add_argument("--base-url", default="http://127.0.0.1:8765", help="personalIA backend URL")
+    p.add_argument("--token", default=None, help="bearer token (or PERSONALAI_AUTH_TOKEN)")
+    p.add_argument("--repeats", type=int, default=1, help="attempts per cell (pass@k); default 1")
+    p.add_argument("--out", default="benchmark-results", help="output directory for reports")
 
-    if args.command == "list-modes":
-        for name, mode in ALL_MODES.items():
-            print(f"{name:24s} tier={mode.capability_tier}")
-        return 0
 
-    # command == "run"
+def _select_tasks(args: argparse.Namespace) -> list[Task] | None:
     try:
         tasks = load_tasks(args.tasks)
     except (FileNotFoundError, ValueError) as exc:
         print(f"error loading tasks: {exc}", file=sys.stderr)
-        return 2
+        return None
     if args.task_ids:
         wanted = {t.strip() for t in args.task_ids.split(",") if t.strip()}
         tasks = [t for t in tasks if t.id in wanted]
     if not tasks:
         print("no tasks selected", file=sys.stderr)
-        return 2
+        return None
+    return tasks
 
+
+def _personal_modes(args: argparse.Namespace) -> list | None:  # type: ignore[type-arg]
     try:
-        modes = [ALL_MODES[m.strip()] for m in args.modes.split(",") if m.strip()]
+        return [ALL_MODES[m.strip()] for m in args.modes.split(",") if m.strip()]
     except KeyError as exc:
         print(f"unknown mode {exc}; available: {', '.join(ALL_MODES)}", file=sys.stderr)
-        return 2
+        return None
 
-    adapter = PersonalIAAdapter(base_url=args.base_url, token=args.token)
-    suite = run_suite(tasks=tasks, modes=modes, sut=adapter, repeats=args.repeats)
-    json_path, md_path = write_report(suite, args.out)
 
+def _summary(suite: Suite, out: str) -> int:
+    json_path, md_path, html_path = write_report(suite, out)
     total = len(suite.records)
     passed = sum(1 for r in suite.records if r.passed)
     errored = sum(1 for r in suite.records if r.error is not None)
-    print(
-        f"ran {total} attempts ({len(tasks)} tasks × {len(modes)} modes × {args.repeats} repeats): "
-        f"{passed} passed, {total - passed} failed ({errored} errored)"
-    )
+    print(f"ran {total} attempts: {passed} passed, {total - passed} failed ({errored} errored)")
     print(f"wrote {json_path}")
     print(f"wrote {md_path}")
+    print(f"wrote {html_path}  (open in a browser; print to PDF to share)")
     return 0
+
+
+def _run(args: argparse.Namespace) -> int:
+    tasks = _select_tasks(args)
+    modes = _personal_modes(args)
+    if tasks is None or modes is None:
+        return 2
+    adapter = PersonalIAAdapter(base_url=args.base_url, token=args.token)
+    suite = run_suite(tasks=tasks, modes=modes, sut=adapter, repeats=args.repeats)
+    return _summary(suite, args.out)
+
+
+def _compare(args: argparse.Namespace) -> int:
+    tasks = _select_tasks(args)
+    if tasks is None:
+        return 2
+    judge = None if args.no_judge else default_judge()
+    grader: Grader | None = judge.score if judge is not None else None
+
+    records: list[RunRecord] = []
+    systems: list[str] = []
+
+    if not args.no_personalia:
+        modes = _personal_modes(args)
+        if modes is None:
+            return 2
+        pa = PersonalIAAdapter(base_url=args.base_url, token=args.token)
+        suite = run_comparison(
+            tasks=tasks, modes=modes, systems=[pa], grader=grader, repeats=args.repeats
+        )
+        records.extend(suite.records)
+        systems.append(pa.name)
+
+    if args.providers:
+        wanted = [p.strip() for p in args.providers.split(",") if p.strip()]
+        front = [a for a in (frontier.build(p) for p in wanted) if a is not None]
+    else:
+        front = frontier.available()
+    if front:
+        suite = run_comparison(
+            tasks=tasks, modes=[RAW], systems=front, grader=grader, repeats=args.repeats
+        )
+        records.extend(suite.records)
+        systems.extend(a.name for a in front)
+
+    if not records:
+        print("no systems to run (PersonalAI skipped and no frontier key present)", file=sys.stderr)
+        return 2
+
+    combined = Suite(
+        records=records,
+        metadata={
+            "git_commit": _git_commit(),
+            "timestamp": datetime.now(UTC).isoformat(),
+            "platform": platform.platform(),
+            "python": platform.python_version(),
+            "systems": systems,
+            "modes": sorted({r.mode for r in records}),
+            "task_count": len(tasks),
+            "repeats": max(1, args.repeats),
+            "judge": "off" if judge is None else "claude (gpt fallback)",
+        },
+    )
+    skipped = frontier.missing_keys()
+    if skipped:
+        print(f"skipped frontier providers (no key): {', '.join(skipped)}")
+    if judge is None:
+        print("LLM judge OFF — quality (rubric) tasks score 0; set ANTHROPIC_API_KEY to enable")
+    return _summary(combined, args.out)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
+    if args.command == "list-modes":
+        for name, mode in ALL_MODES.items():
+            print(f"{name:24s} tier={mode.capability_tier}")
+        return 0
+    if args.command == "compare":
+        return _compare(args)
+    return _run(args)
 
 
 if __name__ == "__main__":

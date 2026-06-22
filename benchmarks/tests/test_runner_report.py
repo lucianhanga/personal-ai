@@ -10,16 +10,15 @@ from typing import Any
 from personalai_benchmarks.adapters import RunResult
 from personalai_benchmarks.modes import ALL_MODES, MULTI_TOOLS_MCP, SINGLE_NO_TOOLS, with_memory
 from personalai_benchmarks.report import cells, to_markdown, write_report
-from personalai_benchmarks.runner import run_suite
+from personalai_benchmarks.runner import run_comparison, run_suite
 from personalai_benchmarks.tasks import Task
 
 
 class _FakeSUT:
     """Returns a fixed answer; echoes the mode's use_tools into a fake tool_call + config_used."""
 
-    name = "fake"
-
-    def __init__(self, answer: str = "62", error: str | None = None) -> None:
+    def __init__(self, answer: str = "62", error: str | None = None, name: str = "fake") -> None:
+        self.name = name
         self._answer = answer
         self._error = error
 
@@ -99,8 +98,10 @@ def test_report_groups_by_tier_and_writes_files(tmp_path: Path) -> None:
     assert "single_no_tools" in md and "multi_agent+memory" in md  # tiers shown separately
     assert "Per-task results" in md
 
-    json_path, md_path = write_report(suite, tmp_path)
-    assert json_path.exists() and md_path.exists()
+    json_path, md_path, html_path = write_report(suite, tmp_path)
+    assert json_path.exists() and md_path.exists() and html_path.exists()
+    html_text = html_path.read_text()
+    assert html_text.startswith("<!doctype html>") and "leaderboard" in html_text.lower()
     payload = json.loads(json_path.read_text())  # Any -> indexable in the test
     assert payload["metadata"]["sut"] == "fake"
     assert len(payload["records"]) == 2
@@ -146,3 +147,37 @@ def test_never_passing_cell_is_a_hard_failure() -> None:
     (cell,) = cells(suite)
     assert cell.pass_at_k is False and cell.passes == 0
     assert "Failures (never passed)" in to_markdown(suite)
+
+
+def test_run_comparison_tags_and_separates_systems() -> None:
+    # Two systems answer the same task differently; their cells must not be merged.
+    suite = run_comparison(
+        tasks=[_task(expected="62")],
+        modes=[SINGLE_NO_TOOLS],
+        systems=[_FakeSUT(answer="62", name="local"), _FakeSUT(answer="99", name="frontier:x")],
+    )
+    assert {r.system for r in suite.records} == {"local", "frontier:x"}
+    assert suite.metadata["systems"] == ["local", "frontier:x"]
+    by_system = {c.system: c for c in cells(suite)}
+    assert by_system["local"].pass_at_k is True  # answered 62 (correct)
+    assert by_system["frontier:x"].pass_at_k is False  # answered 99
+    md = to_markdown(suite)
+    assert "local/single_no_tools" in md and "frontier:x/single_no_tools" in md
+
+
+def test_comparison_grader_receives_the_system_name() -> None:
+    seen: list[str] = []
+
+    def grader(task, answer, system_name):  # type: ignore[no-untyped-def]
+        from personalai_benchmarks.scoring import Score
+
+        seen.append(system_name)
+        return Score(1.0, True, "graded", "stub")
+
+    run_comparison(
+        tasks=[_task()],
+        modes=[SINGLE_NO_TOOLS],
+        systems=[_FakeSUT(name="a"), _FakeSUT(name="b")],
+        grader=grader,
+    )
+    assert set(seen) == {"a", "b"}  # the grader can route by system (self-preference)

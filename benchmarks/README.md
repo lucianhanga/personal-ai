@@ -23,7 +23,29 @@ uv run python -m personalai_benchmarks run \
 
 # Local models are stochastic — run each cell several times for pass@k + pass-rate:
 uv run python -m personalai_benchmarks run --repeats 5
+
+# Compare PersonalAI vs frontier models on quality (LLM judge). Frontier keys come from the
+# environment (e.g. via uv's --env-file); providers without a key are skipped.
+uv run --env-file .env python -m personalai_benchmarks compare
+uv run --env-file .env python -m personalai_benchmarks compare \
+    --no-personalia --providers anthropic,openai,deepseek --task-ids quality_explain_recursion
 ```
+
+## Phase 2: frontier comparison + LLM judge
+
+`compare` runs PersonalAI (across its modes) **and** each frontier model that has an API key (raw
+tier) over the same tasks, then writes one combined leaderboard grouped by capability tier.
+
+- **Providers** (`frontier.py`): one OpenAI-compatible adapter reaches OpenAI / Anthropic / DeepSeek
+  / xAI (Grok) / Groq / Gemini. Keys come from the environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+  `DEEPSEEK_API_KEY`, `XAI_API_KEY`, `GROQ_API_KEY`, `GEMINI_API_KEY`); a provider without a key is
+  skipped and reported. Default model names are starting points — override per provider as needed.
+- **LLM judge** (`judge.py`): grades open-ended (rubric) tasks — CoT-then-score, 1–5 per criterion,
+  reference-guided, temperature 0, pinned `JUDGE_PROMPT_VERSION`. Default judge is **Claude**, with
+  **GPT as the fallback for Claude's own answers** (a model never judges its own family —
+  self-preference bias). Needs `ANTHROPIC_API_KEY`; without it, rubric tasks score 0 (`--no-judge`).
+- These are **billed** by each provider. Start small: a couple of task ids, `--repeats 1`, a few
+  providers — check cost/latency before a larger sweep.
 
 Auth: pass `--token` or set `PERSONALAI_AUTH_TOKEN` (only needed if the backend requires a token).
 Output: `results.json` (full per-run bundle + reproducibility metadata) and `leaderboard.md`.

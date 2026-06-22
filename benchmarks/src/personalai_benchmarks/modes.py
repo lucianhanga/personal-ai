@@ -19,6 +19,10 @@ class Mode:
     overrides: dict[str, Any] = field(default_factory=dict)
 
 
+# A raw frontier LLM has no tools/agent/memory — it runs in this single tier (#322).
+RAW = Mode(name="raw", capability_tier="raw", overrides={})
+
+
 def with_memory(mode: Mode) -> Mode:
     """A memory-on variant of ``mode``: reads long-term memory into the turn (``use_memory``) and
     enables the memory write/extraction path (``memory_enabled``). Memory is a benchmark dimension —
