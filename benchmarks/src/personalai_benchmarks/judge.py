@@ -15,14 +15,15 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping, Sequence
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from personalai_benchmarks import frontier
 from personalai_benchmarks.scoring import Score, score_task
 from personalai_benchmarks.tasks import Task
 
 # Bump when the prompt or output schema changes — it is part of the benchmark version.
-JUDGE_PROMPT_VERSION = "v1"
+# v2: per-criterion form-filling (a justification precedes each criterion's 1-5 score).
+JUDGE_PROMPT_VERSION = "v2"
 # score >= this (out of 5) counts as a pass for the boolean leaderboard.
 DEFAULT_PASS_THRESHOLD = 4
 
@@ -30,24 +31,51 @@ DEFAULT_PASS_THRESHOLD = 4
 JudgeCall = Callable[[Sequence[Mapping[str, str]]], str]
 
 
+class CriterionGrade(BaseModel):
+    """One rubric dimension: a short justification written *before* its 1–5 score (form-filling)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    justification: str = ""
+    score: int
+
+
 class Verdict(BaseModel):
-    """The judge's structured grade. ``criteria`` are 1–5; ``score`` is the overall 1–5."""
+    """The judge's grade: per-criterion ``{justification, score}`` plus an overall 1-5 ``score``."""
 
     model_config = ConfigDict(extra="ignore")
 
     reasoning: str = ""
-    criteria: dict[str, int] = Field(default_factory=dict)
+    criteria: dict[str, CriterionGrade] = Field(default_factory=dict)
     score: int
+
+    @field_validator("criteria", mode="before")
+    @classmethod
+    def _coerce_criteria(cls, value: object) -> object:
+        """Tolerate the older v1 shape (``{"name": int}``) by wrapping bare ints as a grade."""
+        if isinstance(value, Mapping):
+            return {
+                k: ({"score": v} if isinstance(v, int | float) else v) for k, v in value.items()
+            }
+        return value
+
+    @property
+    def criterion_scores(self) -> dict[str, int]:
+        """Just the per-dimension scores (justifications dropped)."""
+        return {name: grade.score for name, grade in self.criteria.items()}
 
 
 _SYSTEM = (
     "You are an impartial expert evaluator. Judge ONLY the quality of the answer to the question: "
     "its correctness, completeness, grounding (claims supported, not fabricated), and helpfulness. "
     "IGNORE length, formatting, and tone — a concise correct answer must not score lower than a "
-    "verbose one. Do not assume which system produced the answer. Think step by step, then "
-    "grade each criterion from 1 (poor) to 5 (excellent) and give an overall 1-5 score. Return "
-    'ONLY JSON: {"reasoning": str, "criteria": {"correctness": int, "completeness": int, '
-    '"grounding": int, "helpfulness": int}, "score": int}.'
+    "verbose one. Do not assume which system produced the answer. For EACH criterion, write a "
+    "one-sentence justification, THEN assign its score from 1 (poor) to 5 (excellent); then an "
+    "overall 1-5 score. Filling the justification before the number keeps the grade honest. "
+    'Return ONLY JSON: {"reasoning": str, "criteria": {"correctness": {"justification": str, '
+    '"score": int}, "completeness": {"justification": str, "score": int}, "grounding": '
+    '{"justification": str, "score": int}, "helpfulness": {"justification": str, "score": int}}, '
+    '"score": int}.'
 )
 
 
@@ -143,10 +171,14 @@ class LlmJudge:
         if verdict is None:
             return Score(0.0, False, "judge unavailable or returned invalid output", "llm_judge")
         passed = verdict.score >= self._threshold
+        dims = ", ".join(f"{n}={s}" for n, s in verdict.criterion_scores.items())
+        detail = f" [{dims}]" if dims else ""
         return Score(
             value=verdict.score / 5.0,
             passed=passed,
-            explanation=f"[judge:{judge_vendor}] {verdict.score}/5 — {verdict.reasoning}"[:500],
+            explanation=f"[judge:{judge_vendor}] {verdict.score}/5{detail} — {verdict.reasoning}"[
+                :500
+            ],
             scorer="llm_judge",
             params={"judge_vendor": judge_vendor, "prompt_version": JUDGE_PROMPT_VERSION},
         )

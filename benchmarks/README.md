@@ -55,10 +55,15 @@ tier) over the same tasks, then writes one combined leaderboard grouped by capab
   / xAI (Grok) / Groq / Gemini. Keys come from the environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
   `DEEPSEEK_API_KEY`, `XAI_API_KEY`, `GROQ_API_KEY`, `GEMINI_API_KEY`); a provider without a key is
   skipped and reported. Default model names are starting points — override per provider as needed.
-- **LLM judge** (`judge.py`): grades open-ended (rubric) tasks — CoT-then-score, 1–5 per criterion,
-  reference-guided, temperature 0, pinned `JUDGE_PROMPT_VERSION`. Default judge is **Claude**, with
-  **GPT as the fallback for Claude's own answers** (a model never judges its own family —
-  self-preference bias). Needs `ANTHROPIC_API_KEY`; without it, rubric tasks score 0 (`--no-judge`).
+- **LLM judge** (`judge.py`): grades open-ended (rubric) tasks — **form-filling** (a one-sentence
+  justification is written *before* each criterion's 1–5 score, the G-Eval pattern, for steadier and
+  auditable grades), reference-guided, temperature 0, pinned `JUDGE_PROMPT_VERSION` (now `v2`; parsing
+  still tolerates the older bare-integer shape). Default judge is **Claude**, with **GPT as the
+  fallback for Claude's own answers** (a model never judges its own family — self-preference bias).
+  Needs `ANTHROPIC_API_KEY`; without it, rubric tasks score 0 (`--no-judge`).
+- **Length-bias check** (`analysis.py`): every `compare` run reports the Pearson correlation between
+  answer word-count and judge score across judged answers, and **flags** a strong correlation — a
+  tell-tale of verbosity bias. It prints in the summary and the Markdown report header.
 - These are **billed** by each provider. Start small: a couple of task ids, `--repeats 1`, a few
   providers — check cost/latency before a larger sweep.
 

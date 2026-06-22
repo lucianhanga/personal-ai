@@ -10,15 +10,30 @@ from personalai_benchmarks.tasks import Task
 
 
 def _verdict(score: int) -> str:
+    # v2 form-filling shape: each criterion carries a justification written before its score.
+    def dim(s: int) -> dict[str, object]:
+        return {"justification": "because reasons", "score": s}
+
     return json.dumps(
         {
             "reasoning": "the answer is accurate and complete",
             "criteria": {
-                "correctness": score,
-                "completeness": score,
-                "grounding": 5,
-                "helpfulness": 4,
+                "correctness": dim(score),
+                "completeness": dim(score),
+                "grounding": dim(5),
+                "helpfulness": dim(4),
             },
+            "score": score,
+        }
+    )
+
+
+def _verdict_v1(score: int) -> str:
+    # Legacy bare-int criteria; the judge must still parse it.
+    return json.dumps(
+        {
+            "reasoning": "ok",
+            "criteria": {"correctness": score, "completeness": score},
             "score": score,
         }
     )
@@ -50,7 +65,29 @@ def test_grade_parses_a_verdict() -> None:
     v = grade(
         question="Q", answer="A", reference="R", rubric="crit", call=_recording_call(_verdict(5))
     )
-    assert v is not None and v.score == 5 and v.criteria["correctness"] == 5
+    assert v is not None and v.score == 5
+    assert v.criteria["correctness"].score == 5
+    assert v.criteria["correctness"].justification == "because reasons"
+    assert v.criterion_scores == {
+        "correctness": 5,
+        "completeness": 5,
+        "grounding": 5,
+        "helpfulness": 4,
+    }
+
+
+def test_grade_tolerates_legacy_bare_int_criteria() -> None:
+    v = grade(
+        question="Q", answer="A", reference=None, rubric=None, call=_recording_call(_verdict_v1(3))
+    )
+    assert v is not None and v.score == 3
+    assert v.criterion_scores == {"correctness": 3, "completeness": 3}
+
+
+def test_explanation_lists_per_dimension_scores() -> None:
+    judge = LlmJudge(_recording_call(_verdict(5)), vendor="anthropic")
+    score = judge.score(_rubric_task(), "ans", "groq:llama")
+    assert "correctness=5" in score.explanation and "helpfulness=4" in score.explanation
 
 
 def test_grade_returns_none_on_garbage() -> None:

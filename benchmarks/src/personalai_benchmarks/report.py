@@ -16,6 +16,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from personalai_benchmarks import pricing
+from personalai_benchmarks.analysis import length_bias
 from personalai_benchmarks.runner import RunRecord, Suite
 
 
@@ -146,6 +147,9 @@ def to_markdown(suite: Suite) -> str:
         f"- tasks: {meta.get('task_count', '?')} · modes: {', '.join(meta.get('modes', []))} "
         f"· repeats: {repeats}"
     )
+    bias = length_bias(suite.records)
+    if bias is not None:
+        md.append(f"- {bias.summary()}")
     md.append("")
 
     cell_list = cells(suite)
