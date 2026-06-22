@@ -149,6 +149,9 @@ def _delta_mark(value: float, best: float) -> str:
 def to_markdown(suite: Suite) -> str:
     md: list[str] = ["# PersonalAI benchmark leaderboard", ""]
     meta = suite.metadata
+    if meta.get("interrupted"):
+        md.append("> **Partial run** — stopped before completion; results below are what finished.")
+        md.append("")
     systems = list(meta.get("systems") or [meta.get("sut", "?")])
     md.append(
         f"- systems: {', '.join(f'`{s}`' for s in systems)} "
@@ -299,6 +302,8 @@ def to_html(suite: Suite) -> str:
         "th{background:#f6f8fa;font-weight:600}tr:hover{background:#fafbfc}",
         ".tier{display:inline-block;padding:.1rem .5rem;border-radius:1rem;background:#eef;"
         "color:#338;font-size:.8rem}",
+        ".partial{background:#fff4e5;border:1px solid #b06f00;color:#7a4d00;padding:.5rem .8rem;"
+        "border-radius:6px;margin:0 0 1rem;font-size:.88rem}",
         ".num{font-variant-numeric:tabular-nums;text-align:right}.bar{font-weight:600}",
         ".rank{color:#888;width:1.5rem}.fail{color:#b00020}.pass{color:#1a7f37}",
         "code{background:#f6f8fa;padding:.05rem .3rem;border-radius:3px;font-size:.85em}",
@@ -320,6 +325,12 @@ def to_html(suite: Suite) -> str:
         ".chart{break-inside:avoid}}",
         "</style></head><body>",
         "<h1>PersonalAI benchmark leaderboard</h1>",
+        (
+            "<div class=partial><b>Partial run</b> — stopped before completion; "
+            "the results below are only what finished.</div>"
+            if meta.get("interrupted")
+            else ""
+        ),
         "<div class=meta>",
         f"systems: {', '.join(f'<code>{esc(s)}</code>' for s in systems)}<br>",
         f"commit <code>{esc(str(meta.get('git_commit', '?'))[:12])}</code> · "

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import html
 import json
+import signal
 import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -88,6 +89,7 @@ def _render_page(base_url: str) -> str:
 
 class _Handler(BaseHTTPRequestHandler):
     base_url = "http://127.0.0.1:8765"
+    current_proc: subprocess.Popen[str] | None = None  # the in-flight benchmark, for /stop
 
     def log_message(self, *args: object) -> None:  # quiet
         pass
@@ -98,10 +100,25 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_html(_render_page(self.base_url))
         elif parsed.path == "/run":
             self._stream_run(parse_qs(parsed.query))
+        elif parsed.path == "/stop":
+            self._stop()
         elif parsed.path == "/report":
             self._serve_report()
         else:
             self.send_error(404)
+
+    def _stop(self) -> None:
+        # SIGINT (not kill) so the CLI catches KeyboardInterrupt and still writes a partial report.
+        proc = type(self).current_proc
+        stopping = proc is not None and proc.poll() is None
+        if stopping and proc is not None:
+            proc.send_signal(signal.SIGINT)
+        body = json.dumps({"stopping": stopping}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _send_html(self, body: str) -> None:
         data = body.encode()
@@ -157,6 +174,7 @@ class _Handler(BaseHTTPRequestHandler):
             text=True,
             bufsize=1,
         )
+        type(self).current_proc = proc  # let /stop signal this run
         try:
             assert proc.stdout is not None
             for line in proc.stdout:
@@ -164,6 +182,9 @@ class _Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             proc.terminate()
             return
+        finally:
+            if type(self).current_proc is proc:
+                type(self).current_proc = None
         code = proc.wait()
         self._sse("done", json.dumps({"code": code, "out": _OUT_DIR}))
 
@@ -215,7 +236,9 @@ Run the server with <code>uv run --env-file .env …</code> so the benchmark get
 <label><input id=no_personalia type=checkbox> skip PersonalAI</label>
 </fieldset>
 <div class="cmd mono" id=cmd></div>
-<p><button id=run>Run benchmark</button> <span id=status style="color:#666"></span></p>
+<p><button id=run>Run benchmark</button>
+<button id=stop disabled style="background:#b00020;border-color:#b00020">Stop</button>
+<span id=status style="color:#666"></span></p>
 <div id=log class=mono></div>
 <script>
 const D = /*DATA*/;
@@ -246,16 +269,22 @@ function preview(){const p=params();
   if(p.judge==='0')a.push('--no-judge');
   document.getElementById('cmd').textContent='$ python -m personalai_benchmarks '+a.join(' ');}
 document.body.addEventListener('change', preview); preview();
-document.getElementById('run').onclick=function(){
+const runBtn=document.getElementById('run'), stopBtn=document.getElementById('stop');
+runBtn.onclick=function(){
   const log=document.getElementById('log'), st=document.getElementById('status');
-  log.textContent=''; st.textContent='running…'; this.disabled=true;
+  log.textContent=''; st.textContent='running…'; runBtn.disabled=true; stopBtn.disabled=false;
   const qs=new URLSearchParams(params()).toString();
   const es=new EventSource('/run?'+qs);
   es.onmessage=e=>{log.textContent+=e.data+'\\n'; log.scrollTop=log.scrollHeight;};
   es.addEventListener('error',e=>{log.textContent+='[error] '+(e.data||'')+'\\n';});
-  es.addEventListener('done',e=>{es.close(); document.getElementById('run').disabled=false;
+  es.addEventListener('done',e=>{es.close(); runBtn.disabled=false; stopBtn.disabled=true;
     const d=JSON.parse(e.data);
     st.innerHTML=`done (exit ${d.code}) — `
       +`<a href="/report" target=_blank>open leaderboard</a>`;});
+};
+stopBtn.onclick=function(){
+  stopBtn.disabled=true;
+  document.getElementById('status').textContent='stopping — writing partial report…';
+  fetch('/stop');  // SIGINT; the run finishes writing a partial report, then 'done' fires
 };
 </script></body></html>"""

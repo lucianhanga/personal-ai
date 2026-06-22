@@ -7,10 +7,11 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import pytest
 from personalai_benchmarks.adapters import RunResult
 from personalai_benchmarks.modes import ALL_MODES, MULTI_TOOLS_MCP, SINGLE_NO_TOOLS, with_memory
 from personalai_benchmarks.report import cells, to_html, to_markdown, write_report
-from personalai_benchmarks.runner import run_comparison, run_suite
+from personalai_benchmarks.runner import Suite, run_comparison, run_suite
 from personalai_benchmarks.tasks import Task
 
 
@@ -31,6 +32,22 @@ class _FakeSUT:
             tool_calls=[{"tool": "calculator"}] if overrides.get("use_tools") else [],
             config_used=dict(overrides),
         )
+
+
+class _InterruptingSUT:
+    """Answers `stop_after` times, then raises KeyboardInterrupt — simulates a Ctrl-C mid-run."""
+
+    name = "boom"
+
+    def __init__(self, stop_after: int) -> None:
+        self._n = 0
+        self._stop = stop_after
+
+    def run(self, messages: Sequence[Mapping[str, str]], overrides: Mapping[str, Any]) -> RunResult:
+        self._n += 1
+        if self._n > self._stop:
+            raise KeyboardInterrupt
+        return RunResult(answer="62", latency_ms=1.0)
 
 
 class _FlakySUT:
@@ -228,6 +245,52 @@ def test_leaderboard_has_cost_and_speed_columns() -> None:
     assert "| — |" in md  # unpriced model -> em dash, not a guessed cost
     assert "500" in md  # 500 completion tokens / 1s = 500 tok/s
     assert "$ / run" in to_html(suite) and "tok/s" in to_html(suite)
+
+
+def test_sink_accumulates_records_live() -> None:
+    sink: list[Any] = []
+    suite = run_suite(
+        tasks=[_task("t1"), _task("t2")],
+        modes=[SINGLE_NO_TOOLS],
+        sut=_FakeSUT(answer="62"),
+        sink=sink,
+    )
+    assert sink == suite.records and len(sink) == 2
+
+
+def test_sink_keeps_partial_records_when_interrupted() -> None:
+    # Ctrl-C after 2 attempts: the runner raises, but the 2 finished records survive in the sink.
+    sink: list[Any] = []
+    with pytest.raises(KeyboardInterrupt):
+        run_suite(
+            tasks=[_task("t1"), _task("t2"), _task("t3")],
+            modes=[SINGLE_NO_TOOLS],
+            sut=_InterruptingSUT(stop_after=2),
+            sink=sink,
+        )
+    assert len(sink) == 2
+    assert {r.task_id for r in sink} == {"t1", "t2"}
+
+
+def test_run_comparison_sink_spans_systems() -> None:
+    sink: list[Any] = []
+    with pytest.raises(KeyboardInterrupt):
+        run_comparison(
+            tasks=[_task("t1"), _task("t2")],
+            modes=[SINGLE_NO_TOOLS],
+            systems=[_FakeSUT(answer="62", name="a"), _InterruptingSUT(stop_after=1)],
+            sink=sink,
+        )
+    # system 'a' fully ran (2), then the interrupting system produced 1 before Ctrl-C.
+    assert len(sink) == 3
+    assert sum(1 for r in sink if r.system == "a") == 2
+
+
+def test_interrupted_run_shows_a_partial_banner() -> None:
+    suite = run_suite(tasks=[_task()], modes=[SINGLE_NO_TOOLS], sut=_FakeSUT(answer="62"))
+    partial = Suite(records=suite.records, metadata={**suite.metadata, "interrupted": True})
+    assert "Partial run" in to_markdown(partial)
+    assert "class=partial" in to_html(partial)
 
 
 def test_unicode_bar_scales_to_fraction() -> None:

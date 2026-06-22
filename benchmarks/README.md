@@ -50,6 +50,11 @@ validated arg list (no shell), and the server binds `127.0.0.1` only — it is a
 not part of the secured app. Run it with `--env-file .env` so the spawned `compare` inherits the
 frontier API keys.
 
+**Stopping early.** Press **Ctrl-C** during a CLI run — or click **Stop** in the launcher (it sends
+`SIGINT`, not a kill) — and the harness writes a **partial report** from whatever finished, marked
+`PARTIAL` / "Partial run" in the output and both reports. Handy for long `--model-tier all` sweeps:
+stop once you've seen enough and still get a leaderboard of the results so far.
+
 ## Phase 2: frontier comparison + LLM judge
 
 `compare` runs PersonalAI (across its modes) **and** each frontier model that has an API key (raw
