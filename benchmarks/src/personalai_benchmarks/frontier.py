@@ -19,40 +19,117 @@ import httpx
 
 from personalai_benchmarks.adapters import RunResult
 
+# Capability/cost tiers a provider's models are tagged with. "medium"/"best" may have 2 models each
+# (a current + an older one) so the leaderboard shows the full cheapest→best spread per provider.
+MODEL_TIERS = ("cheapest", "medium", "best")
+
+
+@dataclass(frozen=True)
+class Model:
+    """One model id tagged with its cost/quality ``tier`` (∈ :data:`MODEL_TIERS`)."""
+
+    id: str
+    tier: str
+
 
 @dataclass(frozen=True)
 class Provider:
-    """An OpenAI-compatible provider: where to call it, which env var holds its key, default model.
+    """An OpenAI-compatible provider: where to call it, its key env var, and a tagged model lineup.
 
-    ``default_model`` is a starting point only — model names change fast, so override per run with
-    ``--models provider=model`` (CLI) rather than trusting these.
+    Model ids are validated against each provider's live ``/models`` but change fast — override per
+    run with ``--models provider=model`` (CLI) rather than trusting these.
     """
 
     name: str
     base_url: str
     env_var: str
-    default_model: str
+    models: tuple[Model, ...]
+
+    @property
+    def default_model(self) -> str:
+        """A single representative (the first ``medium``, else the first model) — back-compat for
+        runs that don't sweep a whole tier."""
+        return next((m.id for m in self.models if m.tier == "medium"), self.models[0].id)
+
+    def tier(self, tier: str) -> list[str]:
+        """Model ids in ``tier`` (or every id when ``tier == 'all'``)."""
+        return [m.id for m in self.models if tier == "all" or m.tier == tier]
 
 
-# OpenAI-compatible endpoints. base_url is the prefix BEFORE "/chat/completions". Default models are
-# valid as of 2026-06 but change often — override per run with `--models provider=model`.
+def _p(name: str, base_url: str, env_var: str, lineup: tuple[tuple[str, str], ...]) -> Provider:
+    return Provider(name, base_url, env_var, tuple(Model(mid, tier) for mid, tier in lineup))
+
+
+# OpenAI-compatible endpoints (base_url is the prefix BEFORE "/chat/completions"). Each provider's
+# lineup spans cheapest → best, validated against its /models on 2026-06; older ids fill the gaps.
+# DeepSeek exposes only 2 models and xAI only 4, so they aren't padded. Some reasoning flagships
+# (OpenAI GPT-5.x, xAI grok-4.x reasoning, DeepSeek v4-pro) reject a custom `temperature`; the
+# adapter retries without it on a 400. Prices live in pricing.py.
 PROVIDERS: dict[str, Provider] = {
-    "openai": Provider("openai", "https://api.openai.com/v1", "OPENAI_API_KEY", "gpt-4o"),
-    "anthropic": Provider(
-        "anthropic", "https://api.anthropic.com/v1", "ANTHROPIC_API_KEY", "claude-sonnet-4-6"
+    "openai": _p(
+        "openai",
+        "https://api.openai.com/v1",
+        "OPENAI_API_KEY",
+        (
+            ("gpt-5.4-nano", "cheapest"),
+            ("gpt-5.4-mini", "medium"),
+            ("gpt-4o", "medium"),
+            ("gpt-5.5", "best"),
+            ("gpt-4.1", "best"),
+        ),
     ),
-    "deepseek": Provider(
-        "deepseek", "https://api.deepseek.com", "DEEPSEEK_API_KEY", "deepseek-chat"
+    "anthropic": _p(
+        "anthropic",
+        "https://api.anthropic.com/v1",
+        "ANTHROPIC_API_KEY",
+        (
+            ("claude-haiku-4-5-20251001", "cheapest"),
+            ("claude-sonnet-4-6", "medium"),
+            ("claude-sonnet-4-5-20250929", "medium"),
+            ("claude-opus-4-8", "best"),
+            ("claude-opus-4-6", "best"),
+        ),
     ),
-    "xai": Provider("xai", "https://api.x.ai/v1", "XAI_API_KEY", "grok-4.3"),
-    "groq": Provider(
-        "groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY", "llama-3.1-8b-instant"
+    "deepseek": _p(
+        "deepseek",
+        "https://api.deepseek.com",
+        "DEEPSEEK_API_KEY",
+        (("deepseek-v4-flash", "cheapest"), ("deepseek-v4-pro", "best")),
     ),
-    "gemini": Provider(
+    "xai": _p(
+        "xai",
+        "https://api.x.ai/v1",
+        "XAI_API_KEY",
+        (
+            ("grok-4.20-0309-non-reasoning", "cheapest"),
+            ("grok-4.20-0309-reasoning", "medium"),
+            ("grok-4.20-multi-agent-0309", "medium"),
+            ("grok-4.3", "best"),
+        ),
+    ),
+    "groq": _p(
+        "groq",
+        "https://api.groq.com/openai/v1",
+        "GROQ_API_KEY",
+        (
+            ("llama-3.1-8b-instant", "cheapest"),
+            ("llama-3.3-70b-versatile", "medium"),
+            ("openai/gpt-oss-20b", "medium"),
+            ("openai/gpt-oss-120b", "best"),
+            ("qwen/qwen3-32b", "best"),
+        ),
+    ),
+    "gemini": _p(
         "gemini",
         "https://generativelanguage.googleapis.com/v1beta/openai",
         "GEMINI_API_KEY",
-        "gemini-2.5-flash",
+        (
+            ("gemini-2.5-flash-lite", "cheapest"),
+            ("gemini-2.5-flash", "medium"),
+            ("gemini-2.0-flash", "medium"),
+            ("gemini-3.5-flash", "best"),
+            ("gemini-2.5-pro", "best"),
+        ),
     ),
 }
 
@@ -149,6 +226,30 @@ def available(
         if adapter is not None:
             out.append(adapter)
     return out
+
+
+def build_tier(
+    provider_name: str, tier: str, *, client: httpx.Client | None = None
+) -> list[OpenAICompatAdapter]:
+    """Adapters for every model in ``provider_name``'s ``tier`` (``'all'`` = the full lineup); empty
+    if the provider's key is absent. A provider with no models in ``tier`` yields nothing."""
+    provider = PROVIDERS.get(provider_name)
+    if provider is None:
+        raise KeyError(f"unknown provider {provider_name!r}; known: {', '.join(PROVIDERS)}")
+    out: list[OpenAICompatAdapter] = []
+    for model in provider.tier(tier):
+        adapter = build(provider_name, model=model, client=client)
+        if adapter is not None:
+            out.append(adapter)
+    return out
+
+
+def available_tier(
+    tier: str, *, providers: list[str] | None = None, client: httpx.Client | None = None
+) -> list[OpenAICompatAdapter]:
+    """Tier adapters across ``providers`` (default: all known); key-absent providers are skipped."""
+    names = providers if providers is not None else list(PROVIDERS)
+    return [a for name in names for a in build_tier(name, tier, client=client)]
 
 
 def missing_keys() -> list[str]:

@@ -10,27 +10,41 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 # (input $/1M, output $/1M). Approximate as of 2026-06 — verify against current pricing pages.
+# A model absent here renders "—" in the report (no guessed cost), so it's fine to omit any whose
+# price we couldn't confirm (e.g. xAI grok-4.20, Groq gpt-oss). "# verify" = lower confidence.
 PRICES_USD_PER_1M: dict[str, tuple[float, float]] = {
     # OpenAI
-    "gpt-4o": (2.50, 10.00),
+    "gpt-5.5": (5.00, 30.00),
+    "gpt-5.4": (2.50, 15.00),
+    "gpt-5.4-mini": (0.75, 4.50),
+    "gpt-5.4-nano": (0.20, 1.25),
     "gpt-4.1": (2.00, 8.00),
+    "gpt-4o": (2.50, 10.00),
+    "gpt-4o-mini": (0.15, 0.60),
     "gpt-4.1-mini": (0.40, 1.60),
     # Anthropic
-    "claude-sonnet-4-6": (3.00, 15.00),
+    "claude-opus-4-8": (5.00, 25.00),
     "claude-opus-4-6": (15.00, 75.00),
-    "claude-opus-4-8": (15.00, 75.00),
+    "claude-sonnet-4-6": (3.00, 15.00),
+    "claude-sonnet-4-5-20250929": (3.00, 15.00),
     "claude-haiku-4-5-20251001": (1.00, 5.00),
     # DeepSeek
-    "deepseek-chat": (0.27, 1.10),
-    "deepseek-reasoner": (0.55, 2.19),
+    "deepseek-v4-flash": (0.14, 0.28),
+    "deepseek-v4-pro": (0.44, 0.87),  # verify: promotional rate
     # Google
-    "gemini-2.5-flash": (0.15, 0.60),
+    "gemini-3.5-flash": (1.50, 9.00),
     "gemini-2.5-pro": (1.25, 10.00),
-    # xAI
-    "grok-4.3": (3.00, 15.00),
+    "gemini-2.5-flash": (0.30, 2.50),
+    "gemini-2.5-flash-lite": (0.10, 0.40),
+    "gemini-2.0-flash": (0.10, 0.40),
+    # xAI (the grok-4.20 line is unpriced -> renders "—")
+    "grok-4.3": (1.25, 2.50),  # verify
     # Groq-hosted open models
-    "llama-3.1-8b-instant": (0.05, 0.08),
+    "openai/gpt-oss-120b": (0.15, 0.75),  # verify
+    "openai/gpt-oss-20b": (0.10, 0.50),  # verify
+    "qwen/qwen3-32b": (0.29, 0.59),  # verify
     "llama-3.3-70b-versatile": (0.59, 0.79),
+    "llama-3.1-8b-instant": (0.05, 0.08),
 }
 
 
