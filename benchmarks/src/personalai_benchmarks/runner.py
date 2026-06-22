@@ -76,11 +76,14 @@ def run_suite(
     grader: Grader | None = None,
     repeats: int = 1,
     on_progress: OnProgress | None = None,
+    sink: list[RunRecord] | None = None,
 ) -> Suite:
     """Run every (task, mode) pair through ``sut`` ``repeats`` times, scoring each attempt; errors
     are recorded, not raised. Each attempt is its own record (the report reduces them to pass@k).
     ``grader`` (system-aware, e.g. the LLM judge) takes precedence over the simple ``judge``.
-    ``on_progress`` is called at the start (result=None) and end of each attempt for live output."""
+    ``on_progress`` is called at the start (result=None) and end of each attempt for live output.
+    ``sink``: if given, each record is appended to it as produced, so a caller still holds the
+    partial results if a :class:`KeyboardInterrupt` unwinds mid-run (Ctrl-C → partial report)."""
     n = max(1, repeats)
     records: list[RunRecord] = []
     for task in tasks:
@@ -103,26 +106,27 @@ def run_suite(
                         else f"{'ok' if score.passed else 'FAIL'} ({result.latency_ms:.0f}ms)"
                     )
                     on_progress(label, outcome)
-                records.append(
-                    RunRecord(
-                        task_id=task.id,
-                        category=task.category,
-                        mode=mode.name,
-                        capability_tier=mode.capability_tier,
-                        answer=result.answer,
-                        score=score.value,
-                        passed=score.passed,
-                        explanation=score.explanation,
-                        latency_ms=result.latency_ms,
-                        usage=result.usage,
-                        tool_calls=result.tool_calls,
-                        config_used=result.config_used,
-                        error=result.error,
-                        attempt=attempt,
-                        system=sut.name,
-                        scorer=score.scorer,
-                    )
+                record = RunRecord(
+                    task_id=task.id,
+                    category=task.category,
+                    mode=mode.name,
+                    capability_tier=mode.capability_tier,
+                    answer=result.answer,
+                    score=score.value,
+                    passed=score.passed,
+                    explanation=score.explanation,
+                    latency_ms=result.latency_ms,
+                    usage=result.usage,
+                    tool_calls=result.tool_calls,
+                    config_used=result.config_used,
+                    error=result.error,
+                    attempt=attempt,
+                    system=sut.name,
+                    scorer=score.scorer,
                 )
+                records.append(record)
+                if sink is not None:
+                    sink.append(record)
     metadata = {
         "git_commit": _git_commit(),
         "timestamp": datetime.now(UTC).isoformat(),
@@ -145,9 +149,11 @@ def run_comparison(
     judge: Judge | None = None,
     repeats: int = 1,
     on_progress: OnProgress | None = None,
+    sink: list[RunRecord] | None = None,
 ) -> Suite:
     """Run the same tasks×modes against several systems into one combined, system-tagged suite, so a
-    single leaderboard can compare PersonalAI against frontier contestants."""
+    single leaderboard can compare PersonalAI against frontier contestants. ``sink`` (if given)
+    accumulates records live across all systems so a Ctrl-C still yields a partial report."""
     records: list[RunRecord] = []
     for system in systems:
         suite = run_suite(
@@ -158,6 +164,7 @@ def run_comparison(
             grader=grader,
             repeats=repeats,
             on_progress=on_progress,
+            sink=sink,
         )
         records.extend(suite.records)
     metadata = {

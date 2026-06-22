@@ -136,6 +136,8 @@ def _summary(suite: Suite, out: str) -> int:
     total = len(suite.records)
     passed = sum(1 for r in suite.records if r.passed)
     errored = sum(1 for r in suite.records if r.error is not None)
+    if suite.metadata.get("interrupted"):
+        print("PARTIAL report (run was stopped before completion)")
     print(f"ran {total} attempts: {passed} passed, {total - passed} failed ({errored} errored)")
     bias = length_bias(suite.records)
     if bias is not None:
@@ -146,6 +148,24 @@ def _summary(suite: Suite, out: str) -> int:
     return 0
 
 
+def _partial_metadata(
+    records: list[RunRecord], args: argparse.Namespace, judge_label: str
+) -> dict[str, object]:
+    """Metadata for a partial (Ctrl-C-stopped) single-system run, derived from collected records."""
+    return {
+        "git_commit": _git_commit(),
+        "timestamp": datetime.now(UTC).isoformat(),
+        "platform": platform.platform(),
+        "python": platform.python_version(),
+        "sut": records[0].system,
+        "modes": sorted({r.mode for r in records}),
+        "task_count": len({r.task_id for r in records}),
+        "repeats": max(1, args.repeats),
+        "judge": judge_label,
+        "interrupted": True,
+    }
+
+
 def _run(args: argparse.Namespace) -> int:
     tasks = _select_tasks(args)
     modes = _personal_modes(args)
@@ -153,13 +173,24 @@ def _run(args: argparse.Namespace) -> int:
         return 2
     adapter = PersonalIAAdapter(base_url=args.base_url, token=args.token)
     total = len(tasks) * len(modes) * max(1, args.repeats)
-    suite = run_suite(
-        tasks=tasks,
-        modes=modes,
-        sut=adapter,
-        repeats=args.repeats,
-        on_progress=_make_progress(total),
-    )
+    collected: list[RunRecord] = []
+    suite: Suite | None = None
+    try:
+        suite = run_suite(
+            tasks=tasks,
+            modes=modes,
+            sut=adapter,
+            repeats=args.repeats,
+            on_progress=_make_progress(total),
+            sink=collected,
+        )
+    except KeyboardInterrupt:
+        print("\nstopped — writing a partial report from results so far", file=sys.stderr)
+    if suite is None:  # interrupted: build a partial suite from what we collected
+        if not collected:
+            print("stopped before any result was collected", file=sys.stderr)
+            return 130
+        suite = Suite(records=collected, metadata=_partial_metadata(collected, args, "off"))
     return _summary(suite, args.out)
 
 
@@ -205,59 +236,69 @@ def _compare(args: argparse.Namespace) -> int:
     )
     progress = _make_progress(total)
 
-    records: list[RunRecord] = []
-    systems: list[str] = []
-    if p_modes is not None:
-        pa = PersonalIAAdapter(base_url=args.base_url, token=args.token)
-        suite = run_comparison(
-            tasks=tasks,
-            modes=p_modes,
-            systems=[pa],
-            grader=grader,
-            repeats=args.repeats,
-            on_progress=progress,
-        )
-        records.extend(suite.records)
-        systems.append(pa.name)
-    if front:
-        suite = run_comparison(
-            tasks=tasks,
-            modes=[RAW],
-            systems=front,
-            grader=grader,
-            repeats=args.repeats,
-            on_progress=progress,
-        )
-        records.extend(suite.records)
-        systems.extend(a.name for a in front)
-    if front_tools:
-        suite = run_comparison(
-            tasks=tasks,
-            modes=[FRONTIER_TOOLS],
-            systems=front_tools,
-            grader=grader,
-            repeats=args.repeats,
-            on_progress=progress,
-        )
-        records.extend(suite.records)
-        systems.extend(a.name for a in front_tools)
+    collected: list[RunRecord] = []
+    pa = PersonalIAAdapter(base_url=args.base_url, token=args.token) if p_modes else None
+    systems = ([pa.name] if pa else []) + [a.name for a in front] + [a.name for a in front_tools]
+    judge_label = "off" if judge is None else "claude (gpt fallback)"
 
-    if not records:
+    # Run all contestants into one live `collected` sink, so Ctrl-C (stop) still yields a partial
+    # report from whatever finished. Each block contributes its records before the next begins.
+    interrupted = False
+    try:
+        if pa is not None and p_modes is not None:
+            run_comparison(
+                tasks=tasks,
+                modes=p_modes,
+                systems=[pa],
+                grader=grader,
+                repeats=args.repeats,
+                on_progress=progress,
+                sink=collected,
+            )
+        if front:
+            run_comparison(
+                tasks=tasks,
+                modes=[RAW],
+                systems=front,
+                grader=grader,
+                repeats=args.repeats,
+                on_progress=progress,
+                sink=collected,
+            )
+        if front_tools:
+            run_comparison(
+                tasks=tasks,
+                modes=[FRONTIER_TOOLS],
+                systems=front_tools,
+                grader=grader,
+                repeats=args.repeats,
+                on_progress=progress,
+                sink=collected,
+            )
+    except KeyboardInterrupt:
+        interrupted = True
+        print("\nstopped — writing a partial report from results so far", file=sys.stderr)
+
+    if not collected:
+        if interrupted:
+            print("stopped before any result was collected", file=sys.stderr)
+            return 130
         print("no systems to run (PersonalAI skipped and no frontier key present)", file=sys.stderr)
         return 2
 
     combined = Suite(
-        records=records,
+        records=collected,
         metadata={
             "git_commit": _git_commit(),
             "timestamp": datetime.now(UTC).isoformat(),
             "platform": platform.platform(),
             "python": platform.python_version(),
             "systems": systems,
-            "modes": sorted({r.mode for r in records}),
+            "modes": sorted({r.mode for r in collected}),
             "task_count": len(tasks),
             "repeats": max(1, args.repeats),
-            "judge": "off" if judge is None else "claude (gpt fallback)",
+            "judge": judge_label,
+            "interrupted": interrupted,
         },
     )
     skipped = frontier.missing_keys()

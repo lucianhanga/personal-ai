@@ -125,3 +125,9 @@ def test_page_renders_known_providers_and_modes() -> None:
         assert provider in page
     for mode in ALL_MODES:
         assert mode in page
+
+
+def test_page_has_a_stop_control() -> None:
+    page = ui._render_page("http://127.0.0.1:8765")
+    assert "id=stop" in page  # the Stop button
+    assert "/stop" in page  # wired to the SIGINT endpoint
