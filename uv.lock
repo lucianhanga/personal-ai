@@ -10,6 +10,7 @@ resolution-markers = [
 [manifest]
 members = [
     "personalai-backend",
+    "personalai-benchmarks",
     "personalai-contracts",
     "personalai-core",
     "personalai-modality-files",
@@ -1768,6 +1769,23 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "uvicorn", specifier = ">=0.30" },
+]
+
+[[package]]
+name = "personalai-benchmarks"
+version = "0.0.0"
+source = { editable = "benchmarks" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2" },
+    { name = "pyyaml", specifier = ">=6" },
 ]
 
 [[package]]

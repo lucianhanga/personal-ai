@@ -1,0 +1,45 @@
+# Pure-reasoning tasks: no tools needed. Graded programmatically (deterministic, CI-friendly).
+- id: reasoning_arithmetic_order
+  category: reasoning
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: "Compute 17 * 4 - 6 and reply with ONLY the integer result, no words."
+  expected: "62"
+  metadata: { match: includes }
+
+- id: reasoning_logic_ages
+  category: reasoning
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Anna is 3 years older than Ben. Ben is twice as old as Cara. Cara is 4.
+        How old is Anna? Reply with ONLY the integer.
+  expected: "11"
+  metadata: { match: includes }
+
+- id: reasoning_planning_steps
+  category: reasoning
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        You must do laundry (wash 40 min, dry 60 min) and cook (prep 15 min, bake 30 min).
+        Washer/dryer and oven are independent. What is the minimum total wall-clock time in
+        minutes to finish everything? Reply with ONLY the integer.
+  expected: "100"
+  metadata: { match: includes }
+
+- id: reasoning_word_count
+  category: reasoning
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: 'How many times does the letter "r" appear in "strawberry"? Reply with ONLY the integer.'
+  expected: "3"
+  metadata: { match: includes }
