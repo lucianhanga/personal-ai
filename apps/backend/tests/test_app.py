@@ -159,6 +159,28 @@ def test_non_loopback_bind_requires_auth_token() -> None:
         create_app(bootstrap(config=config))
 
 
+def test_wildcard_origin_with_credentials_refuses_to_start() -> None:
+    # '*' + allow_credentials=True would make Starlette reflect any origin -> credentialed CORS open
+    # to the web. The startup guard must fail closed (#252).
+    config = CoreConfig(auth_token=TOKEN, allowed_origins=("*",))
+    with pytest.raises(RuntimeError, match="allowed_origins contains '\\*'"):
+        create_app(bootstrap(config=config))
+
+
+def test_wildcard_origin_in_a_mixed_allowlist_also_refuses() -> None:
+    # A '*' hiding among explicit origins is just as dangerous and must also be rejected.
+    config = CoreConfig(auth_token=TOKEN, allowed_origins=("https://app.example.com", " * "))
+    with pytest.raises(RuntimeError, match="allowed_origins contains '\\*'"):
+        create_app(bootstrap(config=config))
+
+
+def test_explicit_allowlist_still_starts() -> None:
+    # The normal case (a real, non-wildcard allowlist) boots fine — no behavior change.
+    config = CoreConfig(auth_token=TOKEN, allowed_origins=("https://app.example.com",))
+    app = create_app(bootstrap(config=config))
+    assert app is not None
+
+
 def test_models_endpoint_lists_capabilities() -> None:
     client = _app_with_provider("fake", FakeModelProvider(name="fake"))
     resp = client.get("/api/v1/models", headers={"Authorization": f"Bearer {TOKEN}"})
