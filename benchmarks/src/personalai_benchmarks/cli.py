@@ -24,6 +24,7 @@ from personalai_benchmarks.modes import ALL_MODES, RAW
 from personalai_benchmarks.report import write_report
 from personalai_benchmarks.runner import (
     Grader,
+    OnProgress,
     RunRecord,
     Suite,
     _git_commit,
@@ -97,6 +98,20 @@ def _personal_modes(args: argparse.Namespace) -> list | None:  # type: ignore[ty
         return None
 
 
+def _make_progress(total: int) -> OnProgress:
+    """A stderr progress printer: `[i/total] system · mode · task … ok (Nms)`, live as it runs."""
+    state = {"i": 0}
+
+    def printer(label: str, result: str | None) -> None:
+        if result is None:
+            state["i"] += 1
+            print(f"[{state['i']:>3}/{total}] {label} … ", end="", flush=True, file=sys.stderr)
+        else:
+            print(result, file=sys.stderr)
+
+    return printer
+
+
 def _summary(suite: Suite, out: str) -> int:
     json_path, md_path, html_path = write_report(suite, out)
     total = len(suite.records)
@@ -115,7 +130,14 @@ def _run(args: argparse.Namespace) -> int:
     if tasks is None or modes is None:
         return 2
     adapter = PersonalIAAdapter(base_url=args.base_url, token=args.token)
-    suite = run_suite(tasks=tasks, modes=modes, sut=adapter, repeats=args.repeats)
+    total = len(tasks) * len(modes) * max(1, args.repeats)
+    suite = run_suite(
+        tasks=tasks,
+        modes=modes,
+        sut=adapter,
+        repeats=args.repeats,
+        on_progress=_make_progress(total),
+    )
     return _summary(suite, args.out)
 
 
@@ -126,28 +148,42 @@ def _compare(args: argparse.Namespace) -> int:
     judge = None if args.no_judge else default_judge()
     grader: Grader | None = judge.score if judge is not None else None
 
-    records: list[RunRecord] = []
-    systems: list[str] = []
-
-    if not args.no_personalia:
-        modes = _personal_modes(args)
-        if modes is None:
-            return 2
-        pa = PersonalIAAdapter(base_url=args.base_url, token=args.token)
-        suite = run_comparison(
-            tasks=tasks, modes=modes, systems=[pa], grader=grader, repeats=args.repeats
-        )
-        records.extend(suite.records)
-        systems.append(pa.name)
-
+    # Assemble the systems first so we can show a global [i/total] progress counter across them.
+    p_modes = None if args.no_personalia else _personal_modes(args)
+    if not args.no_personalia and p_modes is None:
+        return 2
     if args.providers:
         wanted = [p.strip() for p in args.providers.split(",") if p.strip()]
         front = [a for a in (frontier.build(p) for p in wanted) if a is not None]
     else:
         front = frontier.available()
+
+    reps = max(1, args.repeats)
+    total = (len(p_modes) * len(tasks) * reps if p_modes else 0) + len(front) * len(tasks) * reps
+    progress = _make_progress(total)
+
+    records: list[RunRecord] = []
+    systems: list[str] = []
+    if p_modes is not None:
+        pa = PersonalIAAdapter(base_url=args.base_url, token=args.token)
+        suite = run_comparison(
+            tasks=tasks,
+            modes=p_modes,
+            systems=[pa],
+            grader=grader,
+            repeats=args.repeats,
+            on_progress=progress,
+        )
+        records.extend(suite.records)
+        systems.append(pa.name)
     if front:
         suite = run_comparison(
-            tasks=tasks, modes=[RAW], systems=front, grader=grader, repeats=args.repeats
+            tasks=tasks,
+            modes=[RAW],
+            systems=front,
+            grader=grader,
+            repeats=args.repeats,
+            on_progress=progress,
         )
         records.extend(suite.records)
         systems.extend(a.name for a in front)

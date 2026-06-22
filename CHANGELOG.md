@@ -12,6 +12,10 @@ generated OpenAPI document.
 ## [Unreleased]
 
 ### Changed
+- **Benchmark live progress (#326)**: the `compare`/`run` commands now print a per-attempt line to
+  stderr as each one runs — `[ 3/42] openai:gpt-4o · raw · quality_explain_recursion … ok (1240ms)`
+  — with a running counter, what's in flight, and the result + latency. A long run (the local model
+  across modes + frontier APIs + a judge call per answer) no longer looks frozen.
 - **Drag-and-drop images onto the composer (#324)**: attach image(s) for a vision model by dropping
   them onto the message box (a faint "drag & drop images here" hint and a drop-target highlight show
   the affordance). The separate "Image" upload button is removed — drag-drop replaces it. Images

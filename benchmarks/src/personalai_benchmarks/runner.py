@@ -18,6 +18,10 @@ from personalai_benchmarks.tasks import Task
 # self-preference fallback). Takes precedence over the simple ``judge`` when provided.
 Grader = Callable[[Task, str, str], Score]
 
+# Live progress: called as ``(label, result)`` at the start of each attempt (result=None) and again
+# with the result string when it finishes, so a CLI can show what is in flight on a long run.
+OnProgress = Callable[[str, "str | None"], None]
+
 
 @dataclass(frozen=True)
 class RunRecord:
@@ -70,15 +74,20 @@ def run_suite(
     judge: Judge | None = None,
     grader: Grader | None = None,
     repeats: int = 1,
+    on_progress: OnProgress | None = None,
 ) -> Suite:
     """Run every (task, mode) pair through ``sut`` ``repeats`` times, scoring each attempt; errors
     are recorded, not raised. Each attempt is its own record (the report reduces them to pass@k).
-    ``grader`` (system-aware, e.g. the LLM judge) takes precedence over the simple ``judge``."""
+    ``grader`` (system-aware, e.g. the LLM judge) takes precedence over the simple ``judge``.
+    ``on_progress`` is called at the start (result=None) and end of each attempt for live output."""
     n = max(1, repeats)
     records: list[RunRecord] = []
     for task in tasks:
         for mode in modes:
             for attempt in range(n):
+                label = f"{sut.name} · {mode.name} · {task.id}"
+                if on_progress is not None:
+                    on_progress(label, None)
                 result = sut.run(task.as_messages(), mode.overrides)
                 if result.error is not None:
                     score = Score(0.0, False, f"run error: {result.error}", "error")
@@ -86,6 +95,13 @@ def run_suite(
                     score = grader(task, result.answer, sut.name)
                 else:
                     score = score_task(task, result.answer, judge=judge)
+                if on_progress is not None:
+                    outcome = (
+                        f"error: {result.error[:60]}"
+                        if result.error is not None
+                        else f"{'ok' if score.passed else 'FAIL'} ({result.latency_ms:.0f}ms)"
+                    )
+                    on_progress(label, outcome)
                 records.append(
                     RunRecord(
                         task_id=task.id,
@@ -126,13 +142,20 @@ def run_comparison(
     grader: Grader | None = None,
     judge: Judge | None = None,
     repeats: int = 1,
+    on_progress: OnProgress | None = None,
 ) -> Suite:
     """Run the same tasks×modes against several systems into one combined, system-tagged suite, so a
     single leaderboard can compare PersonalAI against frontier contestants."""
     records: list[RunRecord] = []
     for system in systems:
         suite = run_suite(
-            tasks=tasks, modes=modes, sut=system, judge=judge, grader=grader, repeats=repeats
+            tasks=tasks,
+            modes=modes,
+            sut=system,
+            judge=judge,
+            grader=grader,
+            repeats=repeats,
+            on_progress=on_progress,
         )
         records.extend(suite.records)
     metadata = {
