@@ -70,6 +70,8 @@ interface ChatState {
   // Ordered reasoning + tool-step timeline per assistant message index.
   trace: Record<number, TraceItem[]>;
   usage: UsageInfo | null;
+  // Running totals across every turn in this chat (tokens, wall-clock ms, turn count).
+  totals: { tokens: number; ms: number; turns: number };
   // The context composition assembled for the latest turn (what went into the prompt).
   context: ContextBreakdown | null;
   busy: boolean;
@@ -82,10 +84,24 @@ const EMPTY_CHAT: ChatState = {
   citations: {},
   trace: {},
   usage: null,
+  totals: { tokens: 0, ms: 0, turns: 0 },
   context: null,
   busy: false,
   pending: null,
 };
+
+/** Set the latest turn's usage and fold it into the per-chat running totals. */
+function withUsage(s: ChatState, u: UsageInfo): ChatState {
+  return {
+    ...s,
+    usage: u,
+    totals: {
+      tokens: s.totals.tokens + (u.total_tokens ?? 0),
+      ms: s.totals.ms + (u.elapsed_ms ?? 0),
+      turns: s.totals.turns + 1,
+    },
+  };
+}
 
 // These kinds stream as deltas; consecutive same-kind items are merged into one.
 const STREAMING_KINDS = new Set(["reasoning", "plan", "critique"]);
@@ -169,7 +185,7 @@ export function Chat({
 
   const activeKey = activeId ?? NEW_CHAT;
   const view = chats[activeKey] ?? EMPTY_CHAT;
-  const { messages, citations, trace, usage, context, busy, pending } = view;
+  const { messages, citations, trace, usage, totals, context, busy, pending } = view;
 
   const patchChat = (key: string, fn: (s: ChatState) => ChatState): void => {
     setChats((prev) => ({ ...prev, [key]: fn(prev[key] ?? EMPTY_CHAT) }));
@@ -592,7 +608,7 @@ export function Chat({
             },
           }));
         },
-        (u) => patchChat(key, (s) => ({ ...s, usage: u })),
+        (u) => patchChat(key, (s) => withUsage(s, u)),
         (delta) =>
           patchChat(key, (s) => ({
             ...s,
@@ -678,7 +694,7 @@ export function Chat({
             return { ...s, messages: msgs };
           });
         },
-        (u) => patchChat(key, (s) => ({ ...s, usage: u })),
+        (u) => patchChat(key, (s) => withUsage(s, u)),
         (message) => setError(message),
       );
       if (persistence) setConversations(await fetchConversations(token));
@@ -1219,6 +1235,7 @@ export function Chat({
             token={token}
             conversationId={activeId}
             usage={usage}
+            totals={totals}
             context={context}
             collapsed={sidebarCollapsed}
             setCollapsed={setSidebarCollapsed}

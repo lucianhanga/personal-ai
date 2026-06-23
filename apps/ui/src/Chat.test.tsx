@@ -509,6 +509,7 @@ test("shows the context meter after a turn reports usage", async () => {
         completion_tokens: 50,
         total_tokens: 4146,
         context_limit: 32768,
+        elapsed_ms: 1500,
       });
     },
   );

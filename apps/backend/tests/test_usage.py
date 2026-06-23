@@ -55,6 +55,11 @@ def test_usage_event_for_ollama_includes_context_limit() -> None:
     assert '"context_limit": 32768' in body  # the bound Ollama window
 
 
+def test_usage_event_reports_elapsed_time() -> None:
+    body = _body(_client("ollama"), {"messages": [{"role": "user", "content": "hi"}]})
+    assert '"elapsed_ms":' in body  # wall-clock time for the turn (per-question / per-chat timing)
+
+
 def test_usage_event_for_remote_has_no_context_limit() -> None:
     body = _body(_client("openai"), {"messages": [{"role": "user", "content": "hi"}]})
     assert "event: usage" in body

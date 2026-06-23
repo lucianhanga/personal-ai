@@ -9,6 +9,7 @@ interface SidePanelProps {
   token: string;
   conversationId: string | null;
   usage: UsageInfo | null;
+  totals: { tokens: number; ms: number; turns: number };
   context: ContextBreakdown | null;
   collapsed: boolean;
   setCollapsed: Dispatch<SetStateAction<boolean>>;
@@ -23,6 +24,7 @@ export function SidePanel({
   token,
   conversationId,
   usage,
+  totals,
   context,
   collapsed,
   setCollapsed,
@@ -66,7 +68,7 @@ export function SidePanel({
         </button>
       </div>
 
-      {(context || usage) && <ContextMeter usage={usage} context={context} />}
+      {(context || usage) && <ContextMeter usage={usage} totals={totals} context={context} />}
 
       {showLog && <ToolLog token={token} conversationId={conversationId} />}
       {showAppLogs && <AppLogs token={token} conversationId={conversationId} />}
