@@ -169,7 +169,9 @@ class LlmJudge:
             call=call,
         )
         if verdict is None:
-            return Score(0.0, False, "judge unavailable or returned invalid output", "llm_judge")
+            # A judge hiccup (provider overload/timeout) is NOT a content failure — tag it apart
+            # so the runner doesn't cache it and a re-run can grade it cleanly.
+            return Score(0.0, False, "judge unavailable or returned invalid output", "judge_error")
         passed = verdict.score >= self._threshold
         dims = ", ".join(f"{n}={s}" for n, s in verdict.criterion_scores.items())
         detail = f" [{dims}]" if dims else ""

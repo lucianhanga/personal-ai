@@ -137,6 +137,10 @@ PROVIDERS: dict[str, Provider] = {
 class OpenAICompatAdapter:
     """A raw-LLM :class:`SystemUnderTest` over an OpenAI-compatible ``/chat/completions`` route."""
 
+    # Transient statuses worth retrying with backoff — provider overload (Anthropic 529), rate
+    # limits (429), and gateway/5xx blips. Without this, one judge overload scores a contestant 0.
+    _TRANSIENT_STATUS = frozenset({429, 500, 502, 503, 504, 529})
+
     def __init__(
         self,
         provider: Provider,
@@ -146,6 +150,8 @@ class OpenAICompatAdapter:
         temperature: float = 0.0,
         client: httpx.Client | None = None,
         timeout: float = 120.0,
+        max_retries: int = 4,
+        backoff: float = 1.0,
     ) -> None:
         self.provider = provider
         self.model = model
@@ -153,6 +159,8 @@ class OpenAICompatAdapter:
         self._key = api_key
         self._temperature = temperature
         self._client = client or httpx.Client(timeout=timeout)
+        self._max_retries = max_retries
+        self._backoff = backoff
 
     def _post(self, body: dict[str, Any]) -> httpx.Response:
         return self._client.post(
@@ -170,14 +178,26 @@ class OpenAICompatAdapter:
             "temperature": temperature,
         }
         started = time.perf_counter()
-        try:
-            resp = self._post(body)
-            # Some newer models (e.g. reasoning models) reject `temperature` — retry without it.
-            if resp.status_code == 400 and "temperature" in resp.text.lower():
-                body.pop("temperature", None)
+        resp: httpx.Response | None = None
+        for attempt in range(self._max_retries + 1):
+            try:
                 resp = self._post(body)
-        except httpx.HTTPError as exc:
-            return RunResult(error=f"{self.provider.name} request failed: {exc}")
+                # Some newer models (e.g. reasoning models) reject `temperature` — retry without it.
+                if resp.status_code == 400 and "temperature" in resp.text.lower():
+                    body.pop("temperature", None)
+                    resp = self._post(body)
+            except httpx.HTTPError as exc:
+                if attempt < self._max_retries:
+                    time.sleep(self._backoff * 2**attempt)
+                    continue
+                return RunResult(error=f"{self.provider.name} request failed: {exc}")
+            if resp.status_code in self._TRANSIENT_STATUS and attempt < self._max_retries:
+                time.sleep(
+                    self._backoff * 2**attempt
+                )  # provider overloaded/rate-limited — back off
+                continue
+            break
+        assert resp is not None
         latency_ms = (time.perf_counter() - started) * 1000.0
         if resp.status_code != 200:
             return RunResult(
