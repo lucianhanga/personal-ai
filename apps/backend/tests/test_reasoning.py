@@ -62,6 +62,25 @@ def test_reasoning_brief_thinks_and_injects_hint() -> None:
     assert any(m.role == Role.SYSTEM and "brief" in m.content.lower() for m in gen.messages)
 
 
+def test_current_datetime_injected_as_authoritative_ground_truth() -> None:
+    from datetime import datetime
+
+    gen = _send("full")
+    today = datetime.now().astimezone().date().isoformat()
+    msg = next(
+        (
+            m.content
+            for m in gen.messages
+            if m.role == Role.SYSTEM and "current date and time" in m.content.lower()
+        ),
+        None,
+    )
+    assert msg is not None  # every turn injects the authoritative 'now'
+    assert today in msg  # the actual current date, not a placeholder
+    assert "ground truth" in msg.lower()
+    assert "training-data cutoff" in msg.lower()  # overrides the model's cutoff prior
+
+
 def _send_grounding(*, enabled: bool) -> GenerationRequest:
     rec = _Recorder()
     boot = bootstrap(
