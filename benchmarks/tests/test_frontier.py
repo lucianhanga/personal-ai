@@ -30,6 +30,34 @@ def _ok_handler(request: httpx.Request) -> httpx.Response:
     )
 
 
+def test_retries_transient_overload_then_succeeds() -> None:
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] <= 2:  # provider overloaded twice (Anthropic 529), then recovers
+            return httpx.Response(529, json={"error": {"message": "Overloaded"}})
+        return _ok_handler(request)
+
+    adapter = OpenAICompatAdapter(
+        PROVIDERS["anthropic"], "k", "claude-opus-4-8", client=_client(handler), backoff=0.0
+    )
+    result = adapter.run([{"role": "user", "content": "grade this"}], {})
+    assert result.error is None and result.answer == "the answer is 42"
+    assert calls["n"] == 3  # two 529s retried, succeeded on the third call
+
+
+def test_gives_up_after_max_retries_on_persistent_overload() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(529, text="Overloaded")
+
+    adapter = OpenAICompatAdapter(
+        PROVIDERS["openai"], "k", "gpt-4o", client=_client(handler), max_retries=2, backoff=0.0
+    )
+    result = adapter.run([{"role": "user", "content": "hi"}], {})
+    assert result.error is not None and "529" in result.error  # surfaced after exhausting retries
+
+
 def test_calls_openai_compatible_endpoint_and_normalizes() -> None:
     seen: dict[str, object] = {}
 

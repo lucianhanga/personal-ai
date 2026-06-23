@@ -333,6 +333,25 @@ def test_cache_misses_only_the_new_task(tmp_path: Path) -> None:
     assert {r.task_id for r in suite.records} == {"t1", "t2"}
 
 
+def test_judge_error_cell_is_not_cached(tmp_path: Path) -> None:
+    from personalai_benchmarks.cache import ResultCache
+    from personalai_benchmarks.scoring import Score
+
+    cache = ResultCache.load(tmp_path / "c.json")
+
+    def grader(task, answer, system):  # type: ignore[no-untyped-def]
+        return Score(0.0, False, "judge unavailable", "judge_error")  # a transient judge hiccup
+
+    run_suite(
+        tasks=[_task("t1")],
+        modes=[SINGLE_NO_TOOLS],
+        sut=_CountingSUT(),
+        grader=grader,
+        cache=cache,
+    )
+    assert cache.stored == 0  # a judge-error cell must not be cached (re-run can grade it cleanly)
+
+
 def test_no_cache_means_always_run(tmp_path: Path) -> None:
     sut = _CountingSUT()
     run_suite(tasks=[_task("t1")], modes=[SINGLE_NO_TOOLS], sut=sut)  # no cache passed

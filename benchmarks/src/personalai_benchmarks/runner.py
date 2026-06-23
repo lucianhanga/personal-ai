@@ -165,7 +165,10 @@ def run_suite(
                 records.append(record)
                 if sink is not None:
                     sink.append(record)
-            if cache is not None and key is not None:
+            # Only cache a cleanly-graded cell — never persist a transient judge/provider hiccup
+            # (a re-run then grades it instead of reusing a bogus 0).
+            cacheable = all(r.error is None and r.scorer != "judge_error" for r in cell)
+            if cache is not None and key is not None and cacheable:
                 cache.put(key, cell)
     metadata = {
         "git_commit": _git_commit(),
