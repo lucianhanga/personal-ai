@@ -133,6 +133,47 @@ def test_researcher_tool_steps_flow_and_usage_reaches_final() -> None:
     assert events[-1].usage == {"total_tokens": 7}  # usage from run_agent's final reaches the end
 
 
+class _ToolThenRecord(FakeModelProvider):
+    """Researcher calls a tool then answers; records every node's system prompts so we can assert
+    the critic sees the retrieved tool output as ground-truth evidence."""
+
+    def __init__(self) -> None:
+        super().__init__(name="rec2")
+        self._n = 0
+        self.system_prompts: list[str] = []
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        self.system_prompts += [m.content for m in request.messages if m.role == Role.SYSTEM]
+        if request.tools:
+            self._n += 1
+            if self._n == 1:
+                return GenerationResult(
+                    text="",
+                    model=request.model,
+                    tool_calls=[ToolCallRequest(name="echo", arguments={"v": 1})],
+                )
+            return GenerationResult(text="done", model=request.model)
+        return GenerationResult(text="OK looks fine", model=request.model)
+
+
+def test_critic_receives_the_researchers_evidence_as_ground_truth() -> None:
+    # The critic judges against the actual tool output, not its own (stale) knowledge — so the
+    # researcher's retrieved evidence must reach the critic's context.
+    tool = RegisteredTool(ECHO, _Echo())
+    prov = _ToolThenRecord()
+    _drain(
+        messages=[ChatMessage(Role.USER, "use a tool")],
+        provider=prov,
+        model="m",
+        gateway=_gateway([tool]),
+        tools=[tool],
+        approved=True,
+        max_iterations=4,
+    )
+    assert any("Sources the researcher retrieved" in s for s in prov.system_prompts)
+    assert any("echoed" in s for s in prov.system_prompts)  # the real tool result, not a name
+
+
 class _Recorder(FakeModelProvider):
     """Records the system prompts each node sends, to assert prompt overrides reach the nodes."""
 

@@ -22,6 +22,7 @@ the SSE mapping rely on; ``agent_mode == "multi"`` (#290) selects this graph ove
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from typing import Any
 
@@ -68,22 +69,26 @@ DEFAULT_AGENT_PROMPTS: dict[str, str] = {
         "found and what is missing instead of guessing."
     ),
     "critic": (
-        "You are the critic reviewing a draft answer that a researcher agent ALREADY produced "
-        "using live tools and current data (the current date is provided in context). Do NOT "
-        "claim any lack of data or real-time access, and do NOT dismiss recent dates or facts as "
-        "'fabricated' or 'hallucinated' — trust them. Begin your reply with the single word "
-        "REVISE if the draft fails to actually answer the request (e.g. it only says where to "
-        "look, uses a dead/incorrect link, or gives no real data) or is factually wrong; "
-        "otherwise begin with OK. Then add 1-2 short sentences explaining. Do not rewrite the "
-        "answer."
+        "You are the critic reviewing a draft answer a researcher produced using live web tools "
+        "(the current date is in context). The sources the researcher retrieved are provided to "
+        "you as ground truth — judge the draft AGAINST THOSE SOURCES, not against your own "
+        "knowledge of current events, which is outdated. You must NOT call tool-gathered, "
+        "source-backed facts 'fabricated' or 'hallucinated', and must NOT dispute who "
+        "participated/qualified or what the results were from your own memory — for a current "
+        "event you cannot know that; the sources decide. Begin your reply with the single word "
+        "REVISE only if the draft fails to actually answer the request (e.g. it only says where to "
+        "look, gives no real data) or contradicts its provided sources; otherwise begin with OK. "
+        "Then add 1-2 short sentences. Do not rewrite."
     ),
     "verifier": (
-        "You are the verifier (LLM judge). The researcher used live tools/data (the current date "
-        "is in context), so do NOT dismiss recent dates or tool-gathered facts. Judge whether the "
-        "draft answer actually and correctly answers the user's request and is grounded in the "
-        "provided sources. Return a JSON verdict: 'pass' if it does; 'needs_revision' if it is "
-        "close but has a fixable gap or unsupported claim; 'fail' if it does not answer the "
-        "request or is wrong. Give a one-sentence reason. Trust the gathered data."
+        "You are the verifier (LLM judge). The researcher used live web tools; the sources it "
+        "retrieved are provided to you as ground truth (the current date is in context). Judge "
+        "whether the draft answers the request and is consistent with THOSE sources — do NOT use "
+        "your own knowledge of current events to dispute source-backed facts, dates, or "
+        "participants, which may be out of date. Return a JSON verdict: 'pass' if it answers the "
+        "request and matches its sources; 'needs_revision' if close but with a fixable gap or a "
+        "claim unsupported by the sources; 'fail' if it does not answer the request or contradicts "
+        "the sources. One-sentence reason. Trust the provided sources over your own prior."
     ),
 }
 
@@ -97,6 +102,23 @@ def resolve_prompts(overrides: Mapping[str, str] | None) -> dict[str, str]:
     return resolved
 
 
+def _evidence_messages(evidence: Sequence[str] | None) -> list[ChatMessage]:
+    """The retrieved tool results as a ground-truth source block for the critic/verifier, so they
+    judge the draft against the actual evidence rather than their own (stale) parametric knowledge.
+    Empty when the researcher used no tools (then the draft rests on the model's own knowledge)."""
+    if not evidence:
+        return []
+    joined = "\n---\n".join(evidence)[:6000]  # cap to protect the judge's context window
+    return [
+        ChatMessage(
+            Role.SYSTEM,
+            "Sources the researcher retrieved this turn (the draft's evidence). Judge the draft "
+            "against THESE and treat them as ground truth — do not contradict them with your own "
+            "knowledge of current events, which may be out of date:\n" + joined,
+        )
+    ]
+
+
 class GraphState(TypedDict, total=False):
     """Typed shared state threaded through the graph. ``context`` carries the tenant (ADR-0010 /
     A2); ``plan``/``answer``/``critique`` accumulate each node's output; ``usage`` carries token
@@ -108,6 +130,10 @@ class GraphState(TypedDict, total=False):
     critique: str
     usage: dict[str, int]
     decision: str
+    # The researcher's retrieved tool results this turn, so the critic/verifier judge the draft
+    # against the actual evidence (ground truth) instead of their own stale knowledge of current
+    # events — otherwise they "correct" fresh, web-grounded facts as fabricated.
+    evidence: list[str]
     # Bounded reflection loop (#290): the critic's verdict ("revise"/"ok") routes back to the
     # researcher when the answer is materially inadequate; ``attempts`` caps the retries.
     verdict: str
@@ -192,6 +218,7 @@ def _build_graph(
                 )
             )
         answer, usage = "", {}
+        evidence: list[str] = []
         async for ev in run_agent(
             messages=convo,
             provider=provider,
@@ -207,8 +234,19 @@ def _build_graph(
                 answer = ev.answer or ""
                 usage = dict(ev.usage or {})
                 continue
+            # Keep each successful tool result so the critic/verifier can judge against the actual
+            # evidence (truncated to protect their context).
+            if ev.type == "tool_result" and ev.ok and ev.output:
+                evidence.append(
+                    f"[{ev.tool}] {json.dumps(dict(ev.output), ensure_ascii=False)[:1500]}"
+                )
             writer(ev)
-        return {"answer": answer, "usage": usage, "attempts": state.get("attempts", 0) + 1}
+        return {
+            "answer": answer,
+            "usage": usage,
+            "evidence": evidence,
+            "attempts": state.get("attempts", 0) + 1,
+        }
 
     async def critic(state: GraphState) -> dict[str, Any]:
         # The draft goes in a USER message, not an ASSISTANT one: with the draft as an assistant
@@ -219,6 +257,7 @@ def _build_graph(
         review = [
             ChatMessage(Role.SYSTEM, agent_prompts["critic"]),
             *messages,
+            *_evidence_messages(state.get("evidence")),
             ChatMessage(Role.USER, f"Draft answer to review:\n\n{answer}"),
         ]
         writer = get_stream_writer()
@@ -246,6 +285,7 @@ def _build_graph(
             messages=[
                 ChatMessage(Role.SYSTEM, agent_prompts["verifier"]),
                 *messages,
+                *_evidence_messages(state.get("evidence")),
                 ChatMessage(Role.USER, f"Draft answer to verify:\n\n{answer}"),
             ],
             schema=Verdict,
