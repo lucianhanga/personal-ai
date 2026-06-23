@@ -71,6 +71,26 @@ test("single-agent reasoning has no Researcher header (no planner/critic boundar
 });
 
 
+test("shows a 'jump to latest' affordance only when the user has scrolled up", () => {
+  render(<MessageDetails steps={STEPS} thinking="x" defaultOpen />);
+  const body = screen.getByTestId("details-body");
+  // jsdom has no layout, so fake the scroll geometry. At the bottom -> no jump button.
+  Object.defineProperty(body, "scrollHeight", { value: 500, configurable: true });
+  Object.defineProperty(body, "clientHeight", { value: 200, configurable: true });
+  Object.defineProperty(body, "scrollTop", { value: 300, writable: true }); // 500-300-200=0
+  fireEvent.scroll(body);
+  expect(screen.queryByTestId("details-jump")).toBeNull();
+
+  // User scrolls up -> the affordance appears.
+  (body as HTMLElement).scrollTop = 0; // 500-0-200=300px from bottom
+  fireEvent.scroll(body);
+  expect(screen.getByTestId("details-jump")).toBeInTheDocument();
+
+  // Clicking it returns to the bottom and hides the affordance again.
+  fireEvent.click(screen.getByTestId("details-jump"));
+  expect(screen.queryByTestId("details-jump")).toBeNull();
+});
+
 test("renders an ordered trace: reasoning, tool call, more reasoning", () => {
   render(
     <MessageDetails

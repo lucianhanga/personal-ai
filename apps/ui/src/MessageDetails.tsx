@@ -93,12 +93,41 @@ export function MessageDetails({
   const [open, setOpen] = useState(defaultOpen);
   const [allowed, setAllowed] = useState<Set<string>>(new Set());
   const bodyRef = useRef<HTMLDivElement>(null);
+  // Follow the stream only while the user is at the bottom; once they scroll up to read an earlier
+  // step, leave them there (don't yank back down) and offer a "jump to latest" affordance.
+  const stick = useRef(true);
+  const [atBottom, setAtBottom] = useState(true);
   const items = trace?.length ? trace : legacyTrace(steps, thinking);
 
-  // Keep the compact window following the latest reasoning/step while it streams.
+  function onBodyScroll(): void {
+    const el = bodyRef.current;
+    if (!el) return;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    stick.current = near;
+    setAtBottom(near);
+  }
+  function jumpToLatest(): void {
+    const el = bodyRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    stick.current = true;
+    setAtBottom(true);
+  }
+
+  // Opening the panel jumps to the latest.
   useEffect(() => {
-    if (open && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
-  }, [open, items]);
+    if (open && bodyRef.current) {
+      bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+      stick.current = true;
+      setAtBottom(true);
+    }
+  }, [open]);
+  // While streaming, follow new content only if the user is still at the bottom.
+  useEffect(() => {
+    if (open && stick.current && bodyRef.current) {
+      bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+    }
+  }, [items, open]);
 
   if (items.length === 0) return null;
 
@@ -121,19 +150,41 @@ export function MessageDetails({
         {open ? "▾" : "▸"} Details{summary ? ` · ${summary}` : ""}
       </button>
       {open && (
-        <div
-          data-testid="details-body"
-          ref={bodyRef}
-          style={{
-            marginTop: "0.3rem",
-            paddingLeft: "0.6rem",
-            borderLeft: "2px solid rgba(127,127,127,0.3)",
-            color: "#555",
-            // Running window (~20 lines); scroll inside to read the full reasoning.
-            maxHeight: "20em",
-            overflowY: "auto",
-          }}
-        >
+        <div style={{ position: "relative" }}>
+          {!atBottom && (
+            <button
+              data-testid="details-jump"
+              onClick={jumpToLatest}
+              style={{
+                position: "absolute",
+                right: "0.5rem",
+                bottom: "0.4rem",
+                fontSize: "0.72rem",
+                background: "#eef",
+                color: "#338",
+                border: "1px solid #bcd",
+                borderRadius: "1rem",
+                padding: "0.1rem 0.55rem",
+                cursor: "pointer",
+              }}
+            >
+              ▾ latest
+            </button>
+          )}
+          <div
+            data-testid="details-body"
+            ref={bodyRef}
+            onScroll={onBodyScroll}
+            style={{
+              marginTop: "0.3rem",
+              paddingLeft: "0.6rem",
+              borderLeft: "2px solid rgba(127,127,127,0.3)",
+              color: "#555",
+              // Running window (~20 lines); scroll inside to read the full reasoning.
+              maxHeight: "20em",
+              overflowY: "auto",
+            }}
+          >
           {withResearcherHeaders(items).map((t, k) => {
             if (t.kind === "researcher_header") {
               return (
@@ -225,6 +276,7 @@ export function MessageDetails({
               </div>
             );
           })}
+          </div>
         </div>
       )}
     </div>
