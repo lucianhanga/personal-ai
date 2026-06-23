@@ -792,9 +792,12 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         text = text.strip().strip('"')
         return text or None
 
-    def _usage_frame(usage: Mapping[str, int], provider: ModelProvider) -> bytes | None:
-        """Build a `usage` SSE event (token counts + the context window) for the UI meter."""
-        if not usage:
+    def _usage_frame(
+        usage: Mapping[str, int], provider: ModelProvider, elapsed_ms: int | None = None
+    ) -> bytes | None:
+        """Build a `usage` SSE event (token counts, the context window, and the turn's elapsed time)
+        for the UI meter and the per-chat running totals."""
+        if not usage and elapsed_ms is None:
             return None
         config: CoreConfig = app.state.config
         prompt = usage.get("prompt_tokens")
@@ -806,6 +809,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             "total_tokens": total or None,
             # The bound window only applies to the local Ollama provider.
             "context_limit": config.ollama_num_ctx if provider.name == "ollama" else None,
+            "elapsed_ms": elapsed_ms,  # wall-clock for this turn (per-question/chat timing)
         }
         return f"event: usage\ndata: {json.dumps(payload)}\n\n".encode()
 
@@ -964,6 +968,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             cv_token = current_conversation.set(req.conversation_id)
             # Enforce this tenant's effective egress for in-process tools this turn (#290).
             eg_token = current_egress.set(config)
+            turn_started = time.perf_counter()  # wall-clock for this turn (reported in `usage`)
             try:
                 # Surface the context composition up front (before tokens stream), so the user sees
                 # what was assembled for this question even as the agents add to it.
@@ -1111,8 +1116,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     # Paused at the human gate: the durable checkpoint holds the run; the assistant
                     # turn is persisted on resume, not here. No usage/empty-check/done frames.
                     return
-                # Report token usage / context fill for this turn (UI meter).
-                usage_frame = _usage_frame(usage, provider)
+                # Report token usage / context fill / elapsed time for this turn (meter + totals).
+                elapsed_ms = round((time.perf_counter() - turn_started) * 1000)
+                usage_frame = _usage_frame(usage, provider, elapsed_ms)
                 if usage_frame is not None:
                     yield usage_frame
                 # Empty turn: no answer text and no tool steps. Tell the UI instead of closing the

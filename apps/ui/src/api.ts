@@ -143,6 +143,7 @@ export interface UsageInfo {
   completion_tokens: number | null;
   total_tokens: number | null;
   context_limit: number | null;
+  elapsed_ms: number | null; // wall-clock time for this turn (per-question + per-chat timing)
 }
 
 // What was assembled into the model's context this turn (grounding, documents, memory, ...), so the

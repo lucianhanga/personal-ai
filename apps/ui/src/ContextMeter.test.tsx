@@ -7,11 +7,18 @@ test("shows fill percentage and bar when a context limit is known", () => {
   render(
     <ContextMeter
       context={null}
-      usage={{ prompt_tokens: 8192, completion_tokens: 100, total_tokens: 8292, context_limit: 32768 }}
+      usage={{
+        prompt_tokens: 8192,
+        completion_tokens: 100,
+        total_tokens: 8292,
+        context_limit: 32768,
+        elapsed_ms: 2300,
+      }}
     />,
   );
   expect(screen.getByTestId("context-meter-label")).toHaveTextContent("8,192 / 32,768 (25%)");
   expect(screen.getByTestId("context-meter-label")).toHaveTextContent("+100 reply");
+  expect(screen.getByTestId("usage-time")).toHaveTextContent("2.3 s"); // per-turn time
   expect(screen.getByTestId("context-meter-bar")).toBeInTheDocument();
 });
 
@@ -19,11 +26,38 @@ test("shows raw tokens without a bar when no limit (remote provider)", () => {
   render(
     <ContextMeter
       context={null}
-      usage={{ prompt_tokens: 500, completion_tokens: 20, total_tokens: 520, context_limit: null }}
+      usage={{
+        prompt_tokens: 500,
+        completion_tokens: 20,
+        total_tokens: 520,
+        context_limit: null,
+        elapsed_ms: 820,
+      }}
     />,
   );
   expect(screen.getByTestId("context-meter-label")).toHaveTextContent("500 prompt tokens");
   expect(screen.queryByTestId("context-meter-bar")).not.toBeInTheDocument();
+});
+
+
+test("shows per-chat running totals (tokens + time) across turns", () => {
+  render(
+    <ContextMeter
+      context={null}
+      usage={{
+        prompt_tokens: 100,
+        completion_tokens: 50,
+        total_tokens: 150,
+        context_limit: 32768,
+        elapsed_ms: 1200,
+      }}
+      totals={{ tokens: 8400, ms: 65000, turns: 6 }}
+    />,
+  );
+  const t = screen.getByTestId("chat-totals");
+  expect(t).toHaveTextContent("6 turns");
+  expect(t).toHaveTextContent("8,400 tokens");
+  expect(t).toHaveTextContent("1m 5s"); // 65000 ms formatted
 });
 
 test("shows the context composition breakdown", () => {

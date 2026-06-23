@@ -5,15 +5,24 @@ import type { ContextBreakdown, UsageInfo } from "./api";
 const fmt = (n: number): string => n.toLocaleString();
 // Rough token estimate from characters (~4 chars/token) for the per-component composition view.
 const approxTokens = (chars: number): number => Math.max(1, Math.round(chars / 4));
+// Milliseconds -> a short human duration ("820 ms", "2.3 s", "1m 5s").
+const fmtMs = (ms: number): string =>
+  ms < 1000
+    ? `${Math.round(ms)} ms`
+    : ms < 60000
+      ? `${(ms / 1000).toFixed(1)} s`
+      : `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
 
 const BAR = "#4a90d9";
 
 /** Show what's in the model's context this turn (composition) and how full the window is (usage). */
 export function ContextMeter({
   usage,
+  totals,
   context,
 }: {
   usage: UsageInfo | null;
+  totals?: { tokens: number; ms: number; turns: number };
   context: ContextBreakdown | null;
 }): React.ReactElement {
   const prompt = usage?.prompt_tokens ?? 0;
@@ -106,6 +115,9 @@ export function ContextMeter({
                 <>{fmt(prompt)} prompt tokens</>
               )}
               {usage.completion_tokens != null && <> · +{fmt(usage.completion_tokens)} reply</>}
+              {usage.elapsed_ms != null && (
+                <span data-testid="usage-time"> · {fmtMs(usage.elapsed_ms)}</span>
+              )}
             </span>
           </div>
           {pct !== null && (
@@ -120,6 +132,27 @@ export function ContextMeter({
             </div>
           )}
         </>
+      )}
+
+      {/* Per-chat running totals across every turn (tokens + wall-clock time). */}
+      {totals && totals.turns > 0 && (
+        <div
+          data-testid="chat-totals"
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            marginTop: 4,
+            paddingTop: 4,
+            borderTop: "1px solid rgba(127,127,127,0.2)",
+          }}
+        >
+          <span style={{ color: "#888" }}>
+            Chat total · {totals.turns} {totals.turns === 1 ? "turn" : "turns"}
+          </span>
+          <span>
+            {fmt(totals.tokens)} tokens · {fmtMs(totals.ms)}
+          </span>
+        </div>
       )}
     </div>
   );
