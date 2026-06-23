@@ -1,0 +1,239 @@
+# Everyday-assistant suite: explanation/how-to, reasoning over a provided passage, extraction &
+# formatting, translation. Judge-graded, capability_tier: raw.
+
+# --- Explanation / how-to ------------------------------------------------------------------------
+- id: explain_subscription_model
+  category: explanation_howto
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Explain what a "subscription model" is to someone who has never run a business, in plain
+        language with one everyday example.
+  expected: >
+    Plain-language definition (recurring payment for ongoing access vs one-time purchase), one
+    relatable example (e.g. Netflix/gym), no jargon, accurate.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Correctness, Clarity, and Example-quality each 1-5. Correctness 5 = accurately conveys
+      recurring payment for ongoing access and contrasts with one-time purchase. Clarity 5 = plain
+      language, no unexplained jargon, suitable for a non-business reader. Example 5 = one concrete
+      everyday example that genuinely illustrates the concept. Reward a clear short explanation over
+      a padded one.
+
+- id: explain_pourover_coffee
+  category: explanation_howto
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: "How do I make a basic cup of pour-over coffee at home? Give me the steps."
+  expected: >
+    Ordered steps: heat water (just off boil), grind/measure coffee, wet filter, add grounds, bloom,
+    pour in stages, total about 3-4 min. Reasonable ratios. Correct sequence.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Correctness, Completeness, and Ordering each 1-5. Correctness 5 = no wrong or unsafe
+      steps and sane ratios/temperatures. Completeness 5 = covers grind, water, bloom, and pour
+      without major gaps. Ordering 5 = steps in a sensible sequence. Judge usefulness, not length; a
+      crisp correct step list must not lose to an over-detailed one.
+
+- id: explain_cold_battery
+  category: explanation_howto
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: "In simple terms, why does my phone battery drain faster in cold weather?"
+  expected: >
+    Correct mechanism: cold slows the lithium-ion chemistry / raises internal resistance, reducing
+    usable capacity and voltage; often temporary, recovers when warm. Plain language.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Correctness, Clarity, and Focus each 1-5. Correctness 5 = attributes drain to cold
+      slowing battery chemistry / increasing internal resistance and notes it is often temporary;
+      loses points for wrong mechanisms. Clarity 5 = plain, jargon-light. Focus 5 = answers the
+      question without unrelated tangents. Score accuracy and clarity, not word count.
+
+# --- Reasoning over a provided passage (incl. classification) ------------------------------------
+- id: reason_meeting_timing
+  category: reasoning_over_passage
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Based only on this, can Tom attend the 10am meeting? "Tom has a dentist appointment from 9am
+        to 9:45am across town, and it takes him 30 minutes to get back to the office." Explain
+        briefly.
+  expected: >
+    No (or barely/unlikely): finishes 9:45 + 30 min travel = arrives about 10:15, after the 10am
+    start. Reasoning shown, grounded only in the passage.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Correctness, Grounding, and Justification each 1-5. Correctness 5 = concludes he cannot
+      make the 10am start (arrives about 10:15). Grounding 5 = uses only the given facts, no invented
+      details. Justification 5 = shows the 9:45 + 30-minute arithmetic. Reward a correct
+      well-grounded answer regardless of length.
+
+- id: reason_review_sentiment
+  category: reasoning_over_passage
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Classify the sentiment of this review as positive, negative, or mixed, and give one short
+        reason: "The food was delicious and the staff were lovely, but we waited almost an hour for
+        our table."
+  expected: >
+    Mixed: positive (food, staff) plus negative (long wait). One concise grounded reason. Correct
+    label.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Label-correctness, Grounding, and Concision each 1-5. Label 5 = "mixed" (or clearly
+      both-positive-and-negative). Grounding 5 = reason cites the actual positives and the wait.
+      Concision 5 = one short reason, no rambling. Penalize hedging that avoids committing to a
+      label; reward a correct concise classification over a verbose one.
+
+- id: reason_race_order
+  category: reasoning_over_passage
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        From this passage only, who finished the race first? "Aisha crossed the line just ahead of
+        Bo, who had overtaken Carl in the final lap." Answer with the name and one-sentence reason.
+  expected: >
+    Aisha first. Reason grounded in "just ahead of Bo" and Bo being ahead of Carl. Order: Aisha, Bo,
+    Carl.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Correctness, Grounding, and Clarity each 1-5. Correctness 5 = identifies Aisha as first.
+      Grounding 5 = reason derives the order strictly from the passage. Clarity 5 = a single clear
+      sentence. Score the right answer and grounded reasoning, not length.
+
+# --- Data / text extraction & formatting ---------------------------------------------------------
+- id: extract_invoice_json
+  category: extraction_formatting
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Pull the name, date, and amount from this and return them as JSON: "Invoice for Maria Gomez
+        dated March 3, 2026 for the amount of $420.50."
+  expected: >
+    {"name": "Maria Gomez", "date": "March 3, 2026", "amount": "$420.50"} or equivalent; all three
+    fields correct; valid JSON.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Accuracy, Completeness, and Format-validity each 1-5. Accuracy 5 = name, date, and
+      amount all correct and not hallucinated. Completeness 5 = all three fields present. Format 5 =
+      valid, parseable JSON with sensible keys. Judge correctness and format, not length; no extra
+      prose is needed and should not earn credit.
+
+- id: extract_roles_table
+  category: extraction_formatting
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Turn this into a markdown table with columns Name and Role: "Ana is the designer, Ben is the
+        engineer, and Carla is the product manager."
+  expected: >
+    Markdown table, header row Name|Role, 3 data rows (Ana/designer, Ben/engineer, Carla/product
+    manager), correct pairing.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Accuracy, Completeness, and Format each 1-5. Accuracy 5 = each person paired with the
+      correct role. Completeness 5 = all three people present. Format 5 = valid markdown table with
+      the requested Name and Role columns. Score on correct structured output, not verbosity.
+
+- id: extract_emails_list
+  category: extraction_formatting
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        List just the email addresses found in this text, one per line: "Contact sam@acme.io or the
+        support desk at help@acme.io; do not reply to noreply@acme.io."
+  expected: >
+    Three lines: sam@acme.io, help@acme.io, noreply@acme.io. Only the addresses, nothing else.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Recall, Precision, and Format each 1-5. Recall 5 = all three addresses found. Precision
+      5 = no invented or partial addresses and nothing non-email included. Format 5 = one address
+      per line as asked, no extra commentary. Reward exactness; added explanation does not earn
+      points.
+
+# --- Translation ---------------------------------------------------------------------------------
+- id: translate_request_spanish
+  category: translation
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: "Translate to Spanish: 'Could you please send me the report by the end of the day?'"
+  expected: >
+    Natural, polite Spanish equivalent preserving the request and the end-of-day deadline and the
+    courteous register (usted/por favor). Grammatically correct.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Accuracy, Fluency, and Register each 1-5. Accuracy 5 = meaning fully preserved including
+      the end-of-day deadline. Fluency 5 = grammatical, natural Spanish. Register 5 = keeps the
+      polite tone of the original. Judge translation quality only; do not reward extra notes or
+      length, and the bare translation is sufficient.
+
+- id: translate_french_english
+  category: translation
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Translate this French sentence into English: "Je n'ai pas eu le temps de finir le projet
+        hier soir."
+  expected: >
+    "I didn't have time to finish the project last night." Correct tense and meaning; natural
+    English.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Accuracy, Fluency, and Completeness each 1-5. Accuracy 5 = correct meaning and past
+      tense (didn't have time, last night). Fluency 5 = natural idiomatic English. Completeness 5 =
+      nothing dropped or added. Score the translation, not its length.
+
+- id: translate_casual_german
+  category: translation
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Translate to German, keep it casual like texting a friend: "Hey, are we still meeting at 6
+        or should we push it back?"
+  expected: >
+    Casual German equivalent (du form), preserves both options (6 o'clock vs push back), friendly
+    texting register. Correct grammar.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Accuracy, Register, and Fluency each 1-5. Accuracy 5 = preserves both the 6 o'clock
+      option and the push-it-back option. Register 5 = casual du-form, texting-friendly, not formal.
+      Fluency 5 = grammatical natural German. Reward faithful tone-matched translation; length is
+      irrelevant to the score.

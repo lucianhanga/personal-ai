@@ -1,0 +1,185 @@
+# Everyday-assistant suite: brainstorming/ideation, planning/advice, light coding help.
+# Judge-graded, capability_tier: raw (no tools/web).
+
+# --- Brainstorming / ideation --------------------------------------------------------------------
+- id: brainstorm_cafe_names
+  category: brainstorming
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Give me 8 name ideas for a cozy neighborhood coffee shop. Mix of warm/homey and slightly
+        clever.
+  expected: >
+    8 distinct names, coffee/cozy relevant, a spread across homey and clever registers, no
+    near-duplicates, no obviously trademarked chains.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Relevance, Diversity, and Count-adherence each 1-5. Relevance 5 = names fit a cozy
+      coffee shop. Diversity 5 = genuine spread across homey and clever, not 8 variations of one
+      idea. Count 5 = exactly 8 distinct names. Reward idea quality and variety, not the length of
+      any explanations; bare strong names are ideal.
+
+- id: brainstorm_kids_activities
+  category: brainstorming
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        I have a free Saturday and a small budget. Give me 5 different low-cost activity ideas to do
+        with two kids under 10.
+  expected: >
+    5 distinct, genuinely low-cost, age-appropriate (under 10) activities; varied
+    (outdoor/indoor/creative); practical.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Relevance, Diversity, and Practicality each 1-5. Relevance 5 = all five are low-cost and
+      suitable for kids under 10. Diversity 5 = meaningfully different ideas, not minor variants.
+      Practicality 5 = realistically doable in a day on a small budget. Judge the ideas, not the
+      prose length around them.
+
+- id: brainstorm_blog_angles
+  category: brainstorming
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Brainstorm 6 blog post angles for a beginner houseplant care website. Keep them
+        beginner-friendly.
+  expected: >
+    6 distinct beginner-oriented angles (e.g. easiest plants, watering mistakes, light basics),
+    relevant and non-overlapping.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Relevance, Diversity, and Audience-fit each 1-5. Relevance 5 = all six are valid
+      houseplant blog angles. Diversity 5 = distinct topics with little overlap. Audience-fit 5 =
+      genuinely beginner-friendly framing. Reward count, distinctness, and fit; do not reward padded
+      descriptions.
+
+# --- Planning / advice ---------------------------------------------------------------------------
+- id: plan_beginner_running
+  category: planning_advice
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Give me a simple 3-day plan to start running, assuming I'm a total beginner who currently
+        doesn't exercise.
+  expected: >
+    3 distinct days, beginner-appropriate (walk/run intervals, rest, gradual), safe, concrete
+    (durations), sensible progression.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Appropriateness, Concreteness, and Structure each 1-5. Appropriateness 5 = genuinely
+      beginner-safe (no overtraining, includes easing in/rest). Concreteness 5 = specific enough to
+      act on (durations or run/walk intervals). Structure 5 = clearly organized across the three
+      days. Judge usefulness and safety, not length.
+
+- id: plan_job_offer_factors
+  category: planning_advice
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        I have two job offers: one pays more but has a long commute, the other pays less but is
+        remote. What should I think about to decide?
+  expected: >
+    Balanced decision factors (total comp incl. commute cost/time, work-life balance, growth,
+    lifestyle, health), doesn't pick for them without info, structured.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Relevance, Balance, and Usefulness each 1-5. Relevance 5 = factors that genuinely bear
+      on commute-vs-remote and the pay trade-off (time, money, well-being, growth). Balance 5 =
+      considers both options fairly rather than pushing one without justification. Usefulness 5 =
+      gives the user a usable way to decide. Reward insight per point, not length.
+
+- id: plan_weeknight_dinners
+  category: planning_advice
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Help me plan a simple weeknight dinner schedule for 5 days that's quick to cook and not too
+        repetitive.
+  expected: >
+    5 days, varied (proteins/cuisines/styles differ), quick weeknight-appropriate meals, practical,
+    not repetitive.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Variety, Practicality, and Completeness each 1-5. Variety 5 = five meaningfully
+      different meals, not minor variants. Practicality 5 = realistically quick on a weeknight.
+      Completeness 5 = all five days covered. Score the plan's quality and variety, not the amount
+      of description per meal.
+
+# --- Light coding help ---------------------------------------------------------------------------
+- id: code_average_function
+  category: light_coding
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Write a Python function that takes a list of numbers and returns the average. Handle the
+        empty-list case.
+  expected: >
+    Function returning the mean; empty list handled (return 0 or None / guard, not a crash). Correct
+    arithmetic. Reasonable naming.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Correctness, Edge-case-handling, and Clarity each 1-5. Correctness 5 = computes the
+      average correctly for normal input. Edge-case 5 = empty list handled without a divide-by-zero
+      crash. Clarity 5 = readable, sensibly named, runnable as written. Judge the code, not the
+      length of surrounding explanation; a correct compact function is ideal.
+
+- id: code_email_regex
+  category: light_coding
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Write a regular expression that matches a basic email address, and show one example match
+        and one non-match.
+  expected: >
+    A reasonable (not necessarily RFC-perfect) email regex; one valid example that matches; one
+    invalid example that doesn't. Pattern consistent with the examples.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Correctness, Consistency, and Explanation each 1-5. Correctness 5 = a sane email pattern
+      (local@domain.tld shape). Consistency 5 = the given match truly matches and the non-match
+      truly fails under the stated pattern. Explanation 5 = examples are clear and correct. Score on
+      validity, not verbosity.
+
+- id: code_indexerror_fix
+  category: light_coding
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        This code throws "IndexError: list index out of range". Briefly explain why and how to fix
+        it: items = [1,2,3]; print(items[3])
+  expected: >
+    Explains 0-based indexing: valid indices 0-2, index 3 is out of range; fix = use a valid index
+    (e.g. items[2]) or check len. Accurate and brief.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Diagnosis, Fix-correctness, and Concision each 1-5. Diagnosis 5 = correctly cites
+      zero-based indexing and that index 3 exceeds the last valid index 2. Fix 5 = offers a valid
+      correction (e.g. items[2] or bounds check). Concision 5 = brief and on point. Reward a tight
+      correct answer over a long one.

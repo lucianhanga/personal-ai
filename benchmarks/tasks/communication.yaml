@@ -5,7 +5,7 @@
 
 # --- Tone / style reformulation: preserve meaning, change register --------------------------------
 - id: comm_reformulate_business
-  category: reformulation
+  category: rewriting_tone
   capability_tier: raw
   version: v1
   input:
@@ -28,7 +28,7 @@
       Judge content and tone only; do not reward extra length or invented details.
 
 - id: comm_reformulate_casual
-  category: reformulation
+  category: rewriting_tone
   capability_tier: raw
   version: v1
   input:
@@ -50,7 +50,7 @@
       Reward an accurate tone shift, not added length or fabricated specifics.
 
 - id: comm_reformulate_friendly
-  category: reformulation
+  category: rewriting_tone
   capability_tier: raw
   version: v1
   input:
@@ -73,7 +73,7 @@
 
 # --- Email composition: produce BOTH a subject line and a body from a brief -----------------------
 - id: comm_email_compose_meeting
-  category: email_compose
+  category: drafting_messages
   capability_tier: raw
   version: v1
   input:
@@ -99,7 +99,7 @@
       greeting and sign-off. Penalize fabricated details; do not reward length beyond the brief.
 
 - id: comm_email_compose_followup
-  category: email_compose
+  category: drafting_messages
   capability_tier: raw
   version: v1
   input:
@@ -125,7 +125,7 @@
 
 # --- Email reply: respond appropriately to an inbound message -------------------------------------
 - id: comm_email_reply_decline
-  category: email_reply
+  category: drafting_messages
   capability_tier: raw
   version: v1
   input:
@@ -152,7 +152,7 @@
       extra length; a short warm decline-with-alternative scores highest.
 
 - id: comm_email_reply_answer
-  category: email_reply
+  category: drafting_messages
   capability_tier: raw
   version: v1
   input:
