@@ -24,17 +24,17 @@ uv run python -m personalai_benchmarks run \
 # Local models are stochastic — run each cell several times for pass@k + pass-rate:
 uv run python -m personalai_benchmarks run --repeats 5
 
-# Compare PersonalAI vs frontier models on quality (LLM judge). Frontier keys come from the
-# environment (e.g. via uv's --env-file); providers without a key are skipped.
+# Compare PersonalAI (its configs) vs frontier models on quality. The judge is always on (the
+# strongest available frontier model). Keys come from the environment (e.g. via uv's --env-file);
+# providers without a key are skipped. Each run writes a timestamped report under ./benchmark-results.
 uv run --env-file .env python -m personalai_benchmarks compare
+
+# Pick exact frontier contestants (a provider = all its models, or provider:model) and task groups:
 uv run --env-file .env python -m personalai_benchmarks compare \
-    --no-personalia --providers anthropic,openai,deepseek --task-ids quality_explain_recursion
+    --no-personalia --models anthropic:claude-opus-4-8,openai:gpt-5.5 --categories summarization
 
-# Also run frontier models WITH tools (the assistant/"chat" variant — they call PersonalAI's tools):
-uv run --env-file .env python -m personalai_benchmarks compare --frontier-tools
-
-# Sweep a whole price/quality tier across providers (cheapest | medium | best | all):
-uv run --env-file .env python -m personalai_benchmarks compare --no-personalia --model-tier best
+# Every model of two providers (a whole provider = all its models):
+uv run --env-file .env python -m personalai_benchmarks compare --no-personalia --models groq,gemini
 
 # Prefer clicking over flags? Open the local launcher UI (dev-only, localhost, no auth):
 uv run --env-file .env python -m personalai_benchmarks ui   # then open http://127.0.0.1:8900/
@@ -43,17 +43,19 @@ make run-bench-ui                                           # same thing, from t
 
 ### Launcher UI
 
-`ui` serves a small localhost page (Python stdlib only) where you tick providers, modes, tasks and
-options; it shows the generated `compare` command, runs it, streams the live stdout/stderr into a log
-window (SSE), and links the resulting `leaderboard.html`. The run subprocess is built from a
-validated arg list (no shell), and the server binds `127.0.0.1` only — it is a developer convenience,
-not part of the secured app. Run it with `--env-file .env` so the spawned `compare` inherits the
-frontier API keys.
+`ui` serves a small localhost page (Python stdlib only) with **grouped, expandable checkbox trees** —
+providers expand to their models, tasks expand by category (parent tri-state + per-group counts) — so
+you pick exactly the contestants and task groups you want. It shows the generated `compare` command,
+runs it, streams the live stdout/stderr (SSE), lists **past timestamped reports**, and shows the
+fixed **judge** model. The judge is always on; there is no model-tier or tools toggle (the frontier
+side is the app, which already has tools). The run subprocess is built from a validated arg list (no
+shell), and the server binds `127.0.0.1` only — a developer convenience, not part of the secured app.
+Run it with `--env-file .env` so the spawned `compare` inherits the frontier API keys.
 
 **Stopping early.** Press **Ctrl-C** during a CLI run — or click **Stop** in the launcher (it sends
 `SIGINT`, not a kill) — and the harness writes a **partial report** from whatever finished, marked
-`PARTIAL` / "Partial run" in the output and both reports. Handy for long `--model-tier all` sweeps:
-stop once you've seen enough and still get a leaderboard of the results so far.
+`PARTIAL` / "Partial run" in the output and both reports. Handy for long `--models groq,gemini,…`
+sweeps: stop once you've seen enough and still get a leaderboard of the results so far.
 
 ## Phase 2: frontier comparison + LLM judge
 
@@ -64,19 +66,17 @@ tier) over the same tasks, then writes one combined leaderboard grouped by capab
   / xAI (Grok) / Groq / Gemini. Keys come from the environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
   `DEEPSEEK_API_KEY`, `XAI_API_KEY`, `GROQ_API_KEY`, `GEMINI_API_KEY`); a provider without a key is
   skipped and reported.
-- **Model lineup + `--model-tier`**: each provider carries a curated lineup tagged `cheapest` /
-  `medium` / `best` (up to 5 models, current + older, validated against each provider's live
-  `/models`; DeepSeek has 2 and xAI 4, not padded). `compare --model-tier cheapest|medium|best`
-  runs just that tier across providers, `--model-tier all` runs the full spread (more cost), and the
-  **default** runs a single representative per provider (unchanged cost). With the cost + quality
-  bars, this is the artificialanalysis-style cheapest→best comparison. Model ids change fast — edit
-  `PROVIDERS` in `frontier.py` and prices in `pricing.py` as they move.
-- **LLM judge** (`judge.py`): grades open-ended (rubric) tasks — **form-filling** (a one-sentence
-  justification is written *before* each criterion's 1–5 score, the G-Eval pattern, for steadier and
-  auditable grades), reference-guided, temperature 0, pinned `JUDGE_PROMPT_VERSION` (now `v2`; parsing
-  still tolerates the older bare-integer shape). Default judge is **Claude**, with **GPT as the
-  fallback for Claude's own answers** (a model never judges its own family — self-preference bias).
-  Needs `ANTHROPIC_API_KEY`; without it, rubric tasks score 0 (`--no-judge`).
+- **Model lineup + `--models`**: each provider carries a curated lineup (up to 5 models, current +
+  older, validated against each provider's live `/models`; DeepSeek has 2 and xAI 4, not padded).
+  Pick contestants explicitly: `--models groq` (all of Groq) or `--models anthropic:claude-opus-4-8`
+  (one model); the default is one representative per provider with a key. Model ids change fast —
+  edit `PROVIDERS` in `frontier.py` and prices in `pricing.py` as they move.
+- **LLM judge** (`judge.py`) — **always on**: the strongest available frontier model (fixed ranking,
+  `claude-opus-4-8` → `gpt-5.5` → …) judges, and the chosen model is printed/shown. **Form-filling**
+  (a one-sentence justification *before* each criterion's 1–5 score, G-Eval), reference-guided,
+  temperature 0, pinned `JUDGE_PROMPT_VERSION`. **Self-preference guard:** a contestant from the
+  judge's own vendor is graded by the next-strongest different-vendor model. With no frontier key at
+  all, rubric tasks score 0.
 - **Length-bias check** (`analysis.py`): every `compare` run reports the Pearson correlation between
   answer word-count and judge score across judged answers, and **flags** a strong correlation — a
   tell-tale of verbosity bias. It prints in the summary and the Markdown report header.

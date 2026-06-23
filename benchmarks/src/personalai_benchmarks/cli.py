@@ -17,12 +17,12 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from personalai_benchmarks import frontier, frontier_tools
+from personalai_benchmarks import frontier
 from personalai_benchmarks.adapters import PersonalIAAdapter
 from personalai_benchmarks.analysis import length_bias
 from personalai_benchmarks.cache import ResultCache
-from personalai_benchmarks.judge import JUDGE_PROMPT_VERSION, default_judge
-from personalai_benchmarks.modes import ALL_MODES, FRONTIER_TOOLS, RAW
+from personalai_benchmarks.judge import JUDGE_PROMPT_VERSION, strongest_judge
+from personalai_benchmarks.modes import ALL_MODES, RAW
 from personalai_benchmarks.report import write_report
 from personalai_benchmarks.runner import (
     Grader,
@@ -51,27 +51,19 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_common(cmp, modes_default=_DEFAULT_COMPARE_MODES)
     cmp.add_argument(
-        "--providers",
+        "--models",
         default="",
-        help="comma frontier providers (default: all with a key). "
-        f"Known: {', '.join(frontier.PROVIDERS)}",
+        help="comma frontier contestants: a provider (= all its models) or 'provider:model' "
+        f"(default: one per provider with a key). Providers: {', '.join(frontier.PROVIDERS)}",
     )
     cmp.add_argument(
-        "--model-tier",
-        default="default",
-        choices=["default", *frontier.MODEL_TIERS, "all"],
-        help="frontier model(s) per provider: 'default' = one representative; a tier "
-        "(cheapest/medium/best); or 'all' = the full per-provider lineup (more cost).",
+        "--categories",
+        default="",
+        help="comma-separated task categories to run (groups of tasks); combine with --task-ids",
     )
     cmp.add_argument(
         "--no-personalia", action="store_true", help="skip the local PersonalAI system"
     )
-    cmp.add_argument(
-        "--frontier-tools",
-        action="store_true",
-        help="also run each frontier model with PersonalAI's tools (the assistant/'chat' variant)",
-    )
-    cmp.add_argument("--no-judge", action="store_true", help="skip LLM-judge quality grading")
     cmp.add_argument(
         "--cache-file",
         default="benchmark-results/cache.json",
@@ -116,13 +108,31 @@ def _select_tasks(args: argparse.Namespace) -> list[Task] | None:
     except (FileNotFoundError, ValueError) as exc:
         print(f"error loading tasks: {exc}", file=sys.stderr)
         return None
-    if args.task_ids:
-        wanted = {t.strip() for t in args.task_ids.split(",") if t.strip()}
-        tasks = [t for t in tasks if t.id in wanted]
+    ids = {t.strip() for t in args.task_ids.split(",") if t.strip()}
+    cats = {c.strip() for c in getattr(args, "categories", "").split(",") if c.strip()}
+    if ids or cats:  # union: run the named categories and/or the named task ids
+        tasks = [t for t in tasks if t.id in ids or t.category in cats]
     if not tasks:
         print("no tasks selected", file=sys.stderr)
         return None
     return tasks
+
+
+def _frontier_models(spec: str) -> list[frontier.OpenAICompatAdapter]:
+    """Build frontier contestants from a --models spec: each token is a provider (= all its models)
+    or 'provider:model'. Empty spec = one representative per provider that has a key."""
+    if not spec.strip():
+        return frontier.available()
+    out: list[frontier.OpenAICompatAdapter] = []
+    for token in (t.strip() for t in spec.split(",") if t.strip()):
+        if ":" in token:
+            provider, model = token.split(":", 1)
+            adapter = frontier.build(provider, model=model)
+            if adapter is not None:
+                out.append(adapter)
+        else:
+            out.extend(frontier.build_tier(token, "all"))
+    return out
 
 
 def _personal_modes(args: argparse.Namespace) -> list | None:  # type: ignore[type-arg]
@@ -162,6 +172,11 @@ def _summary(suite: Suite, out: str) -> int:
     print(f"wrote {md_path}")
     print(f"wrote {html_path}  (open in a browser; print to PDF to share)")
     return 0
+
+
+def _timestamped_out(base: str) -> str:
+    """A per-run report directory under ``base`` (history, never overwrites a previous run)."""
+    return str(Path(base) / datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S"))
 
 
 def _partial_metadata(
@@ -207,61 +222,36 @@ def _run(args: argparse.Namespace) -> int:
             print("stopped before any result was collected", file=sys.stderr)
             return 130
         suite = Suite(records=collected, metadata=_partial_metadata(collected, args, "off"))
-    return _summary(suite, args.out)
+    return _summary(suite, _timestamped_out(args.out))
 
 
 def _compare(args: argparse.Namespace) -> int:
     tasks = _select_tasks(args)
     if tasks is None:
         return 2
-    judge = None if args.no_judge else default_judge()
+    # The judge is always on: the strongest available frontier model (fixed ranking), shown below.
+    judge, judge_label = strongest_judge()
     grader: Grader | None = judge.score if judge is not None else None
 
     # Assemble the systems first so we can show a global [i/total] progress counter across them.
     p_modes = None if args.no_personalia else _personal_modes(args)
     if not args.no_personalia and p_modes is None:
         return 2
-    wanted = (
-        [p.strip() for p in args.providers.split(",") if p.strip()]
-        if args.providers
-        else list(frontier.PROVIDERS)
-    )
-    if args.model_tier == "default":
-        front = [a for a in (frontier.build(p) for p in wanted) if a is not None]
-    else:
-        front = [a for p in wanted for a in frontier.build_tier(p, args.model_tier)]
-    # Optional tool-equipped ("chat") frontier contestants, using PersonalAI's tools over HTTP.
-    front_tools = (
-        [
-            a
-            for a in (
-                frontier_tools.build(p, backend_url=args.base_url, backend_token=args.token)
-                for p in wanted
-            )
-            if a is not None
-        ]
-        if args.frontier_tools
-        else []
-    )
+    front = _frontier_models(args.models)
 
     reps = max(1, args.repeats)
-    total = (
-        (len(p_modes) * len(tasks) * reps if p_modes else 0)
-        + len(front) * len(tasks) * reps
-        + len(front_tools) * len(tasks) * reps
-    )
+    total = (len(p_modes) * len(tasks) * reps if p_modes else 0) + len(front) * len(tasks) * reps
     progress = _make_progress(total)
 
     collected: list[RunRecord] = []
     pa = PersonalIAAdapter(base_url=args.base_url, token=args.token) if p_modes else None
-    systems = ([pa.name] if pa else []) + [a.name for a in front] + [a.name for a in front_tools]
-    judge_label = "off" if judge is None else "claude (gpt fallback)"
+    systems = ([pa.name] if pa else []) + [a.name for a in front]
 
-    # Frontier results are deterministic (temperature 0), so the *raw* frontier tier is cached and
-    # reused across runs — only the local model (always re-run) and tool-equipped frontier (depends
-    # on local tools) skip the cache. The tag invalidates judged cells when the judge changes.
+    # Frontier results are deterministic (temperature 0), so the frontier tier is cached and reused
+    # across runs — only the local model is always re-run. The tag invalidates judged cells when the
+    # judge model or prompt changes.
     cache = ResultCache.load(args.cache_file, enabled=not args.no_cache, refresh=args.refresh)
-    cache_tag = "nojudge" if judge is None else f"judge:{JUDGE_PROMPT_VERSION}"
+    cache_tag = "nojudge" if judge is None else f"judge:{JUDGE_PROMPT_VERSION}:{judge_label}"
 
     # Run all contestants into one live `collected` sink, so Ctrl-C (stop) still yields a partial
     # report from whatever finished. Each block contributes its records before the next begins.
@@ -288,16 +278,6 @@ def _compare(args: argparse.Namespace) -> int:
                 sink=collected,
                 cache=cache,
                 cache_tag=cache_tag,
-            )
-        if front_tools:
-            run_comparison(
-                tasks=tasks,
-                modes=[FRONTIER_TOOLS],
-                systems=front_tools,
-                grader=grader,
-                repeats=args.repeats,
-                on_progress=progress,
-                sink=collected,
             )
     except KeyboardInterrupt:
         interrupted = True
@@ -327,17 +307,18 @@ def _compare(args: argparse.Namespace) -> int:
             "interrupted": interrupted,
         },
     )
+    print(f"judge: {judge_label}")
     skipped = frontier.missing_keys()
     if skipped:
         print(f"skipped frontier providers (no key): {', '.join(skipped)}")
     if judge is None:
-        print("LLM judge OFF — quality (rubric) tasks score 0; set ANTHROPIC_API_KEY to enable")
+        print("LLM judge unavailable — rubric tasks score 0; set a frontier API key to enable")
     if cache.enabled:
         print(
             f"frontier cache: reused {cache.hits}, stored {cache.stored} "
             f"new ({args.cache_file}) — local model always re-runs"
         )
-    return _summary(combined, args.out)
+    return _summary(combined, _timestamped_out(args.out))
 
 
 def main(argv: list[str] | None = None) -> int:
