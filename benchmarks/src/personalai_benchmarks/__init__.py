@@ -7,7 +7,7 @@ import any app package."""
 
 from personalai_benchmarks import frontier
 from personalai_benchmarks.adapters import PersonalIAAdapter, RunResult, SystemUnderTest
-from personalai_benchmarks.judge import LlmJudge, default_judge
+from personalai_benchmarks.judge import LlmJudge, strongest_judge
 from personalai_benchmarks.modes import ALL_MODES, Mode
 from personalai_benchmarks.runner import RunRecord, Suite, run_comparison, run_suite
 from personalai_benchmarks.scoring import Score, score_task
@@ -24,7 +24,7 @@ __all__ = [
     "Suite",
     "SystemUnderTest",
     "Task",
-    "default_judge",
+    "strongest_judge",
     "frontier",
     "load_tasks",
     "run_comparison",

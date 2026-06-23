@@ -196,22 +196,31 @@ def make_call(provider_name: str, model: str | None = None) -> JudgeCall | None:
     return call
 
 
-# Strong judges (best practice: judge ≥ contestants). Pinned alongside JUDGE_PROMPT_VERSION.
-_DEFAULT_PRIMARY_JUDGE_MODEL = "claude-opus-4-6"
-_DEFAULT_FALLBACK_JUDGE_MODEL = "gpt-4.1"
+# The judge is always the strongest available frontier model (best practice: judge ≥ contestants),
+# picked from this fixed ranking by the first provider whose API key is present. Pinned alongside
+# JUDGE_PROMPT_VERSION. Open-weight (Groq) models are intentionally excluded as judges.
+_JUDGE_RANKING: tuple[tuple[str, str], ...] = (
+    ("anthropic", "claude-opus-4-8"),
+    ("openai", "gpt-5.5"),
+    ("gemini", "gemini-3.5-flash"),
+    ("xai", "grok-4.3"),
+    ("deepseek", "deepseek-v4-pro"),
+)
 
 
-def default_judge(
-    *,
-    primary: str = "anthropic",
-    primary_model: str | None = _DEFAULT_PRIMARY_JUDGE_MODEL,
-    fallback: str = "openai",
-    fallback_model: str | None = _DEFAULT_FALLBACK_JUDGE_MODEL,
-) -> LlmJudge | None:
-    """The configured judge (primary + self-preference fallback), or None if the primary key is
-    missing (quality grading is then skipped). Defaults: Claude Opus judge, GPT-4.1 fallback."""
-    primary_call = make_call(primary, primary_model)
-    if primary_call is None:
-        return None
-    fallback_call = make_call(fallback, fallback_model)
-    return LlmJudge(primary_call, vendor=primary, fallback=fallback_call, fallback_vendor=fallback)
+def strongest_judge() -> tuple[LlmJudge | None, str]:
+    """The strongest available frontier model as judge, with a different-family fallback for its own
+    vendor's rows (self-preference guard). Returns ``(judge, label)``; judge is None (the label
+    explains) when no frontier API key is present, so rubric tasks then score 0."""
+    available = [(v, m) for (v, m) in _JUDGE_RANKING if make_call(v, m) is not None]
+    if not available:
+        return None, "unavailable (no frontier API key)"
+    p_vendor, p_model = available[0]
+    fallback = next(((v, m) for (v, m) in available if v != p_vendor), None)
+    judge = LlmJudge(
+        make_call(p_vendor, p_model),  # type: ignore[arg-type]  # available => not None
+        vendor=p_vendor,
+        fallback=make_call(*fallback) if fallback else None,
+        fallback_vendor=fallback[0] if fallback else None,
+    )
+    return judge, f"{p_vendor}:{p_model}"
