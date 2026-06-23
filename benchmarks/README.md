@@ -136,6 +136,13 @@ per-task matrix shows `passes/attempts` per cell; a Failures section lists cells
 and a Flaky section lists cells that passed some attempts but not all. Compare *within* a tier;
 compare tiers side by side, not by a blended average.
 
+**Per-category macro marks.** Each task category is rolled up into one mark per contestant (the
+equal-weight mean of its tasks), and the headline **overall** is the **macro-average** of those
+category marks — so a 7-task category doesn't outvote a 3-task one. The report leads with a
+contestant × category matrix (the per-category profile), the `overall` column shows `macro ± SE`,
+and each category header shows its task count `n`; scores are 2 decimals so small categories read as
+approximate. The ranked bar chart ranks by the macro-average.
+
 **Visual comparison.** Each tier row carries a **quality bar** (mean score, 0–1, color-coded
 green/amber/red) and a **Δ best** comparison mark — `best` for the tier leader, otherwise the signed
 gap to it (e.g. `-0.20`). Below each tier table the HTML report draws a horizontal **bar chart** of

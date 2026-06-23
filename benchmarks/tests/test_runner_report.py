@@ -340,6 +340,67 @@ def test_no_cache_means_always_run(tmp_path: Path) -> None:
     assert sut.calls == 2  # the local model (no cache) re-runs every time
 
 
+def _cell(series_system: str, category: str, score: float) -> object:
+    from personalai_benchmarks.report import Cell
+    from personalai_benchmarks.runner import RunRecord
+
+    r = RunRecord(
+        task_id=f"{category}_t",
+        category=category,
+        mode="raw",
+        capability_tier="raw",
+        answer="x",
+        score=score,
+        passed=score >= 0.8,
+        explanation="",
+        latency_ms=1.0,
+        usage={},
+        tool_calls=[],
+        config_used={},
+        error=None,
+        system=series_system,
+    )
+    return Cell(
+        system=series_system,
+        mode="raw",
+        task_id=r.task_id,
+        category=category,
+        capability_tier="raw",
+        attempts=[r],
+    )
+
+
+def test_category_scores_equal_weight_mean_and_macro_average() -> None:
+    from personalai_benchmarks.report import category_scores, macro_overall
+
+    # system A: catX has 2 tasks (1.0, 0.0)->mean .5 ; catY has 1 task (1.0)->mean 1.0
+    cells = [
+        _cell("A", "catX", 1.0),
+        _cell("A", "catX", 0.0),
+        _cell("A", "catY", 1.0),
+    ]
+    cs = category_scores(cells)  # type: ignore[arg-type]
+    by_cat = {c.category: c for c in cs["A/raw"]}  # series = system/mode
+    assert abs(by_cat["catX"].mean - 0.5) < 1e-9 and by_cat["catX"].n == 2
+    assert abs(by_cat["catY"].mean - 1.0) < 1e-9 and by_cat["catY"].n == 1
+    # macro-average = mean of category means = (0.5 + 1.0)/2 = 0.75 (not the 3-task micro-mean .667)
+    overall, se = macro_overall(cs["A/raw"])
+    assert abs(overall - 0.75) < 1e-9 and se >= 0.0
+
+
+def test_report_renders_category_matrix() -> None:
+    suite = run_comparison(
+        tasks=[_task("t1", "62"), _task("t2", "62")],
+        modes=[SINGLE_NO_TOOLS],
+        systems=[_FakeSUT(answer="62", name="a"), _FakeSUT(answer="0", name="b")],
+    )
+    html_text = to_html(suite)
+    assert "By category" in html_text or "macro-average" in html_text
+    assert "overall" in html_text.lower()
+    md = to_markdown(suite)
+    assert "By category (macro marks)" in md and "overall" in md
+
+
 def test_ranked_chart_colors_by_vendor_and_ranks_overall() -> None:
     from personalai_benchmarks.report import _ranked_bar_chart_html, _vendor_color
 

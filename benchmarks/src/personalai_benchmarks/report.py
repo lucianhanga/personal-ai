@@ -85,6 +85,50 @@ class Cell:
         return ""
 
 
+@dataclasses.dataclass(frozen=True)
+class CategoryScore:
+    """One contestant's rolled-up mark for a task category: equal-weight mean + small-sample SE."""
+
+    category: str
+    mean: float
+    se: float  # standard error of the mean (0 when n<2)
+    n: int
+
+
+def _se(values: list[float]) -> float:
+    """Standard error of the mean; 0 for fewer than 2 points (sample sd is undefined)."""
+    n = len(values)
+    if n < 2:
+        return 0.0
+    m = sum(values) / n
+    variance = sum((v - m) ** 2 for v in values) / (n - 1)
+    return float((variance / n) ** 0.5)
+
+
+def category_scores(cell_list: list[Cell]) -> dict[str, list[CategoryScore]]:
+    """Per contestant (series), the equal-weight mean of each task category's scores (the macro mark
+    research-recommended: items are equal-weighted within a category)."""
+    by_series_cat: dict[tuple[str, str], list[float]] = defaultdict(list)
+    for c in cell_list:
+        by_series_cat[(c.series, c.category)].append(c.mean_score)
+    out: dict[str, list[CategoryScore]] = defaultdict(list)
+    for (series, category), scores in by_series_cat.items():
+        out[series].append(CategoryScore(category, _mean(scores), _se(scores), len(scores)))
+    for series in out:
+        out[series].sort(key=lambda cs: cs.category)
+    return out
+
+
+def macro_overall(cat_scores: list[CategoryScore]) -> tuple[float, float]:
+    """Overall = macro-average of category means (every category counts equally, regardless of how
+    many tasks it has), with SE propagated from the per-category SEs."""
+    if not cat_scores:
+        return 0.0, 0.0
+    overall = sum(c.mean for c in cat_scores) / len(cat_scores)
+    se = (sum(c.se**2 for c in cat_scores) ** 0.5) / len(cat_scores)
+    return overall, se
+
+
 def cells(suite: Suite) -> list[Cell]:
     """Group the flat attempt records into (system, mode, task) cells."""
     grouped: dict[tuple[str, str, str], list[RunRecord]] = defaultdict(list)
@@ -210,6 +254,22 @@ def to_markdown(suite: Suite) -> str:
             )
         md.append("")
 
+    # Per-category macro marks: each category equal-weighted within, overall = macro-average.
+    cat_by_series = category_scores(cell_list)
+    if cat_by_series:
+        categories = sorted({c.category for c in cell_list})
+        macro = {s: macro_overall(cs) for s, cs in cat_by_series.items()}
+        md.append("## By category (macro marks)")
+        md.append("")
+        md.append("| system / mode | overall | " + " | ".join(categories) + " |")
+        md.append("|---|---|" + "|".join(["---"] * len(categories)) + "|")
+        for series in sorted(macro, key=lambda s: (-macro[s][0], s)):
+            per_cat = {c.category: c for c in cat_by_series[series]}
+            cols = [f"{per_cat[c].mean:.2f}" if c in per_cat else "—" for c in categories]
+            ov, se = macro[series]
+            md.append(f"| {series} | {ov:.2f} ±{se:.2f} | " + " | ".join(cols) + " |")
+        md.append("")
+
     # Per-task matrix (task x system/mode -> passes/N), for drill-down.
     series_cols = sorted({c.series for c in cell_list})
     by_task: dict[str, dict[str, Cell]] = defaultdict(dict)
@@ -301,6 +361,50 @@ def _ranked_bar_chart_html(rows: list[tuple[str, float]], esc: Callable[[str], s
     return "".join(parts)
 
 
+def _category_matrix_html(
+    cell_list: list[Cell],
+    cat_by_series: dict[str, list[CategoryScore]],
+    macro: dict[str, tuple[float, float]],
+    esc: Callable[[str], str],
+) -> str:
+    """A contestant × category matrix (the per-category profile): each cell is the category mean
+    (color-coded), the Overall column is the macro-average ± SE; categories show their task n."""
+    categories = sorted({c.category for c in cell_list})
+    counts = {
+        cat: max((c.n for s in cat_by_series.values() for c in s if c.category == cat), default=0)
+        for cat in categories
+    }
+    ranked = sorted(macro, key=lambda s: (-macro[s][0], s))
+    head = "".join(
+        f"<th class=num>{esc(c)}<br><small>n={counts[c]}</small></th>" for c in categories
+    )
+    rows = []
+    for series in ranked:
+        per_cat = {c.category: c for c in cat_by_series[series]}
+        cells_html = []
+        for cat in categories:
+            cs = per_cat.get(cat)
+            if cs is None:
+                cells_html.append("<td class=num>—</td>")
+            else:
+                cells_html.append(
+                    f'<td class="num" style="color:{_grade_color(cs.mean)}">{cs.mean:.2f}</td>'
+                )
+        overall, se = macro[series]
+        rows.append(
+            f"<tr><td><code>{esc(series)}</code></td>"
+            f'<td class="num bar" style="color:{_grade_color(overall)}">{overall:.2f} '
+            f"<small>±{se:.2f}</small></td>" + "".join(cells_html) + "</tr>"
+        )
+    return (
+        "<table><tr><th>system / mode</th><th class=num>overall</th>"
+        + head
+        + "</tr>"
+        + "".join(rows)
+        + "</table>"
+    )
+
+
 def to_html(suite: Suite) -> str:
     """A self-contained, styled HTML leaderboard — open in a browser, or print it to PDF."""
     esc = html.escape
@@ -366,20 +470,19 @@ def to_html(suite: Suite) -> str:
         "</div>",
     ]
 
-    # Headline: every contestant (PersonalAI configs + frontier models) ranked together by mean
-    # score — the "who's best on these tasks" overview. Per-tier tables below keep the like-for-like
-    # comparison (a tool-equipped or multi-agent run isn't apples-to-apples with a no-tools one).
+    # Headline: every contestant ranked by the macro-average of its category marks (each task
+    # category counts equally regardless of how many tasks it has). Per-tier tables below keep the
+    # like-for-like comparison (a tool-equipped or multi-agent run isn't apples-to-apples with raw).
+    cat_by_series = category_scores(cell_list)
+    macro = {series: macro_overall(cs) for series, cs in cat_by_series.items()}
     overall = sorted(
-        (
-            (series, _mean([c.mean_score for c in cs]))
-            for series_map in by_tier_series.values()
-            for series, cs in series_map.items()
-        ),
+        ((series, macro[series][0]) for series in macro),
         key=lambda sv: (-sv[1], sv[0]),
     )
     if len(overall) > 1:
-        out.append("<h2>Overall ranking <small>(mean score ×100, all contestants)</small></h2>")
+        out.append("<h2>Overall ranking <small>(macro-average of category marks ×100)</small></h2>")
         out.append(_ranked_bar_chart_html(overall, esc))
+        out.append(_category_matrix_html(cell_list, cat_by_series, macro, esc))
 
     for tier in sorted(by_tier_series):
         out.append(f"<h2>Tier <span class=tier>{esc(tier)}</span></h2>")
