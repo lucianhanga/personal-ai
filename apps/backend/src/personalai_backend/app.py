@@ -21,7 +21,7 @@ import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -295,6 +295,24 @@ class ToolInvokeRequest(BaseModel):
 
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _current_datetime_messages() -> list[ChatMessage]:
+    """An authoritative 'now' the agents must trust. A bare 'today's date' isn't enough: models
+    hedge ('reality vs simulation') because the date conflicts with their training-cutoff prior, so
+    this states it as ground truth and tells the model not to assume its cutoff is the present.
+    Injected first each turn, it cascades to every agent (planner/researcher/critic/single)."""
+    now = datetime.now().astimezone()  # tz-aware local time
+    line = (
+        f"The current date and time is {now.strftime('%A')}, "
+        f"{now.isoformat(timespec='minutes')} (local) / "
+        f"{now.astimezone(UTC).isoformat(timespec='minutes')} (UTC). "
+        "Treat this as the present and as ground truth for any time-relative reasoning. Do not "
+        "assume your training-data cutoff is the present: anything dated on or before this has "
+        "already occurred, and for recent or just-past events, plan to look them up rather than "
+        "refuse or claim they have not happened."
+    )
+    return [ChatMessage(Role.SYSTEM, line)]
 
 
 def _context_breakdown(groups: Sequence[tuple[str, Sequence[ChatMessage]]]) -> dict[str, Any]:
@@ -907,7 +925,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         )
         # Inject the current date once, up front, so every agent (planner/researcher/critic) and the
         # single-agent loop are date-aware and don't dismiss recent dates as fabricated.
-        date_messages = [ChatMessage(Role.SYSTEM, f"Today's date is {date.today().isoformat()}.")]
+        date_messages = _current_datetime_messages()
         generation = GenerationRequest(
             messages=[
                 *date_messages,
@@ -924,7 +942,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         # What's going into the context this turn, for the UI's context view (#290).
         context_breakdown = _context_breakdown(
             [
-                ("Today's date", date_messages),
+                ("Current date/time", date_messages),
                 ("Grounding", grounding_messages),
                 ("Interpreted request", hint_messages),
                 ("Reasoning hint", brief_messages),
@@ -1265,7 +1283,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         grounding_messages = (
             [ChatMessage(Role.SYSTEM, _GROUNDING)] if config.grounding_enabled else []
         )
-        date_messages = [ChatMessage(Role.SYSTEM, f"Today's date is {date.today().isoformat()}.")]
+        date_messages = _current_datetime_messages()
         generation = GenerationRequest(
             messages=[
                 *date_messages,
