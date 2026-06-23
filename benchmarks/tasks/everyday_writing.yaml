@@ -1,0 +1,129 @@
+# Everyday-assistant suite (#347 follow-up): text-production categories. Judge-graded (rubric,
+# reference-guided, capability_tier: raw — no tools/web, so a small local model and a frontier model
+# compete on the language task itself). Taxonomy from WildBench/MT-Bench/WildChat; per-dimension 1-5
+# anchors with an explicit anti-length-bias clause. Seed pass (~3/category); scale each to ~20 next.
+
+# --- Writing / composition -----------------------------------------------------------------------
+- id: write_product_blurb
+  category: writing_composition
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Write a 4-sentence product description for a stainless steel insulated water bottle aimed at
+        hikers. Warm but not gimmicky.
+  expected: >
+    4 sentences, hiker-relevant benefits (keeps drinks cold/hot for hours, durable, leak-proof,
+    light), warm inviting tone, no hype cliches, no bullet points.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Relevance, Tone, and Constraint-adherence each 1-5. Relevance 5 = concrete hiker-useful
+      benefits; loses points for generic filler. Tone 5 = warm and natural; loses points for
+      gimmicky hype or stiffness. Constraint 5 = about 4 sentences, prose not bullets; loses points
+      for wrong length/format. Judge content quality, not length: a tight 4-sentence answer must not
+      score below a padded one.
+
+- id: write_linkedin_about
+  category: writing_composition
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Write a short, professional LinkedIn "About" section (about 60-90 words) for a junior data
+        analyst who knows SQL and Python and is looking for their first full-time role.
+  expected: >
+    60-90 words, first person, mentions SQL and Python, signals junior/seeking-first-role
+    positively, confident not arrogant, no fabricated employers or metrics.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Relevance, Tone, and Factual-restraint each 1-5. Relevance 5 = covers SQL, Python, and
+      the job-seeking framing within ~60-90 words. Tone 5 = confident and professional; loses points
+      for arrogance or self-deprecation. Factual-restraint 5 = invents no specific employers,
+      degrees, or numbers not given. Reward concise on-spec writing; do not favor longer answers.
+
+- id: write_birthday_poem
+  category: writing_composition
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Write a 6-line birthday poem for my grandmother who loves gardening and her cat named
+        Biscuit. Keep it sweet and simple.
+  expected: >
+    6 lines, references gardening and the cat Biscuit, sweet/simple tone, coherent and readable,
+    light rhyme acceptable but not forced.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Relevance, Tone, and Craft each 1-5. Relevance 5 = uses both gardening and the cat
+      Biscuit naturally in 6 lines. Tone 5 = sweet and warm as asked. Craft 5 = readable and
+      coherent with natural (not forced or broken) rhythm/rhyme. Judge quality over length; a clean
+      6-line poem must not lose to a longer one.
+
+# --- Summarization -------------------------------------------------------------------------------
+- id: summ_council_vote
+  category: summarization
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Summarize this in 2 sentences: "The city council voted 7-2 on Tuesday to approve a new
+        bike-lane network downtown. Supporters say it will cut traffic and improve safety; opponents
+        worry about reduced parking for local shops. Construction is expected to begin in spring and
+        finish within 18 months."
+  expected: >
+    2 sentences capturing: council approved bike lanes 7-2; pro (traffic/safety) vs con (parking);
+    construction spring, about 18 months. No new facts.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Coverage, Faithfulness, and Concision each 1-5. Coverage 5 = the vote, the pro/con
+      tension, and the timeline all present. Faithfulness 5 = no invented or distorted facts (e.g.
+      correct 7-2 and 18 months). Concision 5 = roughly two sentences, no padding. Judge information
+      captured per word, not raw length; a faithful 2-sentence summary must not lose to a longer one.
+
+- id: summ_metrics_bullets
+  category: summarization
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Give me 3 bullet-point takeaways from this: "Our Q2 user numbers grew 12% to 88,000. Revenue
+        was flat because more users chose the free tier. The team shipped the mobile app, which now
+        drives a third of new signups."
+  expected: >
+    3 bullets: (1) users +12% to 88k; (2) revenue flat due to free-tier shift; (3) mobile app
+    shipped, about 1/3 of new signups.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Coverage, Faithfulness, and Format each 1-5. Coverage 5 = the three distinct facts (user
+      growth, flat-revenue cause, mobile-app impact) each captured. Faithfulness 5 = figures correct
+      (12%, 88,000, one-third). Format 5 = exactly three bullets. Reward accuracy and concision;
+      extra bullets or commentary lose Format points rather than gain credit.
+
+- id: summ_email_tldr
+  category: summarization
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        TL;DR this email in one line: "Hi team, just confirming the offsite moved from the 14th to
+        the 21st because the venue double-booked. Same agenda, same start time of 9am. Let me know if
+        the new date is a problem."
+  expected: >
+    One line: offsite moved 14th to 21st (venue double-booked), same 9am agenda, flag conflicts.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Faithfulness, Concision, and Clarity each 1-5. Faithfulness 5 = keeps the date change
+      and reason and the unchanged time/agenda. Concision 5 = a single line. Clarity 5 = immediately
+      understandable. Penalize multi-sentence or padded answers on Concision; do not reward length.

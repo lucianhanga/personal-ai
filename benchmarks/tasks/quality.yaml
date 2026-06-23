@@ -1,7 +1,7 @@
 # Open-ended tasks graded by the LLM judge (rubric, reference-guided). These exercise quality, not
 # exact-match — used by `compare`. With no judge configured they score 0 (rubric tasks need a judge).
 - id: quality_explain_recursion
-  category: explanation
+  category: explanation_howto
   capability_tier: raw
   version: v1
   input:

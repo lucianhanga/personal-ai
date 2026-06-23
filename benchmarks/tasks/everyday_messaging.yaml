@@ -1,0 +1,124 @@
+# Everyday-assistant suite: rewriting/tone and message drafting (adds to communication.yaml).
+
+# --- Rewriting / tone change / editing -----------------------------------------------------------
+- id: rewrite_polite_professional
+  category: rewriting_tone
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Make this more polite and professional: "I need the report by tomorrow. You're late again
+        and it's holding everyone up."
+  expected: >
+    Same core ask (report by tomorrow, lateness is causing delays) reframed politely/professionally;
+    keeps the deadline and the accountability point; no new facts.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Meaning-preservation, Tone-shift, and Fluency each 1-5. Meaning 5 = retains the deadline
+      and the impact-of-lateness point without inventing new content. Tone-shift 5 = clearly
+      polite/professional while still conveying urgency; loses points if it becomes so soft the
+      accountability is lost. Fluency 5 = natural and grammatical. Score on content and tone, not
+      length.
+
+- id: rewrite_shorten_one_sentence
+  category: rewriting_tone
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Shorten this to one sentence without losing the main point: "We are writing to let you know
+        that, due to circumstances beyond our control, the delivery of your order has unfortunately
+        been delayed and will now arrive sometime next week instead of this week."
+  expected: >
+    One sentence, retains: order delayed, arriving next week instead of this week. Drops filler.
+    Stays clear and polite.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Faithfulness, Concision, and Clarity each 1-5. Faithfulness 5 = keeps the delay and the
+      next-week timing. Concision 5 = a single clean sentence with filler removed; loses points if
+      it stays multi-sentence or padded. Clarity 5 = unambiguous and grammatical. Reward brevity
+      here explicitly; a longer rewrite must not outscore a correct one-sentence version.
+
+- id: rewrite_grammar_only
+  category: rewriting_tone
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Fix the grammar and spelling, but don't change my wording or tone otherwise: "Me and him was
+        going too the store but it dont open untill 9."
+  expected: >
+    Corrects agreement and spelling (too->to, dont->doesn't, untill->until, "Me and him"->"He and
+    I"); preserves casual register and content; no rewriting of style.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Correctness, Minimal-change, and Register-preservation each 1-5. Correctness 5 = all
+      grammar/spelling errors fixed with none introduced. Minimal-change 5 = only errors touched,
+      wording otherwise intact; loses points for unsolicited rephrasing. Register 5 = keeps the
+      casual tone. Do not reward added commentary or length; the bare corrected sentence is ideal.
+
+# --- Drafting messages / email -------------------------------------------------------------------
+- id: draft_landlord_repair
+  category: drafting_messages
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Write a short, friendly email to my landlord asking to fix a leaking kitchen tap. I'm
+        available weekday afternoons.
+  expected: >
+    Greeting, clear request (fix leaking kitchen tap), availability (weekday afternoons), polite
+    friendly close. Concise and send-ready.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Completeness, Tone, and Actionability each 1-5. Completeness 5 = states the leaking
+      kitchen tap and the weekday-afternoon availability. Tone 5 = friendly and polite.
+      Actionability 5 = a clear ask and a send-ready structure (greeting/body/sign-off). Judge
+      whether it does the job concisely; a tight email must not score below a padded one.
+
+- id: draft_decline_meeting
+  category: drafting_messages
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Draft a brief, professional message declining a meeting invite for Thursday because I'm out
+        of office, and propose meeting next week instead.
+  expected: >
+    Polite decline, reason (out of office Thursday), proposes next-week alternative, professional
+    and brief. Clear and send-ready.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Completeness, Tone, and Clarity each 1-5. Completeness 5 = declines Thursday, gives the
+      out-of-office reason, and proposes next week. Tone 5 = professional and courteous. Clarity 5 =
+      unambiguous and send-ready. Reward brevity and completeness together; do not favor a longer
+      draft over a complete short one.
+
+- id: draft_thankyou_text
+  category: drafting_messages
+  capability_tier: raw
+  version: v1
+  input:
+    - role: user
+      content: >
+        Write a short thank-you text to a friend who helped me move apartments this weekend. Warm
+        and casual.
+  expected: >
+    Casual, warm thank-you referencing the moving help; texting register (short, no formal email
+    structure); genuine tone.
+  rubric:
+    type: model_graded
+    criteria: >
+      Score Relevance, Tone, and Format-fit each 1-5. Relevance 5 = specifically thanks them for the
+      moving help. Tone 5 = warm and genuine. Format-fit 5 = casual text-message style, short, not a
+      formal email. Score warmth and fit, not length; a brief heartfelt text is ideal.
