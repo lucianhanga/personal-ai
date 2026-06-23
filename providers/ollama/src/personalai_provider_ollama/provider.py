@@ -60,8 +60,13 @@ def _capabilities_from(caps: Sequence[str], context_length: int | None) -> Model
     )
 
 
-def _options(request: GenerationRequest) -> dict[str, Any]:
-    options: dict[str, Any] = {}
+def _options(
+    request: GenerationRequest, sampling: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    # Start from the configured sampling defaults (top_p/top_k/temperature tuned for the model),
+    # then let an explicit per-request temperature win. Without this Ollama uses the model's looser
+    # Modelfile defaults (e.g. Qwen3's temperature 1.0 / top_p 0.95), which drift off the context.
+    options: dict[str, Any] = dict(sampling or {})
     if request.temperature is not None:
         options["temperature"] = request.temperature
     if request.max_tokens is not None:
@@ -90,8 +95,9 @@ def _chat_payload(
     stream: bool,
     num_ctx: int | None = None,
     keep_alive: str | None = None,
+    sampling: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    options = _options(request)
+    options = _options(request, sampling)
     if num_ctx is not None:
         options["num_ctx"] = num_ctx
     payload: dict[str, Any] = {
@@ -156,6 +162,9 @@ class OllamaProvider:
         client: httpx.AsyncClient | None = None,
         num_ctx: int | None = None,
         keep_alive: str | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
         egress_guard: EgressGuard | None = None,
     ) -> None:
         self._base = base_url.rstrip("/")
@@ -167,6 +176,15 @@ class OllamaProvider:
         self._num_ctx = num_ctx
         # Keep the model resident this long after a request (e.g. "30m", "-1"); None = default.
         self._keep_alive = keep_alive
+        # Default sampling sent unless a request overrides temperature (tuned for the model so it
+        # stays grounded instead of using the model's looser Modelfile defaults).
+        self._sampling: dict[str, Any] = {}
+        if temperature is not None:
+            self._sampling["temperature"] = temperature
+        if top_p is not None:
+            self._sampling["top_p"] = top_p
+        if top_k is not None:
+            self._sampling["top_k"] = top_k
         # Names of models Ollama proxies to the cloud (remote_host set); populated by list_models.
         # Used to warn before a request silently leaves the machine (stop-gap until M2).
         self._remote_models: set[str] = set()
@@ -216,7 +234,11 @@ class OllamaProvider:
         data = await self._post(
             "/api/chat",
             _chat_payload(
-                request, stream=False, num_ctx=self._num_ctx, keep_alive=self._keep_alive
+                request,
+                stream=False,
+                num_ctx=self._num_ctx,
+                keep_alive=self._keep_alive,
+                sampling=self._sampling,
             ),
         )
         message = data.get("message") or {}
@@ -236,7 +258,11 @@ class OllamaProvider:
             "POST",
             f"{self._base}/api/chat",
             json=_chat_payload(
-                request, stream=True, num_ctx=self._num_ctx, keep_alive=self._keep_alive
+                request,
+                stream=True,
+                num_ctx=self._num_ctx,
+                keep_alive=self._keep_alive,
+                sampling=self._sampling,
             ),
         ) as response:
             response.raise_for_status()

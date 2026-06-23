@@ -25,6 +25,9 @@ _ENV_FIELDS = {
     "OLLAMA_HOST": "ollama_host",
     "OLLAMA_NUM_CTX": "ollama_num_ctx",
     "OLLAMA_KEEP_ALIVE": "ollama_keep_alive",
+    "OLLAMA_TEMPERATURE": "ollama_temperature",
+    "OLLAMA_TOP_P": "ollama_top_p",
+    "OLLAMA_TOP_K": "ollama_top_k",
     "MCP_CONFIG": "mcp_config_path",
     "AGENT_MAX_ITERATIONS": "agent_max_iterations",
     "AGENT_TIMEOUT_SECONDS": "agent_timeout_seconds",
@@ -75,11 +78,13 @@ _INT_FIELDS = {
     "stm_keep_recent",
     "memory_top_k",
     "ollama_num_ctx",
+    "ollama_top_k",
     "agent_max_iterations",
     "agent_timeout_seconds",
     "session_idle_seconds",
     "session_absolute_seconds",
 }
+_FLOAT_FIELDS = {"ollama_temperature", "ollama_top_p"}
 _BOOL_FIELDS = {
     "egress_enabled",
     "stm_summarize",
@@ -120,6 +125,12 @@ class CoreConfig(StrictModel):
     # How long Ollama keeps the model resident after a request ("30m", "1h", "-1" = never unload).
     # Keeps a large model warm between turns so it isn't cold-reloaded (slow on big models).
     ollama_keep_alive: str = "30m"
+    # Default sampling sent to Ollama when a request doesn't override it. Tuned for grounded agent
+    # work on Qwen3 (its docs: temp 0.7 / top_p 0.8 / top_k 20 for non-thinking; greedy temp 0 is
+    # discouraged). Lower top_p than the model's 0.95 default keeps it closer to retrieved context.
+    ollama_temperature: float = 0.7
+    ollama_top_p: float = 0.8
+    ollama_top_k: int = 20
     # Path to an mcp.json (mcpServers map) of MCP servers to connect at startup (M7); empty = none.
     mcp_config_path: str = ""
     # Max model<->tool iterations in the agent loop before it must answer (multi-step tool use).
@@ -230,6 +241,8 @@ class CoreConfig(StrictModel):
                 values[field_name] = raw.strip().lower() in _TRUTHY
             elif field_name in _INT_FIELDS:
                 values[field_name] = int(raw)
+            elif field_name in _FLOAT_FIELDS:
+                values[field_name] = float(raw)
             elif field_name in _CSV_FIELDS:
                 values[field_name] = tuple(o.strip() for o in raw.split(",") if o.strip())
             else:

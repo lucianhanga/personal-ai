@@ -155,6 +155,36 @@ def test_generate_sets_num_ctx_when_configured() -> None:
 
 
 @respx.mock
+def test_configured_sampling_defaults_are_sent_and_temperature_can_be_overridden() -> None:
+    route = respx.post(f"{BASE}/api/chat").mock(
+        return_value=httpx.Response(200, json={"message": {"content": "ok"}})
+    )
+
+    async def _run(req: GenerationRequest) -> None:
+        provider = OllamaProvider(base_url=BASE, temperature=0.7, top_p=0.8, top_k=20)
+        try:
+            await provider.generate(req)
+        finally:
+            await provider.aclose()
+
+    # No per-request temperature -> the configured defaults are applied (grounded sampling).
+    asyncio.run(_run(GenerationRequest(messages=[ChatMessage(Role.USER, "hi")], model="qwen3:8b")))
+    opts = _json.loads(route.calls.last.request.content)["options"]
+    assert opts["temperature"] == 0.7 and opts["top_p"] == 0.8 and opts["top_k"] == 20
+
+    # An explicit request temperature wins over the default; top_p/top_k still applied.
+    asyncio.run(
+        _run(
+            GenerationRequest(
+                messages=[ChatMessage(Role.USER, "hi")], model="qwen3:8b", temperature=0.1
+            )
+        )
+    )
+    opts = _json.loads(route.calls.last.request.content)["options"]
+    assert opts["temperature"] == 0.1 and opts["top_p"] == 0.8 and opts["top_k"] == 20
+
+
+@respx.mock
 def test_generate_sets_keep_alive_when_configured() -> None:
     route = respx.post(f"{BASE}/api/chat").mock(
         return_value=httpx.Response(200, json={"message": {"content": "ok"}})
