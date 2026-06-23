@@ -50,6 +50,9 @@ def register_adapters(registries: Registries, config: CoreConfig) -> None:
             base_url=config.ollama_host,
             num_ctx=config.ollama_num_ctx,
             keep_alive=config.ollama_keep_alive,
+            temperature=config.ollama_temperature,
+            top_p=config.ollama_top_p,
+            top_k=config.ollama_top_k,
             egress_guard=_ollama_egress,
         ),
     )
