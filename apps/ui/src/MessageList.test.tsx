@@ -112,6 +112,25 @@ test("user questions are collapsible: toggle hides full text + images, shows ell
   expect(screen.getByTestId("msg-images")).toBeInTheDocument();
 });
 
+test("collapsing a question folds the whole turn: the following assistant answer is hidden", () => {
+  renderList([
+    { role: "user", content: "What is the capital of France?" },
+    { role: "assistant", content: "The capital of France is Paris." },
+  ]);
+
+  // Expanded by default: the assistant answer is visible.
+  expect(screen.getByTestId("msg-assistant")).toHaveTextContent("The capital of France is Paris.");
+
+  // Collapse the question: the question preview shows, the whole assistant turn is hidden.
+  fireEvent.click(screen.getByTestId("question-toggle"));
+  expect(screen.getByTestId("msg-user")).toHaveTextContent("What is the capital of France?");
+  expect(screen.queryByTestId("msg-assistant")).toBeNull();
+
+  // Expand again: the assistant answer returns.
+  fireEvent.click(screen.getByTestId("question-toggle"));
+  expect(screen.getByTestId("msg-assistant")).toHaveTextContent("The capital of France is Paris.");
+});
+
 test("user message blocks get a tinted background + left accent border to delimit turns", () => {
   renderList([
     { role: "user", content: "hi" },

@@ -76,6 +76,8 @@ test("shows the context composition breakdown", () => {
   const breakdown = screen.getByTestId("context-breakdown");
   expect(breakdown).toHaveTextContent("Grounding");
   expect(breakdown).toHaveTextContent("Documents (4)");
+  // Token counts are toggle-gated (hidden by default); reveal them to see the assembled footer.
+  fireEvent.click(screen.getByTestId("context-tokens-toggle"));
   expect(breakdown).toHaveTextContent(/Assembled ~\d+ tokens/);
   expect(screen.getAllByTestId("context-item")).toHaveLength(2);
 });

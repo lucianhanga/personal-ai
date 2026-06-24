@@ -78,8 +78,17 @@ export function MessageList({
   onScroll,
   onAllowHost,
 }: MessageListProps): React.ReactElement {
-  // Per-message collapsed state, keyed by message index. Questions default to expanded.
+  // Per-message collapsed state, keyed by the USER message index. Questions default to expanded.
   const [collapsed, setCollapsed] = useState<Record<number, boolean>>({});
+
+  // An assistant message belongs to the turn opened by its nearest preceding user message. When that
+  // user message is explicitly collapsed, fold the whole turn by hiding this assistant message too.
+  const isAssistantHidden = (i: number): boolean => {
+    for (let j = i - 1; j >= 0; j--) {
+      if (messages[j].role === "user") return collapsed[j] === true;
+    }
+    return false;
+  };
   return (
     <div
       ref={listRef}
@@ -97,6 +106,7 @@ export function MessageList({
       {messages.length === 0 && <p style={{ color: "#888" }}>Ask your local model anything.</p>}
       {messages.map((m, i) =>
         m.role === "assistant" ? (
+          isAssistantHidden(i) ? null : (
           <div key={i} data-testid="msg-assistant" style={{ margin: "0.4rem 0", padding: "0 0.6rem" }}>
             <strong>AI:</strong>
             {/* Read aloud (M9.3) — only once the answer has finished streaming and TTS is enabled. */}
@@ -128,6 +138,7 @@ export function MessageList({
               <MessageContext context={m.meta.context} idPrefix={`msg-${i}`} />
             )}
           </div>
+          )
         ) : (
           <div
             key={i}
