@@ -190,7 +190,10 @@ class ToolGateway:
             try:
                 self._egress(host)
             except EgressBlockedError as exc:
-                return deny(f"egress blocked: {exc}")
+                # Prefix the blocked host as a stable, parseable token (``host=<host>``) so the
+                # engine-agnostic agent loop can extract it for the egress-approval gate (#377)
+                # without scraping the human-readable message (which varies by deny reason).
+                return deny(f"egress blocked: host={host}: {exc}")
 
         result = await self._executor.execute(registered.handler, call, timeout=self._timeout)
 

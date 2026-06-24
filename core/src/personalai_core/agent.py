@@ -64,12 +64,79 @@ def _tool_payload(result_ok: bool, output: Mapping[str, Any], error: str | None)
     return payload
 
 
+# The gateway prefixes an egress denial with this token (see ToolGateway.invoke) so we can detect an
+# egress block and recover the host without scraping the variable human-readable message.
+_EGRESS_DENY_PREFIX = "egress blocked:"
+_EGRESS_HOST_TOKEN = "host="
+
+
+def _egress_blocked_host(result_ok: bool, error: str | None) -> str | None:
+    """Return the blocked host if ``error`` is an egress denial from the gateway, else ``None``.
+
+    The gateway emits ``egress blocked: host=<host>: <message>``; we read the ``host=<host>`` token
+    so the egress-approval gate (#377) gets a server-trusted host without parsing the prose."""
+    if result_ok or not error or not error.startswith(_EGRESS_DENY_PREFIX):
+        return None
+    marker = error.find(_EGRESS_HOST_TOKEN)
+    if marker == -1:
+        return ""  # an egress block whose host couldn't be recovered (still a block)
+    rest = error[marker + len(_EGRESS_HOST_TOKEN) :]
+    host, _, _ = rest.partition(":")  # host is a bare hostname (no ':'); message follows
+    return host.strip()
+
+
+@dataclass(frozen=True)
+class BlockedCall:
+    """The single tool call to retry on egress-approval resume (#377). Plain data so it serializes
+    through the LangGraph checkpointer (no provider/gateway handles)."""
+
+    name: str
+    version: str
+    arguments: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class ResumeFrame:
+    """Partial progress to re-enter :func:`run_agent` mid-conversation after an egress-approval gate
+    (#377). ``convo`` is the message list as it stood at the block (completed tool calls are already
+    appended TOOL messages — they do NOT re-fire); ``blocked_call`` is the one call to retry."""
+
+    convo: Sequence[ChatMessage]
+    blocked_call: BlockedCall
+
+
+def serialize_convo(convo: Sequence[ChatMessage]) -> list[dict[str, Any]]:
+    """Render a message list as plain dicts so it round-trips through the LangGraph (ormsgpack)
+    checkpointer in the egress-approval resume frame (#377) without relying on dataclass/enum serde.
+    """
+    return [
+        {"role": str(m.role), "content": m.content, "images": list(m.images)} for m in convo
+    ]
+
+
+def deserialize_convo(raw: Sequence[Mapping[str, Any]]) -> list[ChatMessage]:
+    """Inverse of :func:`serialize_convo`: rebuild :class:`ChatMessage`s from the resume frame."""
+    return [
+        ChatMessage(
+            Role(m["role"]),
+            str(m.get("content", "")),
+            tuple(m.get("images", ()) or ()),
+        )
+        for m in raw
+    ]
+
+
 @dataclass(frozen=True)
 class AgentEvent:
     """A step in the agent loop / graph: reasoning, a tool call, its result, the final answer, or
     (M8 multi-node graph, ADR-0012) a planner ``plan`` / critic ``critique`` step, or an
     ``approval_request`` when the graph suspends at the durable human gate (payload in ``output``).
-    ``text`` carries the plan/critique content; ``answer``/``thinking`` carry answer/reasoning."""
+    ``text`` carries the plan/critique content; ``answer``/``thinking`` carry answer/reasoning.
+
+    ``egress_blocked`` (#377) signals the engine-agnostic agent loop hit an egress-denied tool call:
+    ``tool``/``args`` name the blocked call and ``error`` carries the egress message; ``output`` may
+    carry the parsed ``blocked_host``. The agent RETURNS on it (no re-prompt) so the orchestrator (a
+    LangGraph node) can durably pause for an Allow/Don't-allow decision and resume the one call."""
 
     type: Literal[
         "reasoning",
@@ -81,6 +148,7 @@ class AgentEvent:
         "critique",
         "verification",
         "approval_request",
+        "egress_blocked",
     ]
     tool: str | None = None
     args: Mapping[str, Any] | None = None
@@ -105,9 +173,19 @@ async def run_agent(
     approved: bool = False,
     max_iterations: int = 4,
     think: bool | None = None,
+    resume_from: ResumeFrame | None = None,
 ) -> AsyncIterator[AgentEvent]:
-    """Drive the model<->gateway tool-calling loop, yielding events as they happen."""
-    convo = list(messages)
+    """Drive the model<->gateway tool-calling loop, yielding events as they happen.
+
+    Egress-approval gate (#377): when a ``gateway.invoke`` returns an egress-blocked result, the
+    loop yields a single ``egress_blocked`` event (carrying the tool, args, and the parsed
+    ``blocked_host`` in ``output``) and RETURNS — it does NOT re-prompt the model. The orchestrator
+    durably pauses for an Allow/Don't-allow decision and resumes by re-entering this loop with
+    ``resume_from``: a :class:`ResumeFrame` whose ``convo`` is the message list as it stood at the
+    block (completed tool calls are already appended TOOL messages, so they do NOT re-fire) and
+    whose ``blocked_call`` is the one call to retry. On resume the loop issues EXACTLY ONE
+    ``gateway.invoke`` (the retried call), appends its result, then falls into the forward loop."""
+    convo = list(resume_from.convo) if resume_from is not None else list(messages)
     specs = [
         ToolSpec(
             name=rt.manifest.name,
@@ -120,6 +198,28 @@ async def run_agent(
 
     text = ""
     usage: Mapping[str, int] = {}
+
+    if resume_from is not None:
+        # Re-enter mid-conversation: issue EXACTLY ONE gateway.invoke (the retried call), append its
+        # result, and fall into the forward loop below. Prior calls are already TOOL messages in
+        # ``convo`` and never re-fire. (Even now egress may still deny — e.g. on a deny decision, or
+        # the SSRF guard overriding the allowlist — in which case the result is the egress error and
+        # the loop simply continues forward, exactly as today's non-blocking behavior.)
+        bc = resume_from.blocked_call
+        yield AgentEvent(type="tool_call", tool=bc.name, args=dict(bc.arguments))
+        retried = await gateway.invoke(
+            ToolCall(bc.name, bc.version, bc.arguments), grants=grants, approved=approved
+        )
+        yield AgentEvent(
+            type="tool_result",
+            tool=bc.name,
+            ok=retried.ok,
+            output=dict(retried.output),
+            error=retried.error,
+        )
+        payload = _tool_payload(retried.ok, retried.output, retried.error)
+        convo.append(ChatMessage(Role.TOOL, _wrap_tool_output(bc.name, payload)))
+
     for _ in range(max_iterations):
         # Stream this turn's text live. A turn that ALSO requests tools is the model narrating its
         # tool use ("let me search…"), not the answer: it streams, then the following tool_call
@@ -150,12 +250,37 @@ async def run_agent(
             yield AgentEvent(type="reasoning", thinking=text)
             convo.append(ChatMessage(Role.ASSISTANT, text))
         for call in tool_calls:
+            version = versions.get(call.name, "1.0.0")
             yield AgentEvent(type="tool_call", tool=call.name, args=dict(call.arguments))
             tool_result = await gateway.invoke(
-                ToolCall(call.name, versions.get(call.name, "1.0.0"), call.arguments),
+                ToolCall(call.name, version, call.arguments),
                 grants=grants,
                 approved=approved,
             )
+            # Egress-approval gate (#377): a blocked outbound call durably PAUSES the run instead of
+            # continuing with an error. Signal it (with the server-trusted blocked host) and RETURN;
+            # the orchestrator interrupts for an Allow/Don't-allow decision and resumes this one
+            # call via ``resume_from``. The partial progress is already in ``convo``: completed tool
+            # calls this turn are appended TOOL messages, so the retry never replays them.
+            blocked_host = _egress_blocked_host(tool_result.ok, tool_result.error)
+            if blocked_host is not None:
+                # ``convo`` is the partial progress at the block (completed tool calls this turn are
+                # already appended TOOL messages); the orchestrator stashes it + the blocked call
+                # into a ResumeFrame and re-enters here after the decision. We carry the live
+                # ``convo`` list (not a copy of dicts) so the graph can build the frame; it flows
+                # through the checkpointer as ChatMessages.
+                yield AgentEvent(
+                    type="egress_blocked",
+                    tool=call.name,
+                    args=dict(call.arguments),
+                    error=tool_result.error,
+                    output={
+                        "blocked_host": blocked_host,
+                        "version": version,
+                        "convo": serialize_convo(convo),
+                    },
+                )
+                return
             yield AgentEvent(
                 type="tool_result",
                 tool=call.name,

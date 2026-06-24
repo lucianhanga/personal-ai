@@ -41,9 +41,67 @@ from personalai_contracts.ports import (
 )
 from personalai_contracts.schemas import Verdict
 from personalai_contracts.schemas.tools import Permission
-from personalai_core.agent import AgentEvent, run_agent
+from personalai_core.agent import (
+    AgentEvent,
+    BlockedCall,
+    ResumeFrame,
+    deserialize_convo,
+    run_agent,
+)
 from personalai_core.gateway import RegisteredTool, ToolGateway
 from personalai_core.structured import generate_structured
+
+# Resume payload keys for the egress gate (#377). The backend builds the resume payload from the
+# checkpoint (host + frame are server-trusted) and passes it back via Command(resume=...).
+EGRESS_RESUME_DECISION = "decision"
+EGRESS_RESUME_FRAME = "frame"
+# The egress decision verbs (kept in a distinct namespace from the answer gate's approve/reject).
+EGRESS_ALLOW_ONCE = "egress_allow_once"
+EGRESS_ALLOW_ALWAYS = "egress_allow_always"
+EGRESS_DENY = "egress_deny"
+
+
+def _egress_interrupt_payload(frame_state: Mapping[str, Any]) -> dict[str, Any]:
+    """The interrupt value persisted in the checkpoint when an egress block suspends the run (#377).
+
+    Carries the client-facing fields (``reason``/``blocked_host``/``tool``/``args``) AND the
+    server-only resume ``frame`` (the partial convo + the one call to retry). The backend reads
+    ``blocked_host``/``subject_id`` from this checkpoint payload (server-trusted, never the request
+    body) and whitelists the client-facing fields when it emits the approval_request SSE."""
+    call = frame_state["blocked_call"]
+    return {
+        "reason": "egress_approval",
+        "blocked_host": frame_state.get("blocked_host", ""),
+        "tool": call.get("name"),
+        "args": dict(call.get("arguments", {})),
+        "subject_id": frame_state.get("subject_id", ""),
+        # Server-only: the resume frame round-trips back through Command(resume=...). The backend
+        # passes it back verbatim; it is not surfaced to the client.
+        EGRESS_RESUME_FRAME: dict(frame_state),
+    }
+
+
+def _resume_decision(resume_value: Any) -> str:
+    """The egress verb from the resume Command. The backend sends ``{decision, frame}``; tolerate a
+    bare string (older callers / tests) by treating it as the verb itself."""
+    if isinstance(resume_value, Mapping):
+        return str(resume_value.get(EGRESS_RESUME_DECISION, EGRESS_DENY))
+    return str(resume_value)
+
+
+def _resume_frame(resume_value: Any, fallback: Mapping[str, Any]) -> dict[str, Any]:
+    """The resume frame to retry from. Prefer the backend-supplied frame (read from the checkpoint
+    on resume); fall back to the in-node ``fallback`` (same-process resume in tests)."""
+    if isinstance(resume_value, Mapping) and resume_value.get(EGRESS_RESUME_FRAME):
+        return dict(resume_value[EGRESS_RESUME_FRAME])
+    return dict(fallback)
+
+
+def _state_subject(state: GraphState) -> str:
+    """The run's subject id from the AgentContext (server-trusted), or ``""`` when no context is set
+    (ungated/automated runs). Carried into both gates' interrupt payloads for same-subject authz."""
+    ctx = state.get("context")
+    return ctx.subject_id if ctx is not None else ""
 
 # The ordered roster of configurable agents in the multi-agent graph (#290). Only the researcher
 # uses tools (it runs the single-agent loop); planner and critic are deliberately tool-free.
@@ -140,6 +198,14 @@ class GraphState(TypedDict, total=False):
     attempts: int
     # Verifier (LLM-judge) verdict ("pass"/"needs_revision"/"fail"), accurate mode only (#261).
     verify_verdict: str
+    # Egress-approval gate (#377), kept SEPARATE from the answer gate's ``decision`` (a turn may hit
+    # BOTH gates). ``egress_pending`` mirrors the live resume frame (partial convo + the one call to
+    # retry + the blocked host + the run's subject) while suspended; ``egress_decision`` is the
+    # human's verb (egress_allow_once/egress_allow_always/egress_deny). The authoritative copy of
+    # the frame rides in the interrupt payload (checkpointed), so the backend reads the host/subject
+    # from there server-trusted.
+    egress_pending: dict[str, Any] | None
+    egress_decision: str
 
 
 # Max researcher passes in the reflection loop: the initial attempt + up to one retry.
@@ -203,50 +269,141 @@ def _build_graph(
         # The single-agent tool loop, informed by the plan. Forwards reasoning/answer/tool events
         # to the stream; swallows run_agent's own `final` and takes the complete answer + usage from
         # it, so the graph emits ONE final (from finalize) and the critic sees the full answer.
+        #
+        # Egress-approval gate (#377): run_agent yields an `egress_blocked` event and stops when a
+        # tool's outbound call is denied. On a block the node RETURNS the resume frame into
+        # ``egress_pending`` (a NORMAL node return, so it durably persists) and a conditional edge
+        # routes to the ``egress_gate`` node, which calls interrupt() to pause for an
+        # Allow/Don't-allow decision and routes BACK here. On that re-entry ``egress_pending`` is
+        # set, so we SKIP the fresh model loop and re-enter run_agent with ``resume_from`` to retry
+        # EXACTLY the one blocked call — prior tool calls never re-fire (they are already TOOL
+        # messages in the carried convo). A return without ``egress_pending`` clears it and proceeds
+        # to the critic. ``egress_*`` stays separate from the answer gate's ``decision`` (a turn may
+        # hit BOTH gates). When there is no checkpointer (e.g. automated runs) the gate cannot
+        # suspend, so a block degrades to today's behavior inline (retry denied -> egress error).
         writer = get_stream_writer()
-        convo = [ChatMessage(Role.SYSTEM, agent_prompts["researcher"]), *messages]
-        if state.get("plan"):
-            convo.append(ChatMessage(Role.SYSTEM, f"Plan to follow:\n{state['plan']}"))
-        # On a retry (the critic asked to revise), feed the critique back so this attempt takes a
-        # different path and actually produces the answer.
-        if state.get("attempts", 0) > 0 and state.get("critique"):
-            convo.append(
-                ChatMessage(
-                    Role.SYSTEM,
-                    f"Your previous attempt was judged inadequate: {state['critique']}\n"
-                    "Take a different approach and actually obtain and give the answer.",
-                )
-            )
+
         answer, usage = "", {}
         evidence: list[str] = []
-        async for ev in run_agent(
-            messages=convo,
-            provider=provider,
-            model=model,
-            gateway=gateway,
-            tools=tools,
-            grants=grants,
-            approved=approved,
-            think=think,
-            max_iterations=max_iterations,
-        ):
+
+        def _consume(ev: AgentEvent) -> None:
+            nonlocal answer, usage
             if ev.type == "final":
                 answer = ev.answer or ""
                 usage = dict(ev.usage or {})
-                continue
-            # Keep each successful tool result so the critic/verifier can judge against the actual
-            # evidence (truncated to protect their context).
+                return
             if ev.type == "tool_result" and ev.ok and ev.output:
                 evidence.append(
                     f"[{ev.tool}] {json.dumps(dict(ev.output), ensure_ascii=False)[:1500]}"
                 )
             writer(ev)
+
+        async def _drive(agent_iter: AsyncIterator[AgentEvent]) -> AgentEvent | None:
+            # Drain run_agent, forwarding events; return the egress_blocked event if one occurs.
+            async for ev in agent_iter:
+                if ev.type == "egress_blocked":
+                    return ev
+                _consume(ev)
+            return None
+
+        def _frame_state(blocked: AgentEvent) -> dict[str, Any]:
+            out = dict(blocked.output or {})
+            return {
+                "convo": out.get("convo", []),
+                "blocked_call": {
+                    "name": blocked.tool,
+                    "version": out.get("version", "1.0.0"),
+                    "arguments": dict(blocked.args or {}),
+                },
+                "blocked_host": out.get("blocked_host", ""),
+                "subject_id": _state_subject(state),
+            }
+
+        def _resume_iter(frame_data: Mapping[str, Any]) -> AsyncIterator[AgentEvent]:
+            return run_agent(
+                messages=(),
+                provider=provider,
+                model=model,
+                gateway=gateway,
+                tools=tools,
+                grants=grants,
+                approved=approved,
+                think=think,
+                max_iterations=max_iterations,
+                resume_from=ResumeFrame(
+                    convo=deserialize_convo(frame_data["convo"]),
+                    blocked_call=BlockedCall(
+                        name=frame_data["blocked_call"]["name"],
+                        version=frame_data["blocked_call"]["version"],
+                        arguments=dict(frame_data["blocked_call"]["arguments"]),
+                    ),
+                ),
+            )
+
+        pending = state.get("egress_pending")
+        if pending is not None:
+            # Resuming an egress decision: the gate node set ``egress_decision``; re-enter ONLY the
+            # blocked call (the backend made the allow effective by injecting the host into
+            # current_egress, or left it denied). The frame is the durably-persisted ``pending``.
+            agent_iter: AsyncIterator[AgentEvent] = _resume_iter(pending)
+        else:
+            convo = [ChatMessage(Role.SYSTEM, agent_prompts["researcher"]), *messages]
+            if state.get("plan"):
+                convo.append(ChatMessage(Role.SYSTEM, f"Plan to follow:\n{state['plan']}"))
+            # On a retry (the critic asked to revise), feed the critique back so this attempt takes
+            # a different path and actually produces the answer.
+            if state.get("attempts", 0) > 0 and state.get("critique"):
+                convo.append(
+                    ChatMessage(
+                        Role.SYSTEM,
+                        f"Your previous attempt was judged inadequate: {state['critique']}\n"
+                        "Take a different approach and actually obtain and give the answer.",
+                    )
+                )
+            agent_iter = run_agent(
+                messages=convo,
+                provider=provider,
+                model=model,
+                gateway=gateway,
+                tools=tools,
+                grants=grants,
+                approved=approved,
+                think=think,
+                max_iterations=max_iterations,
+            )
+
+        # Drive forward. A block on a CHECKPOINTED run returns ``egress_pending`` + routes to the
+        # gate node (which interrupts) and re-enters here; without a checkpointer it degrades.
+        while True:
+            blocked = await _drive(agent_iter)
+            if blocked is None:
+                break
+            frame_state = _frame_state(blocked)
+            if checkpointer is not None:
+                # Durable gate: persist the frame and hand off to egress_gate (it interrupts).
+                # ``attempts``/``answer`` are not advanced; the resumed researcher completes them.
+                return {"evidence": evidence, "egress_pending": frame_state}
+            # No checkpointer: degrade to today's non-blocking behavior (retry denied -> egress
+            # error) without interrupting (interrupt() requires a checkpointer).
+            agent_iter = _resume_iter(frame_state)
+
         return {
             "answer": answer,
             "usage": usage,
             "evidence": evidence,
             "attempts": state.get("attempts", 0) + 1,
+            "egress_pending": None,
+            "egress_decision": "",
         }
+
+    async def egress_gate(state: GraphState) -> dict[str, Any]:
+        # Durable egress-approval suspend (#377): interrupt() raises on the first pass (the frame is
+        # already persisted in ``egress_pending`` by the researcher's normal return) and returns the
+        # decision on resume. The interrupt payload carries the client-facing fields + the
+        # server-only frame (the backend whitelists the client SSE and reads host/subject from it).
+        pending = state.get("egress_pending") or {}
+        resume_value = interrupt(_egress_interrupt_payload(pending))
+        return {"egress_decision": _resume_decision(resume_value)}
 
     async def critic(state: GraphState) -> dict[str, Any]:
         # The draft goes in a USER message, not an ASSISTANT one: with the draft as an assistant
@@ -303,12 +460,15 @@ def _build_graph(
 
     async def human_gate(state: GraphState) -> dict[str, Any]:
         # Durable suspend: interrupt() raises on the first pass (checkpoint persisted) and returns
-        # the resume value on the second. The payload is what the human is approving.
+        # the resume value on the second. The payload is what the human is approving. ``subject_id``
+        # is carried (server-trusted) so the backend can enforce same-subject resume on BOTH gates
+        # (#377), uniformly with the egress gate.
         decision = interrupt(
             {
                 "reason": "approve_answer",
                 "answer": state.get("answer", ""),
                 "critique": state.get("critique", ""),
+                "subject_id": _state_subject(state),
             }
         )
         return {"decision": str(decision)}
@@ -326,11 +486,31 @@ def _build_graph(
     builder.add_node("finalize", finalize)
     if checkpointer is not None:
         builder.add_node("human_gate", human_gate)
+        # The egress-approval gate (#377): a SECOND durable gate, reached only when the researcher
+        # blocks on egress. The researcher persists the resume frame into ``egress_pending`` and a
+        # conditional edge routes here; this node interrupts, then routes BACK to the researcher,
+        # which sees ``egress_pending`` and retries only the blocked call. It needs the checkpointer
+        # (interrupt()); without one, the researcher degrades to a non-blocking egress error inline.
+        builder.add_node("egress_gate", egress_gate)
+        builder.add_edge("egress_gate", "researcher")
     if verify:
         builder.add_node("verifier", verifier)
     builder.add_edge(START, "planner")
     builder.add_edge("planner", "researcher")
-    builder.add_edge("researcher", "critic")
+    if checkpointer is not None:
+        # Route to the egress gate when the researcher suspended on an egress block; else to the
+        # critic. (Without a checkpointer the researcher never sets ``egress_pending`` — it degrades
+        # inline — so the plain researcher->critic edge below applies.)
+        def _route_after_researcher(state: GraphState) -> str:
+            return "egress_gate" if state.get("egress_pending") else "critic"
+
+        builder.add_conditional_edges(
+            "researcher",
+            _route_after_researcher,
+            {"egress_gate": "egress_gate", "critic": "critic"},
+        )
+    else:
+        builder.add_edge("researcher", "critic")
     # The gate (a SECURITY step) is never accuracy-gated: it always sits before finalize when a
     # checkpointer is supplied, regardless of the verification ladder depth.
     gate_or_finalize = "human_gate" if checkpointer is not None else "finalize"
@@ -367,6 +547,40 @@ def _build_graph(
         builder.add_edge("human_gate", "finalize")
     builder.add_edge("finalize", END)
     return builder.compile(checkpointer=checkpointer)
+
+
+async def read_pending_interrupt(
+    *,
+    gateway: ToolGateway,
+    provider: ModelProvider,
+    model: str,
+    checkpointer: BaseCheckpointSaver[Any],
+    thread_id: str,
+    tools: Sequence[RegisteredTool] = (),
+) -> dict[str, Any] | None:
+    """The pending interrupt payload for a suspended run, read from the (tenant-bound) checkpoint.
+
+    Used by the backend on resume to dispatch on the gate's ``reason`` and read the server-trusted
+    egress ``blocked_host``/``subject_id``/``frame`` from the CHECKPOINT (never the request body)
+    before re-invoking the graph. Compiling the graph is cheap and ``aget_state`` runs no nodes, so
+    this only reads durable state. Returns ``None`` when the run is not suspended at an interrupt.
+    """
+    graph = _build_graph(
+        messages=(),
+        provider=provider,
+        model=model,
+        gateway=gateway,
+        tools=tools,
+        grants=(),
+        approved=False,
+        think=None,
+        max_iterations=1,
+        checkpointer=checkpointer,
+    )
+    snapshot = await graph.aget_state({"configurable": {"thread_id": thread_id}})
+    if not snapshot.interrupts:
+        return None
+    return dict(snapshot.interrupts[0].value)
 
 
 async def run_graph(
