@@ -113,6 +113,9 @@ interface ChatState {
   totals: { tokens: number; ms: number; turns: number };
   // The context composition assembled for the latest turn (what went into the prompt).
   context: ContextBreakdown | null;
+  // Per-turn context composition, keyed by assistant message index, so EVERY turn (not just the
+  // latest) can show its "Context assembled" node in the activity timeline.
+  contexts: Record<number, ContextBreakdown>;
   busy: boolean;
   // Set when a turn is suspended at the durable human gate (M8.1c), awaiting approve/reject.
   pending: ApprovalRequest | null;
@@ -125,6 +128,7 @@ const EMPTY_CHAT: ChatState = {
   usage: null,
   totals: { tokens: 0, ms: 0, turns: 0 },
   context: null,
+  contexts: {},
   busy: false,
   pending: null,
 };
@@ -202,8 +206,6 @@ export function Chat({
   const [incognito, setIncognito] = useState(false);
   // Two-view navigation: the chat workspace vs the full-width Settings view (#290 redesign).
   const [tab, setTab] = useState<"chat" | "settings">("chat");
-  const [showLog, setShowLog] = useState(false);
-  const [showAppLogs, setShowAppLogs] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chatsCollapsed, setChatsCollapsed] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -241,7 +243,7 @@ export function Chat({
 
   const activeKey = activeId ?? NEW_CHAT;
   const view = chats[activeKey] ?? EMPTY_CHAT;
-  const { messages, citations, trace, usage, totals, context, busy, pending } = view;
+  const { messages, citations, trace, usage, totals, contexts, busy, pending } = view;
 
   const patchChat = (key: string, fn: (s: ChatState) => ChatState): void => {
     setChats((prev) => ({ ...prev, [key]: fn(prev[key] ?? EMPTY_CHAT) }));
@@ -724,7 +726,14 @@ export function Chat({
             },
           })),
         // The context composition for this turn, shown in the side panel as the question is asked.
-        (ctx) => patchChat(key, (s) => ({ ...s, context: ctx })),
+        // Stored per assistant-message index (so EVERY turn keeps its own composition, not just the
+        // latest), plus `context` for the live meter / back-compat.
+        (ctx) =>
+          patchChat(key, (s) => ({
+            ...s,
+            contexts: { ...s.contexts, [assistantIndex]: ctx },
+            context: ctx,
+          })),
         // M8.2 verifier (accurate mode): a verification step into the reasoning trace.
         (step) =>
           patchChat(key, (s) => ({
@@ -1352,21 +1361,15 @@ export function Chat({
 
           {/* Column 3: logs (collapsible) */}
           <SidePanel
-            token={token}
-            conversationId={activeId}
             messages={messages}
             trace={trace}
             usage={usage}
             totals={totals}
-            context={context}
+            contexts={contexts}
             busy={busy}
             onAllowHost={(host) => void onAllowHost(host)}
             collapsed={sidebarCollapsed}
             setCollapsed={setSidebarCollapsed}
-            showLog={showLog}
-            setShowLog={setShowLog}
-            showAppLogs={showAppLogs}
-            setShowAppLogs={setShowAppLogs}
           />
         </div>
       )}

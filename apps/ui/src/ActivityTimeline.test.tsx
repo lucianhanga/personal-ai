@@ -9,7 +9,9 @@ const CONTEXT: ContextBreakdown = {
   total_chars: 400,
 };
 
-// Two persisted turns: an older one (tool call), and a newer one (reasoning + context + usage).
+// Two completed turns: an older one (tool call) whose context comes via the live `contexts` map,
+// and a newer one (reasoning) whose context is persisted on `m.meta.context`. Both must show a
+// "Context assembled" node — the older turn's context must NOT go missing.
 function twoTurnMessages(): ChatMessage[] {
   return [
     { role: "user", content: "first question" },
@@ -44,7 +46,8 @@ function renderTimeline(overrides: Partial<React.ComponentProps<typeof ActivityT
     <ActivityTimeline
       messages={overrides.messages ?? twoTurnMessages()}
       trace={overrides.trace ?? {}}
-      liveContext={overrides.liveContext ?? null}
+      // The older turn (index 1) gets its context from the live map; the newer (index 3) from meta.
+      contexts={overrides.contexts ?? { 1: CONTEXT }}
       liveUsage={overrides.liveUsage ?? null}
       busy={overrides.busy ?? false}
     />,
@@ -78,10 +81,15 @@ test("a tool_call/result pair renders one ToolIO node", () => {
   expect(screen.getByTestId("toolio-summary")).toHaveTextContent("web_search");
 });
 
-test("context node renders for a turn with a context snapshot", () => {
+test("every turn shows its own Context assembled node (older via the contexts map, newer via meta)", () => {
   renderTimeline();
-  // The newest turn (expanded) carries the context snapshot.
+  // The newest turn (expanded by default) carries its context from m.meta.context.
   expect(screen.getByTestId("timeline-context")).toHaveTextContent("Context assembled");
+  // Expand the older turn (collapsed by default): its context comes from the live `contexts` map and
+  // must NOT be missing — the core fix for #388 (context shown for EVERY turn, not just the latest).
+  const headers = screen.getAllByTestId("timeline-turn-header");
+  fireEvent.click(headers[1]);
+  expect(screen.getAllByTestId("timeline-context")).toHaveLength(2);
 });
 
 test("clicking a header toggles expand/collapse", () => {
@@ -115,10 +123,11 @@ test("filter chips hide non-matching nodes within turns", () => {
   fireEvent.click(toolTurns[0]);
   expect(screen.getByTestId("toolio")).toBeInTheDocument();
 
-  // Filter -> Context: only the context node remains.
+  // Filter -> Context: only context nodes remain (no ToolIO). Both turns now carry a context node —
+  // the older (still expanded from above) via the contexts map, the newest via meta — so we see two.
   const contextChip = screen.getAllByTestId("timeline-filter").find((b) => b.textContent === "Context")!;
   fireEvent.click(contextChip);
-  expect(screen.getByTestId("timeline-context")).toBeInTheDocument();
+  expect(screen.getAllByTestId("timeline-context")).toHaveLength(2);
   expect(screen.queryByTestId("toolio")).toBeNull();
 });
 
@@ -132,14 +141,14 @@ test("busy shows the pulsing live indicator on the newest turn, kept expanded", 
     <ActivityTimeline
       messages={messages}
       trace={{ 1: [{ kind: "reasoning", text: "thinking" }] }}
-      liveContext={CONTEXT}
+      contexts={{ 1: CONTEXT }}
       liveUsage={null}
       busy
     />,
   );
   expect(screen.getByTestId("timeline-live")).toBeInTheDocument();
   expect(screen.getByTestId("timeline-turn-header")).toHaveAttribute("aria-expanded", "true");
-  // The live turn pulls its context from liveContext.
+  // The live turn pulls its context from the per-turn contexts map.
   expect(screen.getByTestId("timeline-context")).toBeInTheDocument();
 });
 
@@ -152,7 +161,7 @@ test("falls back to live trace from the trace map when meta.trace is absent", ()
     <ActivityTimeline
       messages={messages}
       trace={{ 1: [{ kind: "plan", text: "do the thing" }] }}
-      liveContext={null}
+      contexts={{}}
       liveUsage={null}
       busy={false}
     />,
@@ -189,7 +198,7 @@ test("egress-blocked tool keeps the Allow affordance via ToolIO", () => {
     <ActivityTimeline
       messages={messages}
       trace={{}}
-      liveContext={null}
+      contexts={{}}
       liveUsage={null}
       busy={false}
       onAllowHost={onAllowHost}

@@ -24,6 +24,7 @@ const MODELS_BODY = JSON.stringify({
 
 const CHAT_SSE =
   'event: citations\ndata: [{"n":1,"source_id":"d1","locator":"chunk 0","score":0.9,"name":"geo.txt"}]\n\n' +
+  'event: context\ndata: {"items":[{"label":"Documents","count":1,"chars":400},{"label":"Conversation + your message","count":1,"chars":40}],"total_chars":440}\n\n' +
   'event: tool\ndata: {"phase":"call","tool":"web_search","args":{"query":"x"}}\n\n' +
   'event: tool\ndata: {"phase":"result","tool":"web_search","ok":true,"output":{"results":[]}}\n\n' +
   'data: {"delta":"Hello","done":false}\n\n' +
@@ -143,14 +144,12 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
   await expect(page.getByTestId("details-body")).toContainText("web_search");
   await expect(page.getByTestId("context-meter-label")).toContainText("4,096 / 32,768");
 
-  // Side panel: Activity (tool log) lists a call and expands details on click.
-  await page.getByTestId("toollog-show").click();
-  await page.getByTestId("toollog-row-0").click();
-  await expect(page.getByTestId("toollog-detail")).toContainText("2+2");
-
-  // App logs panel opens and shows a log line.
-  await page.getByTestId("applogs-show").click();
-  await expect(page.getByTestId("applogs-panel")).toContainText("started");
+  // Side panel: the Activity timeline shows this turn's assembled context and its tool calls.
+  await expect(page.getByTestId("activity-timeline")).toBeVisible();
+  await expect(page.getByTestId("timeline-context")).toBeVisible(); // "Context assembled" node
+  // Expand the tool node (collapsed by default) and confirm the request is shown.
+  await page.getByTestId("toolio-summary").first().click();
+  await expect(page.getByTestId("activity-timeline")).toContainText("web_search");
 
   // The panel sidebar collapses and re-expands.
   await page.getByTestId("side-toggle").click();
