@@ -1,6 +1,7 @@
 # PersonalAI
 
 [![CI](https://github.com/lucianhanga/personal-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/lucianhanga/personal-ai/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-0.8.3-blue.svg)](./CHANGELOG.md)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 [![Status: M8.3 egress gate + transparency panel done](https://img.shields.io/badge/status-M8.3%20done-brightgreen.svg)](./docs/architecture/adr/0013-egress-approval-gate.md)
 [![Local-first](https://img.shields.io/badge/local--first-yes-brightgreen.svg)](#principles)
@@ -16,31 +17,17 @@ PersonalAI is **extensible** (tools + MCP), **structured-output-first** (schemas
 **open-source-first** (verified provenance only), and **security-first** (zero-trust toward
 tools, files, prompts, model outputs, and MCP servers).
 
-> **Current state:** **M0–M8.3 complete (multi-agent quality + per-tenant configuration + a
-> blocking egress-approval gate + a two-view UI with a transparency panel).**
-> Streaming chat in a React UI over **local Ollama models** or **remote OpenAI-compatible
-> providers**; **chat-with-your-documents** (file ingestion → pgvector RAG with citations);
-> **persistent conversation history**; **memory** (per-chat short-term summary + cross-chat long-term
-> memory you can view/edit/erase); a security-first **Tool/MCP gateway** (permissions, egress
-> allowlist, schema-validated I/O, risk approval, audit) with **live MCP server management** (M7);
-> an **agent mode** you choose per tenant — a **single-agent loop** or a **multi-agent graph** on
-> LangGraph (planner → researcher → critic) with a **bounded reflection loop**, **two durable
-> human-in-the-loop gates** — an **answer-approval gate** and a **blocking egress-approval gate**
-> that pauses the run when a tool reaches a non-allowlisted host so you can allow-once / allow-always
-> / deny / inspect (ADR-0013) — **per-agent prompts + tool scoping**, and **query contextualization**
-> (M8, ADR-0012); a transparent **info panel** with a reverse-chronological **Activity timeline**
-> (context snapshots + tool I/O + agent markers), **per-question and per-chat token/time metrics**,
-> and a **per-question context snapshot**; a **Chat | Settings** UI where per-tenant **settings** live
-> (model/agent/behavior, embedding engine, **network egress** with one-click allow-on-deny, turn
-> timeout); and **always-on multi-tenancy** (ADR-0010) — Postgres Row-Level Security, an
-> `IdentityProvider` (argon2id passwords + cookie sessions), and per-request tenant isolation.
-> **Local runs zero-login** (`app_mode=local`); **hosted** mode adds real login + CSRF. The HTTP API is versioned under
-> **`/api/v1`** (see [CHANGELOG](./CHANGELOG.md)). See the
-> [architecture report](./docs/architecture/PersonalAI-Architecture-Research.md), the
-> [local chat guide](./docs/guides/local-chat.md), [remote providers](./docs/guides/remote-providers.md),
-> [files + RAG](./docs/guides/files-and-rag.md), [memory](./docs/guides/memory.md),
-> [tools](./docs/guides/tools.md), [the agent loop](./docs/guides/agent.md), and
-> [MCP servers](./docs/guides/mcp.md).
+**Current state:** the core product works end to end — streaming chat over local or remote models,
+chat-with-your-documents (RAG with citations), long-term memory, a security-first tool/MCP gateway,
+single- or multi-agent modes with durable human-in-the-loop gates, and always-on multi-tenancy,
+behind a two-view UI with a transparency panel. Milestones **M0–M9** have shipped — including
+**M9 Multimodal** (vision · speech-to-text · text-to-speech); the most recent work, **M8.3**, added
+the blocking egress-approval gate and the transparency panel. The MV3 browser extension (M10) is next.
+
+- **What's new / full history:** [CHANGELOG](./CHANGELOG.md)
+- **Roadmap:** [§22 Modular Implementation Roadmap](./docs/architecture/PersonalAI-Architecture-Research.md#22-modular-implementation-roadmap)
+- **Learn how it works:** the [How it works](#how-it-works) section below, then the
+  [Documentation](#documentation) table.
 
 ## Quickstart (local chat)
 
@@ -74,93 +61,77 @@ all env vars are in [`.env.example`](./.env.example).
 
 ---
 
-## High-level architecture
+## How it works
 
 A **single-host modular monolith** (hexagonal: ports & adapters + registries) fronting isolated
 runtimes — local model servers and **sandboxed** tools/MCP servers — with security, audit, and
-secrets as cross-cutting layers.
+tenant isolation as cross-cutting layers.
 
-```
-Clients (Tauri UI + MV3 extension, loopback)
-        │
-   API Gateway ── Auth/Settings
-        │
-   API Gateway ── Auth (IdentityProvider) + per-request tenant context (SecurityContext)
-        │
-   Conversation ── Agent Orchestration (single-agent loop; opt-in LangGraph multi-agent graph, ADR-0012) ── Structured-Output Validation
-        │                    │
-   File Ingestion       Tool/MCP Gateway ── Security Engine ── Sandbox (container/gVisor/WASM)
-        │                    │
-   Retrieval (RAG)      Model Abstraction/Router ── Ollama | llama.cpp | vLLM | remote (LiteLLM, opt-in)
-        │
-   Storage: PostgreSQL + pgvector · object store · secrets vault · append-only audit
-```
+**The AI workflow.** Every turn runs in one of two modes, chosen per tenant:
+
+- **Single-agent loop** — one model reasons and calls tools through the gateway until it answers.
+- **Multi-agent graph** (LangGraph, ADR-0012) — **planner → researcher → critic**, with a bounded
+  reflection loop and an optional verification step.
+
+Both modes share the same security seams:
+
+- **Tool/MCP gateway** — permissions, schema-validated I/O, risk approval, an egress allowlist, and
+  an append-only audit log front every tool and MCP server.
+- **Two durable human-in-the-loop gates** — an **answer-approval gate** and a **blocking
+  egress-approval gate** (ADR-0013) that pause the run durably when a tool reaches a
+  non-allowlisted host (allow-once / allow-always / deny / inspect).
+- **RAG + memory** — pgvector retrieval over your ingested documents (with citations) plus per-chat
+  short-term and cross-chat long-term memory feed the prompt each turn.
 
 Full diagram and rationale: [architecture report](./docs/architecture/PersonalAI-Architecture-Research.md).
 
----
+### Stack
 
-## Selected stack (planned, vetted)
+| Area | Choice |
+|---|---|
+| Backend | Python (`uv` workspace) + FastAPI, hexagonal modular monolith |
+| UI | React + Vite SPA (Tauri shell for desktop) |
+| Database / RAG | PostgreSQL + pgvector |
+| Model providers | Ollama (local, default) and OpenAI-compatible (remote, opt-in) |
+| Agent orchestration | Single-agent loop + opt-in LangGraph multi-agent graph (ADR-0012) |
+| Auth / multi-tenancy | argon2id + server sessions + Postgres Row-Level Security (ADR-0010) |
+| Schemas | Pydantic / Zod + JSON Schema |
 
-| Area | Choice | License |
-|---|---|---|
-| Backend | Python + FastAPI (modular monolith) | — |
-| UI | Tauri shell + web SPA (React/Svelte) | MIT/Apache-2.0 |
-| Local model runtime | Ollama (default) · llama.cpp · vLLM | MIT / MIT / Apache-2.0 |
-| Remote provider gateway | LiteLLM (opt-in) | MIT |
-| Agent orchestration | Single-agent loop + opt-in LangGraph multi-agent graph over the existing seams (ADR-0012) | MIT |
-| Auth / multi-tenancy | argon2id + server sessions + Postgres RLS (ADR-0010) | — |
-| Schemas | Pydantic / Zod + JSON Schema | MIT |
-| Storage / RAG | PostgreSQL + pgvector | PostgreSQL License |
-| Ingestion | Apache Tika / IBM Docling | Apache-2.0 |
-| Audio | faster-whisper (STT) / Piper (TTS) | MIT |
-
-The **complete, maintained** provenance register (maintainer, license, maturity, security notes,
-reason, alternatives) lives in
-[`docs/supply-chain/SUPPLY-CHAIN.md`](./docs/supply-chain/SUPPLY-CHAIN.md).
-
----
-
-## Roadmap (high horizon)
-
-`Foundation → Talk → Know → Act → Reason → Sense → Reach → (Connect) → Harden`
-
-| Milestone | Delivers | Status |
-|---|---|---|
-| **M0** | Skeleton + contracts (all ports defined, CI/SBOM/signing skeleton) | done |
-| **M1–M2** | Local chat (Ollama) → provider portability | done |
-| **M3** | Files + vector RAG (pgvector) | done |
-| **M4** | Memory (short-term summary + long-term, semantic) | done |
-| **M5** | Tool/MCP gateway + sandbox | done |
-| **M6** | Single-agent loop + tools (streamed reasoning + answer) | done |
-| **M7** | MCP plug-in/out + verification | done |
-| **Identity + multi-tenancy** | Always-on auth + Postgres RLS tenant isolation (ADR-0010) | done |
-| **Pre-M8 hardening** | Audit-driven fixes (run_turn seam, unit-of-work, tenant tests, ...) | done |
-| **M8.1** | Multi-agent graph on LangGraph (planner → researcher → critic) + durable human gate (ADR-0012) | done |
-| **M8.2** | Agent modes + per-tenant config (prompts, tool scoping, egress, timeout), bounded reflection loop, schema-driven tool-arg repair, query contextualization, Chat \| Settings UI | done |
-| **M8.3** | Blocking egress-approval gate (ADR-0013), transparency panel (Activity timeline, tool-I/O progressive disclosure, per-question context snapshot + token/time metrics), draft persistence | done |
-| **M9** | Multimodal (vision / STT / TTS) | next |
-| **M10** | Browser extension (MV3) | planned |
-| **M11** | KAG / graph memory (graph upgrade of M4) | planned |
-| **M12** | Hardening, signing, packaging, docs | planned |
-
-Details: [§22 Modular Implementation Roadmap](./docs/architecture/PersonalAI-Architecture-Research.md#22-modular-implementation-roadmap).
+The complete provenance register (maintainer, license, maturity, security notes) lives in
+[`SUPPLY-CHAIN.md`](./docs/supply-chain/SUPPLY-CHAIN.md). The full roadmap and milestone status is in
+[§22 Modular Implementation Roadmap](./docs/architecture/PersonalAI-Architecture-Research.md#22-modular-implementation-roadmap).
 
 ---
 
 ## Documentation
 
+**Guides** (how to use it):
+
+| Guide | Purpose |
+|---|---|
+| [Local chat](./docs/guides/local-chat.md) | Run streaming chat over local Ollama models. |
+| [Remote providers](./docs/guides/remote-providers.md) | Use a remote OpenAI-compatible provider (opt-in). |
+| [Files + RAG](./docs/guides/files-and-rag.md) | Chat with your documents (ingestion → pgvector RAG). |
+| [Memory](./docs/guides/memory.md) | Short-term and long-term memory (view/edit/erase). |
+| [Tools](./docs/guides/tools.md) | Built-in tools and the gateway. |
+| [Agent loop](./docs/guides/agent.md) | Single- and multi-agent modes. |
+| [MCP servers](./docs/guides/mcp.md) | Plug in / manage MCP servers. |
+| [Settings](./docs/guides/settings.md) | Per-tenant settings (model, agent, egress, timeout). |
+
+**Project & architecture:**
+
 | Doc | Purpose |
 |---|---|
-| [Architecture report](./docs/architecture/PersonalAI-Architecture-Research.md) | The full research + high-level architecture (22 sections). |
+| [Architecture report](./docs/architecture/PersonalAI-Architecture-Research.md) | The full research + high-level architecture (22 sections), incl. the roadmap. |
 | [ADRs](./docs/architecture/adr/) | Architecture Decision Records. |
 | [Threat model](./docs/architecture/THREAT-MODEL.md) | Trust boundaries and threats (v1). |
 | [Security policy](./SECURITY.md) | Reporting and security posture. |
 | [Dependency policy](./docs/policies/DEPENDENCY-POLICY.md) | Provenance, verification, SBOM, scanning rules. |
 | [Supply-chain register](./docs/supply-chain/SUPPLY-CHAIN.md) | Living inventory of every dependency + creator. |
 | [Onboarding / dev guide](./docs/ONBOARDING.md) | How to work in this repo. |
+| [Releasing & versioning](./docs/development/releasing.md) | Version source of truth, release & signing. |
 | [Contributing](./CONTRIBUTING.md) | GitHub flow, branching, commits, PRs. |
-| [Changelog](./CHANGELOG.md) | Versioning policy (semver in `VERSION`) and per-release history. |
+| [Changelog](./CHANGELOG.md) | Per-release history and the versioning policy. |
 
 ---
 

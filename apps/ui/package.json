@@ -1,6 +1,6 @@
 {
   "name": "@personalai/ui",
-  "version": "0.0.0",
+  "version": "0.8.3",
   "private": true,
   "description": "PersonalAI desktop/web UI: React SPA (M0-6), wrapped by a Tauri shell for desktop.",
   "license": "Apache-2.0",
