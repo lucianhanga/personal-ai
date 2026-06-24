@@ -1,4 +1,5 @@
-import type { ChatMessage, Citation, TraceItem, TurnUsage } from "./api";
+import type { ChatMessage, Citation, ContextBreakdown, TraceItem, TurnUsage } from "./api";
+import { approxTokens, ContextComposition } from "./ContextComposition";
 import { Markdown } from "./Markdown";
 import { MessageDetails } from "./MessageDetails";
 import { ReadAloudButton } from "./ReadAloudButton";
@@ -25,6 +26,25 @@ function UsageFooter({ usage }: { usage?: TurnUsage }): React.ReactElement | nul
       {usage.total_tokens != null && usage.elapsed_ms != null && " · "}
       {usage.elapsed_ms != null && <>{fmtMs(usage.elapsed_ms)}</>}
     </div>
+  );
+}
+
+/**
+ * A compact, collapsed-by-default disclosure under a past assistant message showing the per-question
+ * context snapshot ("what was in the context window"). Reuses the live meter's composition UI.
+ */
+function MessageContext({ context, idPrefix }: { context: ContextBreakdown; idPrefix: string }):
+  React.ReactElement | null {
+  if (!context.items.length) return null;
+  return (
+    <details data-testid="msg-context" style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: 2 }}>
+      <summary style={{ cursor: "pointer" }}>
+        Context (~{approxTokens(context.total_chars).toLocaleString()} tokens)
+      </summary>
+      <div style={{ marginTop: 3 }}>
+        <ContextComposition context={context} collapsible={false} idPrefix={idPrefix} />
+      </div>
+    </details>
   );
 }
 
@@ -94,6 +114,9 @@ export function MessageList({
               </div>
             ) : null}
             <UsageFooter usage={m.meta?.usage} />
+            {m.meta?.context && m.meta.context.items.length > 0 && (
+              <MessageContext context={m.meta.context} idPrefix={`msg-${i}`} />
+            )}
           </div>
         ) : (
           <div

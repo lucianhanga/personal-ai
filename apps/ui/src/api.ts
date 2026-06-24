@@ -54,6 +54,9 @@ export interface MessageMeta {
   trace?: TraceItem[];
   // Token + time metrics for this turn (shown as a per-message footer; summed into chat totals).
   usage?: TurnUsage;
+  // Per-question context snapshot (same shape as the live `context` SSE event), so each past
+  // assistant turn can show "what was in the context window" — see the per-message disclosure.
+  context?: ContextBreakdown;
   // Legacy (pre-ordered-trace) fields, kept for older persisted messages.
   tool_steps?: ToolStep[];
   thinking?: string;

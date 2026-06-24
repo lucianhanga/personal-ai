@@ -506,6 +506,27 @@ def test_assistant_message_persists_thinking_meta() -> None:
         )
 
 
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_assistant_message_persists_context_snapshot() -> None:
+    # The per-question context composition (the same payload the live `context` SSE event carries)
+    # is snapshotted into the assistant turn's meta so the context view survives a reload (#371).
+    with _client_with("ctxfake", _ThinkingFake(name="ctxfake")) as client:
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/v1/chat",
+            headers=AUTH,
+            json={"messages": [{"role": "user", "content": "why?"}], "conversation_id": cid},
+        ) as resp:
+            "".join(resp.iter_text())
+        msgs = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        assistant = next(m for m in msgs if m["role"] == "assistant")
+        context = assistant["meta"]["context"]
+        assert context["items"]  # at least the user message group is always present
+        assert isinstance(context["total_chars"], int)
+        assert all({"label", "count", "chars"} <= set(it) for it in context["items"])
+
+
 class _BoomProvider(FakeModelProvider):
     """Streams a reasoning chunk, then raises mid-generation."""
 
