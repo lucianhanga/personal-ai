@@ -58,9 +58,9 @@ test("details redact secret-looking arg keys while showing normal ones", () => {
       tool="http_fetch"
       args={{
         url: "https://api.example.com/data",
-        authorization: "Bearer sk-super-secret",
-        api_key: "abcd1234",
-        headers: { cookie: "session=topsecret" },
+        authorization: "Bearer sk-super-secret", // pragma: allowlist secret
+        api_key: "abcd1234", // pragma: allowlist secret
+        headers: { cookie: "session=topsecret" }, // pragma: allowlist secret
       }}
       onResolve={() => {}}
     />,
