@@ -147,10 +147,13 @@ def _app(tool: RegisteredTool, provider: FakeModelProvider) -> TestClient:
     return TestClient(create_app(boot), base_url="https://testserver")
 
 
+_TEST_PW = "pw"  # pragma: allowlist secret  (throwaway password for the test signup/login)
+
+
 def _signup_login(client: TestClient, email: str) -> None:
-    client.post("/api/v1/auth/signup", json={"email": email, "password": "pw"})
+    client.post("/api/v1/auth/signup", json={"email": email, "password": _TEST_PW})
     assert (
-        client.post("/api/v1/auth/login", json={"email": email, "password": "pw"}).status_code
+        client.post("/api/v1/auth/login", json={"email": email, "password": _TEST_PW}).status_code
         == 200
     )
 
@@ -367,7 +370,9 @@ def test_subject_mismatch_resume_is_forbidden_same_tenant() -> None:
         RegisteredTool(BLOCKED_FETCH, _BlockedFetch()), _ResearcherFetches("blocked_fetch")
     ) as bob:
         assert (
-            bob.post("/api/v1/auth/login", json={"email": bob_email, "password": "pw"}).status_code
+            bob.post(
+                "/api/v1/auth/login", json={"email": bob_email, "password": _TEST_PW}
+            ).status_code
             == 200
         )
         denied = bob.post(

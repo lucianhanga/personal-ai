@@ -109,9 +109,7 @@ def serialize_convo(convo: Sequence[ChatMessage]) -> list[dict[str, Any]]:
     """Render a message list as plain dicts so it round-trips through the LangGraph (ormsgpack)
     checkpointer in the egress-approval resume frame (#377) without relying on dataclass/enum serde.
     """
-    return [
-        {"role": str(m.role), "content": m.content, "images": list(m.images)} for m in convo
-    ]
+    return [{"role": str(m.role), "content": m.content, "images": list(m.images)} for m in convo]
 
 
 def deserialize_convo(raw: Sequence[Mapping[str, Any]]) -> list[ChatMessage]:

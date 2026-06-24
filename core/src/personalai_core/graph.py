@@ -103,6 +103,7 @@ def _state_subject(state: GraphState) -> str:
     ctx = state.get("context")
     return ctx.subject_id if ctx is not None else ""
 
+
 # The ordered roster of configurable agents in the multi-agent graph (#290). Only the researcher
 # uses tools (it runs the single-agent loop); planner and critic are deliberately tool-free.
 AGENT_NAMES: tuple[str, ...] = ("planner", "researcher", "critic")

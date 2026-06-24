@@ -380,9 +380,7 @@ def _mcp_config_path(config: CoreConfig) -> Path:
 # Client-facing keys of an approval_request payload. The egress interrupt payload also carries the
 # server-only resume ``frame`` (the partial convo) and ``subject_id`` (authz) — NEVER surface those
 # to the client. We whitelist the answer-gate keys too so a future field can't accidentally leak.
-_APPROVAL_CLIENT_KEYS = frozenset(
-    {"reason", "answer", "critique", "blocked_host", "tool", "args"}
-)
+_APPROVAL_CLIENT_KEYS = frozenset({"reason", "answer", "critique", "blocked_host", "tool", "args"})
 
 
 def _approval_sse(run_id: str | None, output: Mapping[str, Any]) -> bytes:

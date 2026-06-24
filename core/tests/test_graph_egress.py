@@ -69,9 +69,7 @@ class _CountingGateway(ToolGateway):
             reg,
             InProcessExecutor(),
             audit=AuditLog(),
-            egress_check=lambda host: (
-                None if host in allowed else _deny(host)
-            ),
+            egress_check=lambda host: None if host in allowed else _deny(host),
         )
         self.calls: dict[str, int] = {}
 
@@ -115,7 +113,9 @@ class _CalcThenFetchThenAnswer(FakeModelProvider):
                     model=request.model,
                     tool_calls=[
                         ToolCallRequest(name="calc", arguments={"x": 1}),
-                        ToolCallRequest(name="fetch", arguments={"url": "https://api.example.com/x"}),
+                        ToolCallRequest(
+                            name="fetch", arguments={"url": "https://api.example.com/x"}
+                        ),
                     ],
                 )
             return GenerationResult(text="all done", model=request.model, usage={"total_tokens": 5})
