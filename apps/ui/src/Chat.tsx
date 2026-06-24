@@ -33,6 +33,7 @@ import {
   type UsageInfo,
 } from "./api";
 import { ChatsPanel } from "./ChatsPanel";
+import { EgressApproval, type EgressDecision } from "./EgressApproval";
 import { MessageList } from "./MessageList";
 import { SettingsView } from "./SettingsView";
 import { SidePanel } from "./SidePanel";
@@ -758,9 +759,43 @@ export function Chat({
     patchChat(key, (s) => ({ ...s, busy: true, pending: null }));
     try {
       await resumeChat(
-        { runId, decision, conversationId: activeId ?? undefined, token },
+        { runId, decision, conversationId: activeId ?? undefined, provider, token },
         (delta) => {
           // Resume re-delivers the full answer as one delta -> set the bubble content.
+          patchChat(key, (s) => {
+            const msgs = [...s.messages];
+            msgs[idx] = { role: "assistant", content: delta };
+            return { ...s, messages: msgs };
+          });
+        },
+        (u) => patchChat(key, (s) => withUsage(s, u)),
+        (message) => setError(message),
+      );
+      if (persistence) setConversations(await fetchConversations(token));
+    } catch (e: unknown) {
+      setError(String(e));
+    } finally {
+      patchChat(key, (s) => ({ ...s, busy: false }));
+    }
+  }
+
+  // Resolve a turn suspended at the durable egress gate (#377): a tool wanted to reach a
+  // non-allowlisted host. Resume with the egress verb (the backend reads the host from the
+  // checkpoint and re-runs the model on the chosen provider), stream the continuation into the same
+  // assistant bubble, and clear the pending state. Mirrors resolveApproval (answer gate).
+  async function resolveEgress(decision: EgressDecision): Promise<void> {
+    const key = activeKey;
+    const cur = chats[key];
+    if (!cur?.pending) return;
+    const runId = cur.pending.run_id;
+    const idx = cur.messages.length - 1; // the suspended assistant message
+    setError(null);
+    patchChat(key, (s) => ({ ...s, busy: true, pending: null }));
+    try {
+      await resumeChat(
+        { runId, decision, conversationId: activeId ?? undefined, provider, token },
+        (delta) => {
+          // Resume re-delivers the finalized answer as one delta -> set the bubble content.
           patchChat(key, (s) => {
             const msgs = [...s.messages];
             msgs[idx] = { role: "assistant", content: delta };
@@ -955,7 +990,15 @@ export function Chat({
               </button>
             )}
 
-            {pending && (
+            {pending && pending.reason === "egress_approval" ? (
+              <EgressApproval
+                host={pending.blocked_host!}
+                tool={pending.tool}
+                args={pending.args}
+                busy={busy}
+                onResolve={(d) => void resolveEgress(d)}
+              />
+            ) : pending ? (
               <div
                 data-testid="approval-request"
                 style={{
@@ -988,7 +1031,7 @@ export function Chat({
                   </button>
                 </div>
               </div>
-            )}
+            ) : null}
 
             {error && (
               <p data-testid="chat-error" style={{ color: "#b00" }}>

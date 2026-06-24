@@ -33,13 +33,29 @@ export interface TraceItem {
   error?: string | null;
 }
 
-/** A durable human-gate approval request (M8.1c): the run is suspended until POST .../resume. */
+/** A durable human-gate approval request (M8.1c): the run is suspended until POST .../resume.
+ * The answer gate sends reason:"approve_answer" with answer/critique; the egress gate (#377) sends
+ * reason:"egress_approval" with the blocked_host + the outbound tool/args the run wants to make. */
 export interface ApprovalRequest {
   run_id: string;
   reason?: string;
   answer?: string;
   critique?: string;
+  // Egress gate (reason:"egress_approval"): the non-allowlisted host the run paused on, plus the
+  // tool + args of the outbound call so the user can see exactly what would be sent before deciding.
+  blocked_host?: string;
+  tool?: string;
+  args?: Record<string, unknown>;
 }
+
+// The human's decision when resuming a suspended run. The answer gate uses approve/reject; the
+// egress gate (#377) uses one of the egress_* verbs (allow once / allow + remember / deny).
+export type ResumeDecision =
+  | "approve"
+  | "reject"
+  | "egress_allow_once"
+  | "egress_allow_always"
+  | "egress_deny";
 
 // Per-assistant-turn token + time metrics, persisted so they survive a reload.
 export interface TurnUsage {
@@ -886,7 +902,15 @@ export async function streamChat(
  * the finalized continuation (the backend re-delivers the full answer as one delta + done).
  */
 export async function resumeChat(
-  params: { runId: string; decision: string; conversationId?: string; token: string },
+  params: {
+    runId: string;
+    decision: ResumeDecision | string;
+    conversationId?: string;
+    // The model provider the chat ran on. The egress gate re-runs the model on resume, so it needs
+    // the provider; the answer gate can omit it (back-compat). Sent only when present.
+    provider?: string;
+    token: string;
+  },
   onDelta: (delta: string) => void,
   onUsage?: (usage: UsageInfo) => void,
   onError?: (message: string) => void,
@@ -897,7 +921,11 @@ export async function resumeChat(
       method: "POST",
       credentials: CREDS,
       headers: { "Content-Type": "application/json", ...authHeaders(params.token) },
-      body: JSON.stringify({ decision: params.decision, conversation_id: params.conversationId }),
+      body: JSON.stringify({
+        decision: params.decision,
+        conversation_id: params.conversationId,
+        ...(params.provider ? { provider: params.provider } : {}),
+      }),
     },
   );
   if (!res.ok || res.body === null) throw new Error(`resume failed: ${res.status}`);

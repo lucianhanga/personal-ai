@@ -828,6 +828,50 @@ test("durable human gate: shows approve/reject and resumes on approve", async ()
   expect(screen.queryByTestId("approval-request")).not.toBeInTheDocument();
 });
 
+test("egress gate: shows the egress UI (not the answer box) and resumes with the egress verb + provider", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  // The turn streams a draft answer then suspends at the egress gate (a tool hit a blocked host).
+  vi.spyOn(api, "streamChat").mockImplementation(
+    async (_p, onDelta, _onCit, _onTool, _onUsage, _onThink, _onError, onApproval) => {
+      onDelta("draft answer");
+      onApproval?.({
+        run_id: "r2",
+        reason: "egress_approval",
+        blocked_host: "api.example.com",
+        tool: "http_fetch",
+        args: { url: "https://api.example.com/data" },
+      });
+    },
+  );
+  const resume = vi
+    .spyOn(api, "resumeChat")
+    .mockImplementation(async (_p, onDelta) => onDelta("final answer"));
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "fetch it" } });
+  fireEvent.click(screen.getByTestId("send"));
+
+  // The egress affordance appears (with the host) instead of the answer approve/reject box.
+  await waitFor(() => expect(screen.getByTestId("egress-approval")).toBeInTheDocument());
+  expect(screen.getByTestId("egress-host")).toHaveTextContent("api.example.com");
+  expect(screen.queryByTestId("approval-request")).not.toBeInTheDocument();
+
+  // Allowing once resumes with the egress verb and forwards the chat's provider.
+  fireEvent.click(screen.getByTestId("egress-allow-once"));
+  await waitFor(() =>
+    expect(resume).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: "r2", decision: "egress_allow_once", provider: "ollama" }),
+      ...Array(3).fill(expect.any(Function)),
+    ),
+  );
+  await waitFor(() => expect(screen.getByText(/final answer/)).toBeInTheDocument());
+  expect(screen.queryByTestId("egress-approval")).not.toBeInTheDocument();
+});
+
 test("streams planner and critic steps into the live trace (followable agent flow)", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
