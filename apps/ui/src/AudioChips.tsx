@@ -23,8 +23,47 @@ function snippet(text: string): string {
   return t.length > 40 ? `${t.slice(0, 40)}…` : t;
 }
 
+/** Classical "two overlapping rounded rectangles" copy glyph (monochrome SVG, not emoji). */
+function CopyIcon(): React.ReactElement {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+    </svg>
+  );
+}
+
+/** Check-mark glyph shown briefly after a successful copy (monochrome SVG, not emoji). */
+function CheckIcon(): React.ReactElement {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M5 13l4 4L19 7" />
+    </svg>
+  );
+}
+
 /** The floating panel: full transcript (scrollable, bounded) + a Copy button. Only rendered for
- * `done` chips. Dismissed by the parent on blur/Escape/click-away; this owns only the Copy state. */
+ * `done` chips. Dismissed by the parent on Escape/click-away; this owns only the Copy state. */
 function TranscriptPanel({ chip }: { chip: AudioAttachment }): React.ReactElement {
   const [copied, setCopied] = useState(false);
 
@@ -47,36 +86,66 @@ function TranscriptPanel({ chip }: { chip: AudioAttachment }): React.ReactElemen
       onMouseDown={(e) => e.stopPropagation()}
       style={{
         position: "absolute",
-        bottom: "calc(100% + 6px)",
+        bottom: "calc(100% + 4px)",
         left: 0,
         zIndex: 20,
-        minWidth: "16em",
+        minWidth: "18em",
         maxWidth: "min(28em, 80vw)",
         background: "#fff",
-        border: "1px solid #ddd",
-        borderRadius: 6,
-        boxShadow: "0 6px 18px rgba(0,0,0,0.12)",
-        padding: "0.5rem",
+        border: "1px solid #e2e2e2",
+        borderRadius: 8,
+        boxShadow: "0 8px 24px rgba(0,0,0,0.14)",
+        overflow: "hidden",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: 4 }}>
-        <span style={{ color: MUTED, fontWeight: 600, fontSize: "0.78rem", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      {/* Header: filename left, copy icon right. */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "0.5rem",
+          padding: "0.45rem 0.6rem",
+          borderBottom: "1px solid #eee",
+          background: "rgba(127,127,127,0.04)",
+        }}
+      >
+        <span
+          style={{
+            color: "#333",
+            fontWeight: 600,
+            fontSize: "0.78rem",
+            flex: 1,
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          title={chip.name}
+        >
           {chip.name}
         </span>
         <button
           data-testid={`copy-audio-${chip.id}`}
           onClick={() => void copy()}
+          aria-label="Copy transcript"
+          title={copied ? "Copied" : "Copy"}
           style={{
-            fontSize: "0.7rem",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: "1.7em",
+            height: "1.7em",
             background: "none",
-            border: "1px solid rgba(127,127,127,0.35)",
-            borderRadius: 3,
-            color: MUTED,
+            border: "1px solid rgba(127,127,127,0.3)",
+            borderRadius: 5,
+            color: copied ? GREEN : MUTED,
             cursor: "pointer",
-            padding: "0 0.35rem",
+            padding: 0,
+            flexShrink: 0,
+            transition: "color 0.15s",
           }}
         >
-          {copied ? "Copied" : "Copy"}
+          {copied ? <CheckIcon /> : <CopyIcon />}
         </button>
       </div>
       <div
@@ -84,9 +153,11 @@ function TranscriptPanel({ chip }: { chip: AudioAttachment }): React.ReactElemen
           maxHeight: "14em",
           overflow: "auto",
           fontSize: "0.82rem",
-          lineHeight: 1.4,
+          lineHeight: 1.5,
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
+          color: "#222",
+          padding: "0.55rem 0.6rem",
         }}
       >
         {chip.transcript}
@@ -127,7 +198,9 @@ function statusCue(chip: AudioAttachment): { color: string; node: React.ReactNod
 
 /** Removable audio attachment chips (drag-drop transcription). Each chip mirrors the image-thumbnail
  * pattern: a glyph + name + state cue + a × remove. `done` chips are focusable and reveal a floating
- * transcript panel on hover/focus/click, with copy-to-clipboard. */
+ * transcript panel on hover/focus/click, with copy-to-clipboard. The panel is "sticky": opening it
+ * (hover/focus/click) does NOT auto-close on mouse-leave, so the pointer can travel into the panel to
+ * reach Copy; it stays open until an explicit dismissal — Escape, click-away, or re-clicking the chip. */
 export function AudioChips({
   chips,
   onRemove,
@@ -176,27 +249,37 @@ export function AudioChips({
             data-testid="audio-attachment"
             data-status={chip.status}
             tabIndex={0}
+            // Open on hover/focus/click. Intentionally NO onMouseLeave/onBlur auto-close: once
+            // open the panel STAYS open (so the mouse can travel into it to reach Copy) until an
+            // explicit dismissal — Escape, click-away, or clicking the chip again (handled below
+            // and by the parent's document listener).
             onMouseEnter={() => canOpen && setOpenId(chip.id)}
-            onMouseLeave={() => setOpenId((cur) => (cur === chip.id ? null : cur))}
             onFocus={() => canOpen && setOpenId(chip.id)}
             onClick={() => canOpen && setOpenId((cur) => (cur === chip.id ? null : chip.id))}
             style={{
               position: "relative",
               display: "inline-flex",
               alignItems: "center",
-              gap: "0.4rem",
+              gap: "0.45rem",
               maxWidth: "22em",
-              padding: "0.2rem 0.45rem",
-              border: `1px solid ${chip.status === "error" ? RED : "#ddd"}`,
+              padding: "0.28rem 0.4rem 0.28rem 0.55rem",
+              border: `1px solid ${chip.status === "error" ? RED : open ? ACCENT : "#ddd"}`,
               borderRadius: 14,
               fontSize: "0.8rem",
-              background: "rgba(127,127,127,0.05)",
+              background: open ? "rgba(74,144,217,0.08)" : "rgba(127,127,127,0.05)",
               cursor: canOpen ? "pointer" : "default",
               outlineColor: ACCENT,
             }}
           >
             {/* Musical note glyph = audio (monochrome, not emoji). */}
-            <span aria-hidden="true" style={{ color: chip.status === "done" ? GREEN : ACCENT }}>
+            <span
+              aria-hidden="true"
+              style={{
+                color: chip.status === "done" ? GREEN : ACCENT,
+                fontSize: "0.95rem",
+                lineHeight: 1,
+              }}
+            >
               ♪
             </span>
             <span
@@ -206,12 +289,26 @@ export function AudioChips({
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
                 color: "#333",
+                fontWeight: 500,
               }}
               title={chip.name}
             >
               {chip.name}
             </span>
-            <span style={{ color: cue.color, maxWidth: "11em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {/* Separator between filename and the state cue. */}
+            <span aria-hidden="true" style={{ color: "#d0d0d0" }}>
+              ·
+            </span>
+            <span
+              style={{
+                color: cue.color,
+                maxWidth: "11em",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                fontStyle: chip.status === "done" || chip.status === "empty" ? "italic" : "normal",
+              }}
+            >
               {cue.node}
             </span>
             <button
@@ -224,13 +321,20 @@ export function AudioChips({
               aria-label={`Remove ${chip.name}`}
               title="Remove"
               style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "1.3em",
+                height: "1.3em",
                 border: "none",
                 background: "none",
-                color: MUTED,
+                color: "#9aa0a6",
                 cursor: "pointer",
-                fontSize: "1rem",
+                fontSize: "0.95rem",
                 lineHeight: 1,
-                padding: "0 0.1rem",
+                borderRadius: "50%",
+                padding: 0,
+                flexShrink: 0,
               }}
             >
               ×

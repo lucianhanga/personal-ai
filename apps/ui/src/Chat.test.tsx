@@ -411,8 +411,42 @@ test("a done audio chip opens a transcript panel on focus with a Copy button (#4
 
   const panel = await screen.findByTestId("audio-panel");
   expect(panel).toHaveTextContent("hello transcript world");
-  // Copy button is present (reuses the JsonPayload copy pattern).
-  expect(panel.querySelector("[data-testid^='copy-audio-']")).not.toBeNull();
+  // Copy control is present and labeled (icon button, not the word "Copy").
+  const copy = panel.querySelector("[data-testid^='copy-audio-']");
+  expect(copy).not.toBeNull();
+  expect(copy).toHaveAttribute("aria-label", "Copy transcript");
+});
+
+test("the transcript panel STAYS open when the mouse leaves the chip (#410)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
+  vi.spyOn(api, "transcribeAudio").mockResolvedValue("reach the copy button");
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("composer-dropzone")).toBeInTheDocument());
+
+  dropAudio(new File(["x"], "talk.mp3", { type: "audio/mpeg" }));
+  await waitFor(() =>
+    expect(screen.getByTestId("audio-attachment")).toHaveAttribute("data-status", "done"),
+  );
+
+  const chip = screen.getByTestId("audio-attachment");
+  // Open via click (also exercises the click-to-toggle affordance).
+  fireEvent.click(chip);
+  expect(await screen.findByTestId("audio-panel")).toBeInTheDocument();
+
+  // The core #410 bug: moving the pointer off the chip must NOT dismiss the panel,
+  // otherwise the user can never travel into the panel to click Copy.
+  fireEvent.mouseLeave(chip);
+  expect(screen.getByTestId("audio-panel")).toBeInTheDocument();
+
+  // The Copy control copies the full transcript and stays reachable.
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.assign(navigator, { clipboard: { writeText } });
+  const copy = screen.getByRole("button", { name: "Copy transcript" });
+  fireEvent.click(copy);
+  expect(writeText).toHaveBeenCalledWith("reach the copy button");
 });
 
 test("removing an audio chip drops it from the row (#406)", async () => {
