@@ -186,6 +186,33 @@ def test_user_message_images_round_trip() -> None:
 
 
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_image_does_not_leak_to_a_later_image_less_turn() -> None:
+    # An image-less question must NOT inherit an earlier question's image (#396 regression): the
+    # persisted turn carries THIS turn's images, not the most recent image-bearing one's.
+    img = "data:image/png;base64,AAAA"
+    with _client() as client:
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/v1/chat",
+            headers=AUTH,
+            json={
+                "messages": [
+                    {"role": "user", "content": "first", "images": [img]},
+                    {"role": "assistant", "content": "ok"},
+                    {"role": "user", "content": "second"},
+                ],
+                "conversation_id": cid,
+            },
+        ) as resp:
+            "".join(resp.iter_text())
+        msgs = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        user = next(m for m in msgs if m["role"] == "user")
+        assert user["content"] == "second"
+        assert user["images"] == []  # not the earlier turn's image
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_chat_without_user_message_persists_only_assistant() -> None:
     with _client() as client:
         cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
