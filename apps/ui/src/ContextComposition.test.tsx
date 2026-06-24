@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, test } from "vitest";
 
 import { ContextComposition } from "./ContextComposition";
@@ -55,6 +55,39 @@ test("token counts are hidden by default and the toggle reveals per-source + ass
   expect(toggle).toHaveAttribute("aria-pressed", "false");
   expect(breakdown).not.toHaveTextContent(/~\d+ tok/);
   expect(breakdown).not.toHaveTextContent(/Assembled ~\d+ tokens/);
+});
+
+test("the tokens toggle reveals the actual token pieces of a source's text (#391)", async () => {
+  render(
+    <ContextComposition
+      context={{
+        items: [{ label: "Documents", count: 1, chars: 16, text: "hello tokenized world" }],
+        total_chars: 16,
+      }}
+    />,
+  );
+  // Hidden by default.
+  expect(screen.queryByTestId("context-tokens")).toBeNull();
+  fireEvent.click(screen.getByTestId("context-tokens-toggle"));
+  const tokens = screen.getByTestId("context-tokens");
+  // The tokenizer is lazy-loaded (dynamic import), so the count + chips appear after it resolves.
+  await waitFor(() => expect(tokens).toHaveTextContent(/\d+ tokens · approx \(GPT-style\)/));
+  // The text is split into multiple token chips (more than one span beyond the header line).
+  const chips = tokens.querySelectorAll("span");
+  expect(chips.length).toBeGreaterThan(1);
+  // The pieces reconstruct the source text.
+  expect(tokens).toHaveTextContent("hello");
+  expect(tokens).toHaveTextContent("world");
+});
+
+test("the token view is absent for a source without text (pre-#391 turns)", () => {
+  render(
+    <ContextComposition
+      context={{ items: [{ label: "Memory", count: 1, chars: 100 }], total_chars: 100 }}
+    />,
+  );
+  fireEvent.click(screen.getByTestId("context-tokens-toggle"));
+  expect(screen.queryByTestId("context-tokens")).toBeNull(); // no text -> no chips
 });
 
 test("the '?' button opens a real-label explanation (not the generic fallback)", () => {

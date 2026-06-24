@@ -9,6 +9,10 @@ export default defineConfig({
   // Target modern Chromium (Tauri webview; tsconfig already targets ES2022). Also avoids esbuild
   // 0.28's refusal to down-transform modern syntax to vite's old es2020 default (#275 override).
   build: { target: "es2022" },
+  // Same target for DEV dependency pre-bundling — otherwise esbuild 0.28 fails to down-transform a
+  // dep's modern syntax to vite's default es2020 and `make run-ui` errors (hit via gpt-tokenizer's
+  // transitive deps @ungap/structured-clone + debug, #391).
+  optimizeDeps: { esbuildOptions: { target: "es2022" } },
   server: { port: 5173, strictPort: true },
   preview: { port: 4173, strictPort: true },
   test: {

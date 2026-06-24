@@ -574,7 +574,32 @@ def test_assistant_message_persists_context_snapshot() -> None:
         context = assistant["meta"]["context"]
         assert context["items"]  # at least the user message group is always present
         assert isinstance(context["total_chars"], int)
-        assert all({"label", "count", "chars"} <= set(it) for it in context["items"])
+        # Each item carries label/count/chars + the source text (for token visualization, #391).
+        assert all({"label", "count", "chars", "text"} <= set(it) for it in context["items"])
+        assert all(isinstance(it["text"], str) for it in context["items"])
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_context_snapshot_text_is_capped() -> None:
+    # An oversized source's persisted text is truncated with a marker (#391) — keeps meta.context
+    # bounded — while `chars` still reflects the full length.
+    big = "x" * 20_000
+    with _client_with("ctxbig", _ThinkingFake(name="ctxbig")) as client:
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/v1/chat",
+            headers=AUTH,
+            json={"messages": [{"role": "user", "content": big}], "conversation_id": cid},
+        ) as resp:
+            "".join(resp.iter_text())
+        msgs = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        assistant = next(m for m in msgs if m["role"] == "assistant")
+        items = assistant["meta"]["context"]["items"]
+        big_item = max(items, key=lambda it: it["chars"])
+        assert big_item["chars"] >= 20_000  # full length preserved in the count
+        assert big_item["text"].endswith("…(truncated)")
+        assert len(big_item["text"]) < 20_000  # but the carried text is capped
 
 
 class _BoomProvider(FakeModelProvider):

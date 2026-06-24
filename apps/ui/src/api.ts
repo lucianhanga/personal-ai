@@ -187,6 +187,9 @@ export interface ContextItem {
   label: string;
   count: number;
   chars: number;
+  // The source's assembled text (capped backend-side), for the in-browser token visualization
+  // (#391). Absent for turns persisted before this field existed.
+  text?: string;
 }
 
 export interface ContextBreakdown {
