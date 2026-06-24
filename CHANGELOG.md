@@ -11,6 +11,12 @@ generated OpenAPI document.
 
 ## [Unreleased]
 
+## [0.8.3] — 2026-06-24
+
+Milestones **M8.1 → M8.3** (multi-agent quality, per-tenant configuration, the durable
+human-in-the-loop gates, and the transparency panel) plus the M-Bench benchmark harness and the
+M9 Multimodal trio (vision · STT · TTS).
+
 ### Fixed
 - **Attached images now survive a reload (#384)**: a user message's attached images were sent to the
   model but never persisted, so they vanished when the conversation was reopened. The user turn now
@@ -296,5 +302,7 @@ Milestones **M0–M6** complete.
 - The HTTP API is now served under **`/api/v1`** (the `/health` and `/version` infrastructure
   endpoints stay unversioned); OpenAPI `info.version` reflects the project version.
 
-[Unreleased]: https://github.com/lucianhanga/personal-ai/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/lucianhanga/personal-ai/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/lucianhanga/personal-ai/compare/v0.7.0...v0.8.3
+[0.7.0]: https://github.com/lucianhanga/personal-ai/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/lucianhanga/personal-ai/releases/tag/v0.6.0

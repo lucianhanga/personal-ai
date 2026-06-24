@@ -1,6 +1,6 @@
 [project]
 name = "personalai-backend"
-version = "0.7.0"
+version = "0.8.3"
 description = "PersonalAI backend app: FastAPI composition root wiring adapters via registries."
 readme = "README.md"
 requires-python = ">=3.12"
