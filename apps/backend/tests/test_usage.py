@@ -92,3 +92,27 @@ def test_usage_event_in_tools_path() -> None:
     body = _body(client, {"messages": [{"role": "user", "content": "1+1?"}], "use_tools": True})
     assert "event: usage" in body
     assert '"total_tokens": 55' in body
+
+
+class _ThinkUsage(FakeModelProvider):
+    """Streams a reasoning (thinking) chunk, then an answer + usage."""
+
+    async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+        yield GenerationChunk(thinking="pondering")
+        yield GenerationChunk(delta="hi")
+        yield GenerationChunk(
+            done=True, finish_reason="stop", usage={"prompt_tokens": 5, "completion_tokens": 2}
+        )
+
+
+def test_reasoning_frame_carries_per_step_ts() -> None:
+    # Each streamed trace step carries its own wall-clock ts so the activity timeline can show
+    # real per-step times (live and on reload) — see #384.
+    boot = bootstrap(config=CoreConfig(auth_token=TOKEN, model_provider="ollama"))
+    boot.registries.model_providers.register("ollama", _ThinkUsage(name="ollama"), overwrite=True)
+    body = _body(
+        TestClient(create_app(boot)),
+        {"messages": [{"role": "user", "content": "hi"}], "reasoning": "full"},
+    )
+    assert '"thinking": "pondering"' in body
+    assert '"ts":' in body

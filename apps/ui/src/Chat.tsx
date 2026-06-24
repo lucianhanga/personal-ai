@@ -678,12 +678,13 @@ export function Chat({
                 ok: step.ok,
                 output: step.output,
                 error: step.error,
+                ts: step.ts,
               }),
             },
           }));
         },
         (u) => patchChat(key, (s) => withUsage(s, u)),
-        (delta) =>
+        (delta, ts) =>
           patchChat(key, (s) => ({
             ...s,
             trace: {
@@ -691,6 +692,7 @@ export function Chat({
               [assistantIndex]: appendTrace(s.trace[assistantIndex], {
                 kind: "reasoning",
                 text: delta,
+                ts,
               }),
             },
           })),
@@ -717,6 +719,7 @@ export function Chat({
               [assistantIndex]: appendTrace(s.trace[assistantIndex], {
                 kind: step.kind,
                 text: step.text,
+                ts: step.ts,
               }),
             },
           })),
@@ -732,6 +735,7 @@ export function Chat({
                 kind: "verification",
                 text: step.text,
                 verdict: step.verdict ?? null,
+                ts: step.ts,
               }),
             },
           })),

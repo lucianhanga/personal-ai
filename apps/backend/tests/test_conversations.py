@@ -165,6 +165,27 @@ def test_chat_persists_turns() -> None:
 
 
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_user_message_images_round_trip() -> None:
+    # Attached images (data-URLs) are persisted with the user turn so they survive a reload (#384).
+    img = "data:image/png;base64,AAAA"
+    with _client() as client:
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/v1/chat",
+            headers=AUTH,
+            json={
+                "messages": [{"role": "user", "content": "what is this?", "images": [img]}],
+                "conversation_id": cid,
+            },
+        ) as resp:
+            "".join(resp.iter_text())
+        msgs = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        user = next(m for m in msgs if m["role"] == "user")
+        assert user["images"] == [img]
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_chat_without_user_message_persists_only_assistant() -> None:
     with _client() as client:
         cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]

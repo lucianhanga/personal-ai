@@ -31,6 +31,7 @@ export interface TraceItem {
   ok?: boolean | null;
   output?: Record<string, unknown> | null;
   error?: string | null;
+  ts?: string; // wall-clock UTC ISO when this step happened (per-step time in the activity timeline)
 }
 
 /** A durable human-gate approval request (M8.1c): the run is suspended until POST .../resume.
@@ -151,6 +152,7 @@ export interface ToolStep {
   ok?: boolean | null;
   output?: Record<string, unknown> | null;
   error?: string | null;
+  ts?: string; // wall-clock UTC ISO when the call/result happened (per-step timeline time)
 }
 
 export interface ToolLogEntry {
@@ -836,12 +838,12 @@ export async function streamChat(
   onCitations?: (citations: Citation[]) => void,
   onToolStep?: (step: ToolStep) => void,
   onUsage?: (usage: UsageInfo) => void,
-  onThinking?: (delta: string) => void,
+  onThinking?: (delta: string, ts?: string) => void,
   onError?: (message: string) => void,
   onApproval?: (req: ApprovalRequest) => void,
-  onAgentStep?: (step: { kind: "plan" | "critique"; text: string }) => void,
+  onAgentStep?: (step: { kind: "plan" | "critique"; text: string; ts?: string }) => void,
   onContext?: (context: ContextBreakdown) => void,
-  onVerification?: (step: { text: string; verdict?: string }) => void,
+  onVerification?: (step: { text: string; verdict?: string; ts?: string }) => void,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/chat`, {
     method: "POST",
@@ -877,11 +879,12 @@ export async function streamChat(
     if (event === "citations") return onCitations?.(parsed as Citation[]);
     if (event === "tool") return onToolStep?.(parsed as ToolStep);
     if (event === "plan" || event === "critique") {
-      return onAgentStep?.({ kind: event, text: (parsed as { text?: string }).text ?? "" });
+      const p = parsed as { text?: string; ts?: string };
+      return onAgentStep?.({ kind: event, text: p.text ?? "", ts: p.ts });
     }
     if (event === "verification") {
-      const v = parsed as { text?: string; verdict?: string };
-      return onVerification?.({ text: v.text ?? "", verdict: v.verdict });
+      const v = parsed as { text?: string; verdict?: string; ts?: string };
+      return onVerification?.({ text: v.text ?? "", verdict: v.verdict, ts: v.ts });
     }
     if (event === "usage") return onUsage?.(parsed as UsageInfo);
     if (event === "approval_request") return onApproval?.(parsed as ApprovalRequest);
@@ -889,8 +892,8 @@ export async function streamChat(
       onError?.((parsed as { error?: { message?: string } }).error?.message ?? "generation failed");
       return;
     }
-    const payload = parsed as { delta?: string; thinking?: string | null };
-    if (payload.thinking) onThinking?.(payload.thinking);
+    const payload = parsed as { delta?: string; thinking?: string | null; ts?: string };
+    if (payload.thinking) onThinking?.(payload.thinking, payload.ts);
     if (payload.delta) onDelta(payload.delta);
   };
 

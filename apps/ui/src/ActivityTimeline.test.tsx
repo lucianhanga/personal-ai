@@ -199,3 +199,25 @@ test("egress-blocked tool keeps the Allow affordance via ToolIO", () => {
   fireEvent.click(screen.getByTestId("egress-allow-btn"));
   expect(onAllowHost).toHaveBeenCalledWith("example.com");
 });
+
+test("shows each step's own per-step ts, falling back to the turn clock when absent (#384)", () => {
+  const messages: ChatMessage[] = [
+    { role: "user", content: "q" },
+    {
+      role: "assistant",
+      content: "a",
+      created_at: "2020-01-01T00:00:00Z",
+      meta: {
+        trace: [
+          { kind: "plan", text: "p", ts: "2020-01-01T03:04:05Z" },
+          { kind: "reasoning", text: "r" }, // no ts -> falls back to the turn clock
+        ] as TraceItem[],
+      },
+    },
+  ];
+  renderTimeline({ messages }); // single (newest) turn is expanded by default
+  // The plan step shows its OWN time, not the turn's 00:00:00.
+  expect(screen.getByTestId("timeline-plan")).toHaveTextContent("03:04:05Z");
+  // The ts-less reasoning step falls back to the turn's created_at clock.
+  expect(screen.getByTestId("timeline-reasoning")).toHaveTextContent("00:00:00Z");
+});

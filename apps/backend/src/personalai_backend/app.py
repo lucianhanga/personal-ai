@@ -413,19 +413,29 @@ class _TurnSse:
         self.trace: list[dict[str, Any]] = []
         self.suspended = False
 
-    def _add_text(self, kind: str, text: str) -> None:
-        # Merge consecutive same-kind streamed deltas (reasoning/plan/critique) into one trace item.
+    @staticmethod
+    def _now() -> str:
+        # Wall-clock UTC (seconds) stamped on each trace item as it happens, so the activity
+        # timeline shows real PER-STEP times (not just the turn's start). The same ts rides the SSE
+        # frame and the persisted trace, so live and reload agree.
+        return datetime.now(UTC).isoformat(timespec="seconds")
+
+    def _add_text(self, kind: str, text: str) -> str:
+        # Merge consecutive same-kind streamed deltas (reasoning/plan/critique) into one trace item;
+        # keep the FIRST delta's ts for the merged item. Returns the item's ts (for the SSE frame).
         if self.trace and self.trace[-1].get("kind") == kind and "text" in self.trace[-1]:
             self.trace[-1]["text"] += text
-        else:
-            self.trace.append({"kind": kind, "text": text})
+            return str(self.trace[-1].get("ts", ""))
+        ts = self._now()
+        self.trace.append({"kind": kind, "text": text, "ts": ts})
+        return ts
 
     def map(self, ev: Any) -> bytes | None:
         """Fold one TurnEvent into the accumulators and return its SSE bytes (or None for `final`,
         which the caller frames with its own done/usage logic)."""
         if ev.kind == "reasoning":
-            self._add_text("reasoning", ev.text)
-            return f"data: {json.dumps({'thinking': ev.text})}\n\n".encode()
+            ts = self._add_text("reasoning", ev.text)
+            return f"data: {json.dumps({'thinking': ev.text, 'ts': ts})}\n\n".encode()
         if ev.kind == "answer":
             self.answer += ev.text
             return f"data: {json.dumps({'delta': ev.text, 'done': False})}\n\n".encode()
@@ -434,6 +444,7 @@ class _TurnSse:
             # the trace as reasoning), not the answer -> drop it from the persisted answer.
             if ev.phase == "call":
                 self.answer = ""
+            ts = self._now()
             item = {
                 "kind": f"tool_{ev.phase}",  # tool_call | tool_result
                 "tool": ev.tool,
@@ -441,6 +452,7 @@ class _TurnSse:
                 "ok": ev.ok,
                 "output": ev.output,
                 "error": ev.error,
+                "ts": ts,
             }
             self.trace.append(item)
             payload = {
@@ -450,14 +462,20 @@ class _TurnSse:
                 "ok": ev.ok,
                 "output": ev.output,
                 "error": ev.error,
+                "ts": ts,
             }
             return f"event: tool\ndata: {json.dumps(payload)}\n\n".encode()
         if ev.kind in ("plan", "critique"):
-            self._add_text(ev.kind, ev.text)
-            step = json.dumps({"kind": ev.kind, "text": ev.text})
+            ts = self._add_text(ev.kind, ev.text)
+            step = json.dumps({"kind": ev.kind, "text": ev.text, "ts": ts})
             return f"event: {ev.kind}\ndata: {step}\n\n".encode()
         if ev.kind == "verification":
-            item = {"kind": "verification", "text": ev.text, "verdict": ev.verdict}
+            item = {
+                "kind": "verification",
+                "text": ev.text,
+                "verdict": ev.verdict,
+                "ts": self._now(),
+            }
             self.trace.append(item)
             return f"event: verification\ndata: {json.dumps(item)}\n\n".encode()
         if ev.kind == "approval_request":
@@ -1067,10 +1085,18 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             ]
         )
 
-        # Persist the user turn now (if a conversation is targeted and storage is available).
+        # Persist the user turn now (if a conversation is targeted and storage is available). Carry
+        # the attached images (data-URLs) in meta so they survive a reload (not just the live turn).
         if persist_id is not None and storage is not None and last_user is not None:
+            last_images = next(
+                (list(m.images) for m in reversed(req.messages) if m.role == "user" and m.images),
+                [],
+            )
             await storage.conversations.add_message(
-                conversation_id=persist_id, role="user", content=last_user
+                conversation_id=persist_id,
+                role="user",
+                content=last_user,
+                meta={"images": last_images} if last_images else None,
             )
 
         async def event_stream() -> AsyncIterator[bytes]:
@@ -1719,6 +1745,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 "role": m.role,
                 "content": m.content,
                 "meta": m.meta,
+                # Attached images (data-URLs) persisted in the user turn's meta, surfaced top-level
+                # so they render on reload just like the live turn.
+                "images": (m.meta or {}).get("images", []),
                 # Surfaced so the UI's activity timeline can show real relative times per turn.
                 "created_at": m.created_at.isoformat(),
             }
