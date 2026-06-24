@@ -9,9 +9,28 @@ risk approval, timeouts, and audit are enforced; nothing runs until every gate p
 - **calculator** — safe arithmetic (AST-evaluated, *no code execution*); LOW risk, no permissions.
 - **http_fetch** — HTTP GET; requires the **NETWORK** permission and the target host must pass the
   **egress allowlist**; redirects disabled; size/time-limited; HIGH risk (needs approval).
-- **web_search** — DuckDuckGo search (pinned to `html.duckduckgo.com`, no API key); requires the
-  **NETWORK** permission and passes the **egress allowlist**; MEDIUM risk. Used by the agent loop
+- **web_search** — general web search behind a configurable provider (see **Search providers**
+  below); requires the **NETWORK** permission and passes the **egress allowlist** for the active
+  provider's host; MEDIUM risk. Supported params are `query` (required) and `max_results` (optional,
+  capped at 10); any other param the model invents is ignored, not an error. Used by the agent loop
   (see [the agent loop guide](./agent.md)).
+
+## Search providers
+
+`web_search` delegates to a swappable backend, selected with `PERSONALAI_WEB_SEARCH_PROVIDER`. The
+manifest's egress host is built from the **active** provider, so the gateway allowlist applies to the
+host actually contacted. If a provider's required setting is missing, it falls back to DuckDuckGo
+(logged) instead of crashing.
+
+- **duckduckgo** (default) — zero-setup HTML scrape, no API key. Egress host `html.duckduckgo.com`.
+- **searxng** — a self-hosted [SearXNG](https://docs.searxng.org/) JSON instance; local-first. Set
+  `PERSONALAI_WEB_SEARCH_BASE_URL` (e.g. `http://127.0.0.1:8888`). A loopback instance works with
+  egress disabled; egress host is parsed from the base URL.
+- **tavily** — the [Tavily](https://tavily.com/) search API. Set `PERSONALAI_WEB_SEARCH_API_KEY`,
+  enable egress, and add `api.tavily.com` to `PERSONALAI_ALLOWED_EGRESS_HOSTS`.
+
+`PERSONALAI_WEB_SEARCH_MAX_RESULTS` (default 5) sets the default result count; the tool caps any
+request at 10.
 
 ## Try it (UI)
 
