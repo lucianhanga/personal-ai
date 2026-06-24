@@ -71,6 +71,25 @@ test("newest turn renders first and expanded; older collapsed", () => {
   expect(headers[1]).toHaveAttribute("aria-expanded", "false");
 });
 
+test("renders a draft answer marker node, kept under the Reasoning filter (#393)", () => {
+  const messages: ChatMessage[] = [
+    { role: "user", content: "q" },
+    {
+      role: "assistant",
+      content: "final",
+      created_at: "2020-01-01T00:00:00Z",
+      meta: { trace: [{ kind: "draft", text: "proposed", attempt: 1 }] as TraceItem[] },
+    },
+  ];
+  renderTimeline({ messages, contexts: {} });
+  // Newest turn is expanded by default, so the draft marker shows.
+  expect(screen.getByTestId("timeline-draft")).toBeInTheDocument();
+  // It's reasoning-kind: the Reasoning filter keeps it.
+  const reasoning = screen.getAllByTestId("timeline-filter").find((b) => b.textContent === "Reasoning")!;
+  fireEvent.click(reasoning);
+  expect(screen.getByTestId("timeline-draft")).toBeInTheDocument();
+});
+
 test("a tool_call/result pair renders one ToolIO node", () => {
   renderTimeline();
   // Expand the older turn (collapsed by default) to reveal its tool node.

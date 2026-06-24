@@ -147,6 +147,7 @@ class AgentEvent:
         "verification",
         "approval_request",
         "egress_blocked",
+        "draft",
     ]
     tool: str | None = None
     args: Mapping[str, Any] | None = None
@@ -158,6 +159,8 @@ class AgentEvent:
     thinking: str | None = None
     verdict: str | None = None  # verification outcome (pass/needs_revision/fail) — M8.2
     text: str | None = None
+    # Which researcher pass produced a `draft` answer (1-based); only set on `draft` events (#393).
+    attempt: int | None = None
 
 
 async def run_agent(

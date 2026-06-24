@@ -261,6 +261,13 @@ export function ActivityTimeline({
         );
         return;
       }
+      if (t.kind === "draft") {
+        // The researcher's draft answer marker (#393) — reasoning-kind, so the Reasoning filter
+        // includes it; the full text lives in the transcript's Details.
+        const label = `Draft${t.attempt && t.attempt > 1 ? ` ${t.attempt}` : ""}`;
+        nodes.push(labelNode(idx, k, COLOR.researcher, label, stepTime, "timeline-draft"));
+        return;
+      }
       // Generic fallback so an unknown future kind renders rather than vanishing.
       nodes.push(labelNode(idx, k, COLOR.researcher, t.kind, stepTime, "timeline-other"));
     });

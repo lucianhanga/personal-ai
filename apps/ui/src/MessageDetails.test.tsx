@@ -134,6 +134,26 @@ test("an egress-blocked result keeps the Allow affordance inside the ToolIO", ()
   expect(screen.getByTestId("egress-allowed")).toHaveTextContent("example.com");
 });
 
+test("renders the draft answer highlighted; an earlier draft is dimmed as superseded (#393)", () => {
+  render(
+    <MessageDetails
+      defaultOpen
+      trace={[
+        { kind: "draft", text: "first try at the answer", attempt: 1 },
+        { kind: "critique", text: "revise: missing detail" },
+        { kind: "draft", text: "the final proposed answer", attempt: 2 },
+      ]}
+    />,
+  );
+  const drafts = screen.getAllByTestId("details-draft");
+  expect(drafts).toHaveLength(2);
+  // Both labeled "Draft answer"; the latest shows its text, the earlier one is marked superseded.
+  expect(drafts[0]).toHaveTextContent("Draft answer");
+  expect(drafts[0]).toHaveTextContent("superseded");
+  expect(drafts[1]).toHaveTextContent("the final proposed answer");
+  expect(drafts[1]).not.toHaveTextContent("superseded");
+});
+
 test("renders an ordered trace: reasoning, tool call, more reasoning", () => {
   render(
     <MessageDetails

@@ -65,11 +65,14 @@ def test_planner_researcher_critic_pipeline() -> None:
         gateway=_gateway(),
         tools=[],
     )
-    assert [e.type for e in events] == ["plan", "answer", "critique", "final"]
+    # The researcher's answer is a `draft` (reasoning pane), not the output `answer`; the accepted
+    # answer is emitted by finalize as `answer` then `final` (#393).
+    assert [e.type for e in events] == ["plan", "draft", "critique", "answer", "final"]
     assert events[0].text  # planner produced a plan
+    assert events[1].answer and events[1].attempt == 1  # researcher's draft, labeled attempt 1
     assert events[2].text  # critic produced a critique
-    # The final answer is the researcher's streamed answer (echo of the plan-augmented prompt).
-    assert events[1].answer
+    assert events[3].answer == events[4].answer  # finalize's output answer == the final
+    assert events[3].answer == events[1].answer  # which equals the accepted draft
 
 
 class _Empty(FakeModelProvider):
@@ -127,7 +130,8 @@ def test_researcher_tool_steps_flow_and_usage_reaches_final() -> None:
         max_iterations=4,
     )
     kinds = [e.type for e in events]
-    assert kinds == ["plan", "tool_call", "tool_result", "answer", "critique", "final"]
+    # Researcher streams tool steps then a `draft` (not `answer`); finalize emits `answer`+`final`.
+    assert kinds == ["plan", "tool_call", "tool_result", "draft", "critique", "answer", "final"]
     assert events[1].tool == "echo"
     assert events[2].ok is True
     assert events[-1].usage == {"total_tokens": 7}  # usage from run_agent's final reaches the end
@@ -324,8 +328,12 @@ def test_reflection_loop_is_bounded() -> None:
         gateway=_gateway(),
         tools=[],
     )
-    # Exactly MAX_ATTEMPTS researcher passes -> two "answer" deltas precede the terminal final.
-    assert sum(1 for e in events if e.type == "answer") == MAX_ATTEMPTS
+    # Exactly MAX_ATTEMPTS researcher passes -> one `draft` per pass (each its own attempt index),
+    # then the single finalize `answer` (#393).
+    drafts = [e for e in events if e.type == "draft"]
+    assert len(drafts) == MAX_ATTEMPTS
+    assert [d.attempt for d in drafts] == list(range(1, MAX_ATTEMPTS + 1))
+    assert sum(1 for e in events if e.type == "answer") == 1  # only finalize fills the output
     assert any(e.type == "final" for e in events)
 
 
@@ -363,11 +371,13 @@ def test_human_gate_suspends_then_resumes_durably() -> None:
     }
 
     first = _drain(**common)
-    assert [e.type for e in first] == ["plan", "answer", "critique", "approval_request"]
+    # The proposed answer is a `draft` (reasoning pane); the gate suspends BEFORE finalize, so the
+    # output `answer` is not emitted until after approval (#393).
+    assert [e.type for e in first] == ["plan", "draft", "critique", "approval_request"]
     assert first[-1].output is not None
     assert first[-1].output["reason"] == "approve_answer"
 
-    # Resume with the human's decision -> finalize emits the single final; no second approval.
+    # Resume with the human's decision -> finalize emits the output `answer` then a single `final`.
     second = _drain(**common, resume="approve")
-    assert [e.type for e in second] == ["final"]
-    assert second[0].answer
+    assert [e.type for e in second] == ["answer", "final"]
+    assert second[-1].answer

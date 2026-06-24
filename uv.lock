@@ -1736,7 +1736,7 @@ wheels = [
 
 [[package]]
 name = "personalai-backend"
-version = "0.7.0"
+version = "0.8.3"
 source = { editable = "apps/backend" }
 dependencies = [
     { name = "argon2-cffi" },
@@ -1912,7 +1912,7 @@ requires-dist = [
 
 [[package]]
 name = "personalai-tool-mcp"
-version = "0.7.0"
+version = "0.8.3"
 source = { editable = "tools/mcp" }
 dependencies = [
     { name = "mcp" },
