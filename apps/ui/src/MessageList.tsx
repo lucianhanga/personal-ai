@@ -1,8 +1,16 @@
+import { useState } from "react";
+
 import type { ChatMessage, Citation, ContextBreakdown, TraceItem, TurnUsage } from "./api";
 import { approxTokens, ContextComposition } from "./ContextComposition";
 import { Markdown } from "./Markdown";
 import { MessageDetails } from "./MessageDetails";
 import { ReadAloudButton } from "./ReadAloudButton";
+
+/** First line of a question, clipped to ~80 chars with a trailing ellipsis, for the collapsed preview. */
+const previewQuestion = (text: string): string => {
+  const firstLine = text.split("\n", 1)[0];
+  return firstLine.length > 80 ? `${firstLine.slice(0, 80)}…` : firstLine;
+};
 
 const fmtMs = (ms: number): string =>
   ms < 1000
@@ -70,6 +78,8 @@ export function MessageList({
   onScroll,
   onAllowHost,
 }: MessageListProps): React.ReactElement {
+  // Per-message collapsed state, keyed by message index. Questions default to expanded.
+  const [collapsed, setCollapsed] = useState<Record<number, boolean>>({});
   return (
     <div
       ref={listRef}
@@ -132,8 +142,43 @@ export function MessageList({
               padding: "0.5rem 0.6rem",
             }}
           >
-            <strong>You:</strong> {m.content}
-            {m.images && m.images.length > 0 && (
+            <button
+              type="button"
+              data-testid="question-toggle"
+              aria-expanded={!collapsed[i]}
+              aria-label={collapsed[i] ? "Expand question" : "Collapse question"}
+              onClick={() => setCollapsed((prev) => ({ ...prev, [i]: !prev[i] }))}
+              style={{
+                background: "none",
+                border: "none",
+                padding: 0,
+                marginRight: "0.35rem",
+                cursor: "pointer",
+                color: "#6b7280",
+                fontSize: "0.8rem",
+                lineHeight: 1,
+              }}
+            >
+              {collapsed[i] ? "▸" : "▾"}
+            </button>
+            <strong>You:</strong>{" "}
+            {collapsed[i] ? (
+              <span
+                style={{
+                  display: "inline-block",
+                  maxWidth: "100%",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  verticalAlign: "bottom",
+                }}
+              >
+                {previewQuestion(m.content)}
+              </span>
+            ) : (
+              m.content
+            )}
+            {!collapsed[i] && m.images && m.images.length > 0 && (
               <div data-testid="msg-images" style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", marginTop: "0.25rem" }}>
                 {m.images.map((src, k) => (
                   <img
