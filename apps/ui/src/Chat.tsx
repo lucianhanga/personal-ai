@@ -32,6 +32,7 @@ import {
   type TurnUsage,
   type UsageInfo,
 } from "./api";
+import { AudioChips, type AudioAttachment } from "./AudioChips";
 import { ChatsPanel } from "./ChatsPanel";
 import { EgressApproval, type EgressDecision } from "./EgressApproval";
 import { MessageList } from "./MessageList";
@@ -41,33 +42,52 @@ import { SidePanel } from "./SidePanel";
 // Key for the not-yet-persisted "new" chat (before its conversation id exists).
 const NEW_CHAT = "__new__";
 
-// The unsent composer draft (typed text + attached images) is kept in sessionStorage so it survives
-// a remount or reload. Without this, any session re-validation unmounts <Chat> (App shows the
-// loading view) and the in-memory draft — including a staged file — is silently lost (#369).
+// The unsent composer draft (typed text + attached images + done audio transcripts) is kept in
+// sessionStorage so it survives a remount or reload. Without this, any session re-validation
+// unmounts <Chat> (App shows the loading view) and the in-memory draft is silently lost (#369).
 const DRAFT_KEY = "personalai_composer_draft";
+
+// A persisted audio chip: only `done` chips (with a transcript) are saved — never the File,
+// in-flight chips, error chips, or any AbortController (#406).
+interface DraftAudio {
+  id: string;
+  name: string;
+  transcript: string;
+}
 
 interface ComposerDraft {
   input: string;
   attachedImages: string[];
+  audio: DraftAudio[];
 }
 
 function loadDraft(): ComposerDraft {
   try {
     const raw = sessionStorage.getItem(DRAFT_KEY);
-    if (!raw) return { input: "", attachedImages: [] };
+    if (!raw) return { input: "", attachedImages: [], audio: [] };
     const d = JSON.parse(raw) as Partial<ComposerDraft>;
+    const audio = Array.isArray(d.audio)
+      ? d.audio.filter(
+          (a): a is DraftAudio =>
+            !!a &&
+            typeof a.id === "string" &&
+            typeof a.name === "string" &&
+            typeof a.transcript === "string",
+        )
+      : [];
     return {
       input: typeof d.input === "string" ? d.input : "",
       attachedImages: Array.isArray(d.attachedImages) ? d.attachedImages.filter((s) => typeof s === "string") : [],
+      audio,
     };
   } catch {
-    return { input: "", attachedImages: [] };
+    return { input: "", attachedImages: [], audio: [] };
   }
 }
 
 function saveDraft(draft: ComposerDraft): void {
   try {
-    if (!draft.input && draft.attachedImages.length === 0) {
+    if (!draft.input && draft.attachedImages.length === 0 && draft.audio.length === 0) {
       sessionStorage.removeItem(DRAFT_KEY); // keep storage clean once the draft is empty/sent
       return;
     }
@@ -219,6 +239,14 @@ export function Chat({
   const [input, setInput] = useState(() => loadDraft().input);
   // Image parts attached to the next turn, as data-URLs (M9.1 vision).
   const [attachedImages, setAttachedImages] = useState<string[]>(() => loadDraft().attachedImages);
+  // Audio attachment chips (#406): each dropped audio file is transcribed in the background. Only
+  // `done` chips are restored from the draft (as completed transcripts); in-flight/error are not.
+  const [audioAttachments, setAudioAttachments] = useState<AudioAttachment[]>(() =>
+    loadDraft().audio.map((a) => ({ id: a.id, name: a.name, status: "done" as const, transcript: a.transcript })),
+  );
+  // One AbortController per in-flight transcription, keyed by chip id, so removing a chip mid-flight
+  // cancels its fetch. Never persisted.
+  const audioAbortRef = useRef<Map<string, AbortController>>(new Map());
   // True while an image is being dragged over the composer (drop-to-attach affordance, #324).
   const [dragOver, setDragOver] = useState(false);
   // Voice input (M9.2): whether STT is configured, and the live recording state.
@@ -227,12 +255,6 @@ export function Chat({
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
-  // Audio FILE upload -> transcribe (#389): the file name being transcribed (drives the progress
-  // notice), plus a soft amber notice (no-speech / model-download hint) and the hidden file input.
-  const [audioFileName, setAudioFileName] = useState<string | null>(null);
-  const [audioNotice, setAudioNotice] = useState<string | null>(null);
-  const audioInputRef = useRef<HTMLInputElement>(null);
-  const audioHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Soft, non-error STT feedback (amber): no-speech, or the one-time model-download hint.
   const [micNotice, setMicNotice] = useState<string | null>(null);
   const [recordSeconds, setRecordSeconds] = useState(0);
@@ -381,11 +403,15 @@ export function Chat({
     }
   }, [messages, trace]);
 
-  // Mirror the composer draft into sessionStorage so it survives a remount/reload (#369). send()
-  // clears both pieces of state, which writes an empty draft here and removes the stored key.
+  // Mirror the composer draft into sessionStorage so it survives a remount/reload (#369, #406).
+  // send() clears the state, which writes an empty draft here and removes the stored key. Only the
+  // `done` audio chips' transcripts are persisted (never the File / in-flight / error chips).
   useEffect(() => {
-    saveDraft({ input, attachedImages });
-  }, [input, attachedImages]);
+    const audio = audioAttachments
+      .filter((a) => a.status === "done")
+      .map((a) => ({ id: a.id, name: a.name, transcript: a.transcript }));
+    saveDraft({ input, attachedImages, audio });
+  }, [input, attachedImages, audioAttachments]);
 
   function newChat(): void {
     setChats((prev) => ({ ...prev, [NEW_CHAT]: EMPTY_CHAT }));
@@ -517,12 +543,14 @@ export function Chat({
   }
 
   useEffect(() => {
-    // Clear every STT timer on unmount.
+    // Clear every STT timer and abort any in-flight transcription on unmount.
+    const aborts = audioAbortRef.current;
     return () => {
       cancelAutoSend();
       stopRecordTimer();
       clearModelHint();
-      clearAudioHint();
+      aborts.forEach((c) => c.abort());
+      aborts.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -605,67 +633,75 @@ export function Chat({
     }
   }
 
-  function clearAudioHint(): void {
-    if (audioHintTimerRef.current) {
-      clearTimeout(audioHintTimerRef.current);
-      audioHintTimerRef.current = null;
+  // Drag-drop audio (#406): each dropped audio file becomes a `transcribing` chip whose transcription
+  // runs in the BACKGROUND (no composer hijack, no auto-send). On resolve the chip becomes `done`
+  // (or `empty` when blank); on error it becomes `error`. An abort (chip removed mid-flight) silently
+  // drops the chip. The transcript is folded into the message on send() and is copyable from the chip.
+  function onAudioFiles(files: File[]): void {
+    for (const file of files) {
+      const id = `aud_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const controller = new AbortController();
+      audioAbortRef.current.set(id, controller);
+      setAudioAttachments((cur) => [
+        ...cur,
+        { id, name: file.name, status: "transcribing", transcript: "" },
+      ]);
+      void transcribeAudio(token, file, file.name, controller.signal)
+        .then((text) => {
+          audioAbortRef.current.delete(id);
+          setAudioAttachments((cur) =>
+            cur.map((c) =>
+              c.id === id
+                ? text
+                  ? { ...c, status: "done", transcript: text }
+                  : { ...c, status: "empty", transcript: "" }
+                : c,
+            ),
+          );
+        })
+        .catch((e: unknown) => {
+          audioAbortRef.current.delete(id);
+          // Abort -> the chip was already removed; do not resurrect it as an error.
+          if ((e as { name?: string } | null)?.name === "AbortError") return;
+          setAudioAttachments((cur) =>
+            cur.map((c) =>
+              c.id === id ? { ...c, status: "error", error: transcribeErrorMessage(e) } : c,
+            ),
+          );
+        });
     }
   }
 
-  // Transcribe an uploaded audio FILE (#389). Unlike the mic, the transcript lands in the composer
-  // for review and is NOT auto-sent. One transcription at a time (ignore a new file while busy).
-  async function onAudioFile(file: File): Promise<void> {
-    if (transcribing || audioFileName) return;
-    cancelAutoSend(); // a transcription supersedes any pending mic auto-send
-    setAudioNotice(null);
-    setError(null);
-    setAudioFileName(file.name);
-    setTranscribing(true);
-    // Mirror the mic flow: a slow first transcription is the one-time local-model download — say so
-    // after a few seconds so the wait doesn't look like a hang.
-    audioHintTimerRef.current = setTimeout(
-      () =>
-        setAudioNotice(
-          "Working… the first transcription downloads the speech model, which can take a minute.",
-        ),
-      4000,
-    );
-    try {
-      const text = await transcribeAudio(token, file, file.name);
-      if (text) {
-        setAudioNotice(null);
-        setInput((cur) => (cur ? `${cur} ${text}` : text));
-      } else {
-        setAudioNotice("No speech detected in that file.");
-      }
-    } catch (e: unknown) {
-      setError(transcribeErrorMessage(e));
-    } finally {
-      clearAudioHint();
-      setTranscribing(false);
-      setAudioFileName(null);
+  // Remove a chip: abort its in-flight transcription (if any) and drop it from the row.
+  function removeAudio(id: string): void {
+    const controller = audioAbortRef.current.get(id);
+    if (controller) {
+      controller.abort();
+      audioAbortRef.current.delete(id);
     }
+    setAudioAttachments((cur) => cur.filter((c) => c.id !== id));
   }
 
-  // Send the composer wrapped in a summarize instruction (#389): the raw transcript shows in the
-  // user bubble, the assistant returns a summary. Reuses the normal send() path.
-  function sendSummarize(): void {
-    const text = input.trim();
-    if (!text) return;
-    void send(`Summarize the following:\n\n${text}`);
-  }
+  const doneAudio = audioAttachments.filter((a) => a.status === "done");
+  const audioTranscribing = audioAttachments.some((a) => a.status === "transcribing");
 
-  // `override` lets callers (Summarize) send wrapped content while still consuming the composer
-  // draft as a normal send does. When omitted, the trimmed composer text is sent.
-  async function send(override?: string): Promise<void> {
+  async function send(): Promise<void> {
     cancelAutoSend();
-    const content = override ?? input.trim();
+    const typed = input.trim();
     const images = attachedImages;
-    // Allow sending with only an image (no text), as long as there's something to send.
-    if ((!content && images.length === 0) || !model || view.busy) return;
+    // Fold each `done` audio chip's transcript into the outgoing content as a labeled block,
+    // appended after the typed text (Option (b), #406). In-flight/error/empty chips are excluded.
+    const audioBlocks = doneAudio
+      .map((a) => `[Audio: ${a.name}]\n${a.transcript}`)
+      .join("\n\n");
+    const content = audioBlocks ? (typed ? `${typed}\n\n${audioBlocks}` : audioBlocks) : typed;
+    // Allow sending with only an image or only a transcript (no typed text). Block while a chip is
+    // still transcribing (the Send button is also disabled).
+    if ((!content && images.length === 0) || !model || view.busy || audioTranscribing) return;
     setError(null);
     setInput("");
     setAttachedImages([]);
+    setAudioAttachments([]);
 
     const startKey = activeId ?? NEW_CHAT;
     const userMsg: ChatMessage = { role: "user", content, ...(images.length ? { images } : {}) };
@@ -1168,23 +1204,6 @@ export function Chat({
               </p>
             )}
 
-            {/* Audio FILE upload progress (#389): name the file being transcribed (muted), plus the
-                same soft amber notice (model-download hint / no speech) the mic flow uses. */}
-            {audioFileName && (
-              <p
-                data-testid="audio-progress"
-                role="status"
-                style={{ color: "#6b7280", fontSize: "0.82rem", margin: 0 }}
-              >
-                Transcribing {audioFileName}…
-              </p>
-            )}
-            {audioNotice && (
-              <p data-testid="audio-notice" style={{ color: "#b06f00", fontSize: "0.82rem", margin: 0 }}>
-                {audioNotice}
-              </p>
-            )}
-
             {/* Grace period after a transcription (M9.2c): a visible 3-2-1 countdown auto-sends the
                 transcript unless the user presses Stop (then they can edit) — editing also cancels. */}
             {autoSendIn !== null && (
@@ -1300,6 +1319,10 @@ export function Chat({
               </span>
             )}
 
+            {/* Audio attachment chips (#406): drag-drop audio is transcribed in the background; each
+                done chip reveals its full transcript on hover/focus/click with a Copy button. */}
+            <AudioChips chips={audioAttachments} onRemove={removeAudio} />
+
             {/* Attached image thumbnails (M9.1), removable before sending. */}
             {attachedImages.length > 0 && (
               <div data-testid="image-attachments" style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
@@ -1343,13 +1366,15 @@ export function Chat({
                 onDrop={(e) => {
                   e.preventDefault();
                   setDragOver(false);
-                  // Split the drop: images attach (as today); an audio file is transcribed (#389).
-                  // Anything else is ignored. Only the first audio file is transcribed per drop.
-                  onAttachImages(e.dataTransfer.files); // images only; non-images are ignored here
-                  const audio = Array.from(e.dataTransfer.files).find((f) =>
-                    f.type.startsWith("audio/"),
-                  );
-                  if (audio) void onAudioFile(audio);
+                  // Split the drop: images attach (as today); audio files each become a transcribing
+                  // chip (#406). Anything else is ignored. Audio is drag-drop ONLY now.
+                  onAttachImages(e.dataTransfer.files); // images only; non-images ignored here
+                  if (transcribeEnabled) {
+                    const audio = Array.from(e.dataTransfer.files).filter((f) =>
+                      f.type.startsWith("audio/"),
+                    );
+                    if (audio.length) onAudioFiles(audio);
+                  }
                 }}
               >
                 <textarea
@@ -1391,7 +1416,7 @@ export function Chat({
                     userSelect: "none",
                   }}
                 >
-                  drag &amp; drop images here
+                  {transcribeEnabled ? "drag & drop images or audio here" : "drag & drop images here"}
                 </span>
                 {/* Drop-target overlay shown while dragging a file over the composer. */}
                 {dragOver && (
@@ -1411,13 +1436,13 @@ export function Chat({
                       pointerEvents: "none",
                     }}
                   >
-                    Drop image(s) to attach
+                    {transcribeEnabled ? "Drop images or audio to attach" : "Drop image(s) to attach"}
                   </div>
                 )}
               </div>
-              {/* Mic + attach-audio-file stacked above Send; all are symbol buttons with the
-                  description in the tooltip (monochrome geometric glyphs, not emoji — record dot /
-                  stop / paperclip-ish file mark / send). */}
+              {/* Mic + Send stacked; symbol buttons with the description in the tooltip (monochrome
+                  geometric glyphs, not emoji — record dot / stop / send). Audio FILES are added by
+                  drag-drop only now (#406), so there is no file-picker button. */}
               <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
                 {transcribeEnabled && (
                   <button
@@ -1443,61 +1468,22 @@ export function Chat({
                     <span aria-hidden="true">{transcribing ? "…" : recording ? "■" : "●"}</span>
                   </button>
                 )}
-                {transcribeEnabled && (
-                  <>
-                    <button
-                      data-testid="audio-file-btn"
-                      onClick={() => audioInputRef.current?.click()}
-                      disabled={busy || transcribing || recording}
-                      aria-label="Transcribe an audio file"
-                      title="Transcribe an audio file"
-                      style={{
-                        fontSize: "1.1rem",
-                        lineHeight: 1,
-                        padding: "0.25rem 0.6rem",
-                        color: busy || transcribing || recording ? "#888" : "#4a90d9",
-                      }}
-                    >
-                      {/* Musical note glyph = audio file (monochrome, not emoji). */}
-                      <span aria-hidden="true">♪</span>
-                    </button>
-                    <input
-                      ref={audioInputRef}
-                      data-testid="audio-file-input"
-                      type="file"
-                      accept="audio/*"
-                      style={{ display: "none" }}
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) void onAudioFile(file);
-                        e.target.value = ""; // allow re-selecting the same file
-                      }}
-                    />
-                  </>
-                )}
                 <button
                   data-testid="send"
                   onClick={() => void send()}
-                  disabled={busy || transcribing || !model || (input.trim() === "" && attachedImages.length === 0)}
+                  disabled={
+                    busy ||
+                    transcribing ||
+                    audioTranscribing ||
+                    !model ||
+                    (input.trim() === "" && attachedImages.length === 0 && doneAudio.length === 0)
+                  }
                   aria-label="Send message"
                   title="Send message (Enter)"
                   style={{ fontSize: "1.1rem", lineHeight: 1, padding: "0.25rem 0.6rem" }}
                 >
                   <span aria-hidden="true">{busy ? "…" : "↑"}</span>
                 </button>
-                {/* One-tap transcript + summary (#389): only when the composer has text. */}
-                {input.trim() !== "" && (
-                  <button
-                    data-testid="summarize-send"
-                    onClick={() => sendSummarize()}
-                    disabled={busy || transcribing || !model}
-                    aria-label="Summarize and send"
-                    title="Send asking for a summary of this text"
-                    style={{ fontSize: "0.78rem", lineHeight: 1, padding: "0.25rem 0.5rem" }}
-                  >
-                    Summarize
-                  </button>
-                )}
               </div>
               {/* Screen-reader-only live status: an aria-label swap on a button is not always
                   reannounced, so the recording/transcribing transition is voiced here. */}
