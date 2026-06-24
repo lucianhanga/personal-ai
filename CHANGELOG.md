@@ -11,7 +11,17 @@ generated OpenAPI document.
 
 ## [Unreleased]
 
+### Fixed
+- **Attached images now survive a reload (#384)**: a user message's attached images were sent to the
+  model but never persisted, so they vanished when the conversation was reopened. The user turn now
+  stores its images and `GET /conversations/{id}` returns them.
+
 ### Added
+- **Per-step timestamps in the Activity timeline (#384)**: each trace item (reasoning, tool call,
+  planner/critic/verify) is stamped with its own UTC time the moment it happens (in the turn→SSE
+  mapper), and the same `ts` rides both the live SSE stream and the persisted `meta.trace` — so the
+  timeline shows real `HH:MM:SSZ` per step live *and* on reload, falling back to the turn time for
+  turns recorded before this change.
 - **Blocking egress-approval gate (#380 backend, #381 UI)**: a **second** durable LangGraph
   human-in-the-loop gate (alongside the M8.1 answer-approval gate). When a multi-agent researcher
   tool's outbound call targets a host that is **not** on the tenant's allowlist, the run **pauses

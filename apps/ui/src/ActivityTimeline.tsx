@@ -52,9 +52,17 @@ function relTime(iso: string | undefined, now: number): string {
 }
 
 // Wall-clock time-of-day in UTC for a turn, e.g. "14:04:03Z" (the live turn uses the current time).
-// Steps within a turn share the turn's timestamp — the trace doesn't carry per-step times yet.
+// Used as the per-turn fallback clock when a step has no per-step ts (older persisted turns).
 function clockUTC(iso: string | undefined): string {
   const d = iso ? new Date(iso) : new Date();
+  return Number.isNaN(d.getTime()) ? "" : `${d.toISOString().slice(11, 19)}Z`;
+}
+
+// Per-step UTC time from a trace item's `ts`; "" when absent/invalid so the caller can fall back to
+// the turn clock. Each step now carries its OWN wall-clock time (backend stamps it as it happens).
+function clockFromTs(iso: string | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "" : `${d.toISOString().slice(11, 19)}Z`;
 }
 
@@ -135,23 +143,28 @@ export function ActivityTimeline({
   }
 
   // Build a ToolIO node from a tool_call (folding in its paired tool_result), matching MessageDetails.
-  function toolNode(idx: number, k: number, call: TraceItem, result?: TraceItem): TurnNode {
+  function toolNode(idx: number, k: number, call: TraceItem, result: TraceItem | undefined, time: string): TurnNode {
     const host = result && !result.ok ? blockedEgressHost(result.error) : null;
     return {
       key: `tl-${idx}-tool-${k}`,
       kind: "tool",
       dot: COLOR.tool,
       render: () => (
-        <ToolIO
-          tool={call.tool ?? "tool"}
-          args={call.args ?? {}}
-          ok={result ? result.ok ?? false : undefined}
-          output={result?.output}
-          error={result?.error}
-          host={host}
-          allowed={host ? allowed.has(host) : false}
-          onAllow={host && onAllowHost ? () => allowHost(host) : undefined}
-        />
+        <div>
+          {time && (
+            <div style={{ color: "#999", fontSize: "0.66rem", marginBottom: 1 }}>{time}</div>
+          )}
+          <ToolIO
+            tool={call.tool ?? "tool"}
+            args={call.args ?? {}}
+            ok={result ? result.ok ?? false : undefined}
+            output={result?.output}
+            error={result?.error}
+            host={host}
+            allowed={host ? allowed.has(host) : false}
+            onAllow={host && onAllowHost ? () => allowHost(host) : undefined}
+          />
+        </div>
       ),
     };
   }
@@ -207,6 +220,8 @@ export function ActivityTimeline({
     const consumed = new Set<number>();
     items.forEach((t, k) => {
       if (consumed.has(k)) return;
+      // Each step's OWN wall-clock time (backend `ts`), falling back to the turn clock when absent.
+      const stepTime = clockFromTs(t.ts) || time;
       if (t.kind === "tool_call") {
         let result: TraceItem | undefined;
         for (let j = k + 1; j < items.length; j++) {
@@ -217,35 +232,37 @@ export function ActivityTimeline({
             break;
           }
         }
-        nodes.push(toolNode(idx, k, t, result));
+        nodes.push(toolNode(idx, k, t, result, stepTime));
         return;
       }
       if (t.kind === "tool_result") {
         // Orphan result (legacy/partial trace) — still render via ToolIO.
-        nodes.push(toolNode(idx, k, { kind: "tool_call", tool: t.tool }, t));
+        nodes.push(toolNode(idx, k, { kind: "tool_call", tool: t.tool }, t, stepTime));
         return;
       }
       if (t.kind === "reasoning") {
-        nodes.push(labelNode(idx, k, COLOR.researcher, "Researcher", time, "timeline-reasoning"));
+        nodes.push(labelNode(idx, k, COLOR.researcher, "Researcher", stepTime, "timeline-reasoning"));
         return;
       }
       if (t.kind === "plan") {
-        nodes.push(labelNode(idx, k, COLOR.planner, "Planner", time, "timeline-plan"));
+        nodes.push(labelNode(idx, k, COLOR.planner, "Planner", stepTime, "timeline-plan"));
         return;
       }
       if (t.kind === "critique") {
         const label = t.role ? `Critic (${t.role})` : "Critic";
-        nodes.push(labelNode(idx, k, COLOR.critic, label, time, "timeline-critique"));
+        nodes.push(labelNode(idx, k, COLOR.critic, label, stepTime, "timeline-critique"));
         return;
       }
       if (t.kind === "verification") {
         const pass = t.verdict === "pass";
         const label = `Verify${t.verdict ? ` (${t.verdict})` : ""}`;
-        nodes.push(labelNode(idx, k, pass ? COLOR.ok : COLOR.err, label, time, "timeline-verification"));
+        nodes.push(
+          labelNode(idx, k, pass ? COLOR.ok : COLOR.err, label, stepTime, "timeline-verification"),
+        );
         return;
       }
       // Generic fallback so an unknown future kind renders rather than vanishing.
-      nodes.push(labelNode(idx, k, COLOR.researcher, t.kind, time, "timeline-other"));
+      nodes.push(labelNode(idx, k, COLOR.researcher, t.kind, stepTime, "timeline-other"));
     });
     return nodes;
   }
