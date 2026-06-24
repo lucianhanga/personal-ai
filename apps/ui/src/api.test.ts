@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 
-import { type ApprovalRequest, resumeChat, streamChat } from "./api";
+import { type ApprovalRequest, resumeChat, streamChat, transcribeAudio } from "./api";
 
 function sseResponse(chunks: string[]): Response {
   const stream = new ReadableStream<Uint8Array>({
@@ -93,4 +93,39 @@ test("resumeChat throws on a non-ok response", async () => {
   await expect(
     resumeChat({ runId: "x", decision: "approve", token: "t" }, () => {}),
   ).rejects.toThrow(/resume failed/);
+});
+
+test("transcribeAudio posts the provided filename in the form (#389)", async () => {
+  const fetchMock = vi.fn(async () =>
+    new Response(JSON.stringify({ ok: true, data: { text: "hello" } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+
+  const blob = new Blob(["x"], { type: "audio/mp3" });
+  const text = await transcribeAudio("t", blob, "meeting.mp3");
+  expect(text).toBe("hello");
+
+  const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+  const form = init.body as FormData;
+  const part = form.get("file") as File;
+  expect(part).toBeInstanceOf(File);
+  expect(part.name).toBe("meeting.mp3");
+});
+
+test("transcribeAudio defaults the mic filename to recording.webm", async () => {
+  const fetchMock = vi.fn(async () =>
+    new Response(JSON.stringify({ ok: true, data: { text: "" } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+
+  await transcribeAudio("t", new Blob(["x"], { type: "audio/webm" }));
+  const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+  const part = (init.body as FormData).get("file") as File;
+  expect(part.name).toBe("recording.webm");
 });

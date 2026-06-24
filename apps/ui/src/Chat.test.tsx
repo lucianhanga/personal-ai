@@ -328,6 +328,87 @@ test("shows a friendly error when mic permission is denied (M9.2f)", async () =>
   );
 });
 
+test("transcribes an uploaded audio file into the composer with a progress indicator (#389)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
+  // Defer the resolution so the in-progress indicator is observable, then resolve.
+  let resolve!: (text: string) => void;
+  const transcribe = vi
+    .spyOn(api, "transcribeAudio")
+    .mockReturnValue(new Promise<string>((r) => (resolve = r)));
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("audio-file-input")).toBeInTheDocument());
+
+  const file = new File(["x"], "meeting.mp3", { type: "audio/mpeg" });
+  fireEvent.change(screen.getByTestId("audio-file-input"), { target: { files: [file] } });
+
+  // Progress indicator names the file while transcribing.
+  await waitFor(() =>
+    expect(screen.getByTestId("audio-progress")).toHaveTextContent(/transcribing meeting\.mp3/i),
+  );
+  // The real filename is passed through to the backend.
+  expect(transcribe).toHaveBeenCalledWith("demo", file, "meeting.mp3");
+
+  await act(async () => {
+    resolve("the transcript text");
+  });
+
+  // Transcript lands in the composer, progress clears, and it is NOT auto-sent (no banner).
+  await waitFor(() =>
+    expect((screen.getByTestId("composer") as HTMLTextAreaElement).value).toContain(
+      "the transcript text",
+    ),
+  );
+  expect(screen.queryByTestId("audio-progress")).toBeNull();
+  expect(screen.queryByTestId("autosend-banner")).toBeNull();
+});
+
+test("an empty audio transcript shows a soft no-speech notice (#389)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
+  vi.spyOn(api, "transcribeAudio").mockResolvedValue("");
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("audio-file-input")).toBeInTheDocument());
+
+  const file = new File(["x"], "silent.wav", { type: "audio/wav" });
+  fireEvent.change(screen.getByTestId("audio-file-input"), { target: { files: [file] } });
+
+  await waitFor(() =>
+    expect(screen.getByTestId("audio-notice")).toHaveTextContent(/no speech detected/i),
+  );
+});
+
+test("Summarize sends the composer text wrapped in a summarize instruction (#389)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
+    onDelta("Here is a summary.");
+  });
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "long transcript body" } });
+  fireEvent.click(screen.getByTestId("summarize-send"));
+
+  await waitFor(() => expect(stream).toHaveBeenCalled());
+  const params = stream.mock.calls[0][0] as { messages: api.ChatMessage[] };
+  const last = params.messages[params.messages.length - 1];
+  expect(last.role).toBe("user");
+  expect(last.content).toBe("Summarize the following:\n\nlong transcript body");
+  // The user bubble shows the wrapped content; the composer is cleared like a normal send.
+  await waitFor(() =>
+    expect(screen.getByTestId("msg-user")).toHaveTextContent("Summarize the following:"),
+  );
+  expect((screen.getByTestId("composer") as HTMLTextAreaElement).value).toBe("");
+});
+
 test("attaches an image and sends it with the user message (vision)", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);

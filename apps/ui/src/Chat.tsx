@@ -227,6 +227,12 @@ export function Chat({
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
+  // Audio FILE upload -> transcribe (#389): the file name being transcribed (drives the progress
+  // notice), plus a soft amber notice (no-speech / model-download hint) and the hidden file input.
+  const [audioFileName, setAudioFileName] = useState<string | null>(null);
+  const [audioNotice, setAudioNotice] = useState<string | null>(null);
+  const audioInputRef = useRef<HTMLInputElement>(null);
+  const audioHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Soft, non-error STT feedback (amber): no-speech, or the one-time model-download hint.
   const [micNotice, setMicNotice] = useState<string | null>(null);
   const [recordSeconds, setRecordSeconds] = useState(0);
@@ -516,6 +522,7 @@ export function Chat({
       cancelAutoSend();
       stopRecordTimer();
       clearModelHint();
+      clearAudioHint();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -598,9 +605,61 @@ export function Chat({
     }
   }
 
-  async function send(): Promise<void> {
+  function clearAudioHint(): void {
+    if (audioHintTimerRef.current) {
+      clearTimeout(audioHintTimerRef.current);
+      audioHintTimerRef.current = null;
+    }
+  }
+
+  // Transcribe an uploaded audio FILE (#389). Unlike the mic, the transcript lands in the composer
+  // for review and is NOT auto-sent. One transcription at a time (ignore a new file while busy).
+  async function onAudioFile(file: File): Promise<void> {
+    if (transcribing || audioFileName) return;
+    cancelAutoSend(); // a transcription supersedes any pending mic auto-send
+    setAudioNotice(null);
+    setError(null);
+    setAudioFileName(file.name);
+    setTranscribing(true);
+    // Mirror the mic flow: a slow first transcription is the one-time local-model download — say so
+    // after a few seconds so the wait doesn't look like a hang.
+    audioHintTimerRef.current = setTimeout(
+      () =>
+        setAudioNotice(
+          "Working… the first transcription downloads the speech model, which can take a minute.",
+        ),
+      4000,
+    );
+    try {
+      const text = await transcribeAudio(token, file, file.name);
+      if (text) {
+        setAudioNotice(null);
+        setInput((cur) => (cur ? `${cur} ${text}` : text));
+      } else {
+        setAudioNotice("No speech detected in that file.");
+      }
+    } catch (e: unknown) {
+      setError(transcribeErrorMessage(e));
+    } finally {
+      clearAudioHint();
+      setTranscribing(false);
+      setAudioFileName(null);
+    }
+  }
+
+  // Send the composer wrapped in a summarize instruction (#389): the raw transcript shows in the
+  // user bubble, the assistant returns a summary. Reuses the normal send() path.
+  function sendSummarize(): void {
+    const text = input.trim();
+    if (!text) return;
+    void send(`Summarize the following:\n\n${text}`);
+  }
+
+  // `override` lets callers (Summarize) send wrapped content while still consuming the composer
+  // draft as a normal send does. When omitted, the trimmed composer text is sent.
+  async function send(override?: string): Promise<void> {
     cancelAutoSend();
-    const content = input.trim();
+    const content = override ?? input.trim();
     const images = attachedImages;
     // Allow sending with only an image (no text), as long as there's something to send.
     if ((!content && images.length === 0) || !model || view.busy) return;
@@ -1109,6 +1168,23 @@ export function Chat({
               </p>
             )}
 
+            {/* Audio FILE upload progress (#389): name the file being transcribed (muted), plus the
+                same soft amber notice (model-download hint / no speech) the mic flow uses. */}
+            {audioFileName && (
+              <p
+                data-testid="audio-progress"
+                role="status"
+                style={{ color: "#6b7280", fontSize: "0.82rem", margin: 0 }}
+              >
+                Transcribing {audioFileName}…
+              </p>
+            )}
+            {audioNotice && (
+              <p data-testid="audio-notice" style={{ color: "#b06f00", fontSize: "0.82rem", margin: 0 }}>
+                {audioNotice}
+              </p>
+            )}
+
             {/* Grace period after a transcription (M9.2c): a visible 3-2-1 countdown auto-sends the
                 transcript unless the user presses Stop (then they can edit) — editing also cancels. */}
             {autoSendIn !== null && (
@@ -1267,7 +1343,13 @@ export function Chat({
                 onDrop={(e) => {
                   e.preventDefault();
                   setDragOver(false);
-                  onAttachImages(e.dataTransfer.files); // images only; non-images are ignored
+                  // Split the drop: images attach (as today); an audio file is transcribed (#389).
+                  // Anything else is ignored. Only the first audio file is transcribed per drop.
+                  onAttachImages(e.dataTransfer.files); // images only; non-images are ignored here
+                  const audio = Array.from(e.dataTransfer.files).find((f) =>
+                    f.type.startsWith("audio/"),
+                  );
+                  if (audio) void onAudioFile(audio);
                 }}
               >
                 <textarea
@@ -1333,8 +1415,9 @@ export function Chat({
                   </div>
                 )}
               </div>
-              {/* Mic stacked above Send; both are symbol buttons with the description in the
-                  tooltip (monochrome geometric glyphs, not emoji — record dot / stop / send). */}
+              {/* Mic + attach-audio-file stacked above Send; all are symbol buttons with the
+                  description in the tooltip (monochrome geometric glyphs, not emoji — record dot /
+                  stop / paperclip-ish file mark / send). */}
               <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
                 {transcribeEnabled && (
                   <button
@@ -1360,16 +1443,61 @@ export function Chat({
                     <span aria-hidden="true">{transcribing ? "…" : recording ? "■" : "●"}</span>
                   </button>
                 )}
+                {transcribeEnabled && (
+                  <>
+                    <button
+                      data-testid="audio-file-btn"
+                      onClick={() => audioInputRef.current?.click()}
+                      disabled={busy || transcribing || recording}
+                      aria-label="Transcribe an audio file"
+                      title="Transcribe an audio file"
+                      style={{
+                        fontSize: "1.1rem",
+                        lineHeight: 1,
+                        padding: "0.25rem 0.6rem",
+                        color: busy || transcribing || recording ? "#888" : "#4a90d9",
+                      }}
+                    >
+                      {/* Musical note glyph = audio file (monochrome, not emoji). */}
+                      <span aria-hidden="true">♪</span>
+                    </button>
+                    <input
+                      ref={audioInputRef}
+                      data-testid="audio-file-input"
+                      type="file"
+                      accept="audio/*"
+                      style={{ display: "none" }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) void onAudioFile(file);
+                        e.target.value = ""; // allow re-selecting the same file
+                      }}
+                    />
+                  </>
+                )}
                 <button
                   data-testid="send"
                   onClick={() => void send()}
-                  disabled={busy || !model || (input.trim() === "" && attachedImages.length === 0)}
+                  disabled={busy || transcribing || !model || (input.trim() === "" && attachedImages.length === 0)}
                   aria-label="Send message"
                   title="Send message (Enter)"
                   style={{ fontSize: "1.1rem", lineHeight: 1, padding: "0.25rem 0.6rem" }}
                 >
                   <span aria-hidden="true">{busy ? "…" : "↑"}</span>
                 </button>
+                {/* One-tap transcript + summary (#389): only when the composer has text. */}
+                {input.trim() !== "" && (
+                  <button
+                    data-testid="summarize-send"
+                    onClick={() => sendSummarize()}
+                    disabled={busy || transcribing || !model}
+                    aria-label="Summarize and send"
+                    title="Send asking for a summary of this text"
+                    style={{ fontSize: "0.78rem", lineHeight: 1, padding: "0.25rem 0.5rem" }}
+                  >
+                    Summarize
+                  </button>
+                )}
               </div>
               {/* Screen-reader-only live status: an aria-label swap on a button is not always
                   reannounced, so the recording/transcribing transition is voiced here. */}

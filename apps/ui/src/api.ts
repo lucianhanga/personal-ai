@@ -384,10 +384,16 @@ export async function fetchTtsEnabled(token: string): Promise<boolean> {
   }
 }
 
-/** Transcribe a recorded audio blob to text via the backend transcriber (M9.2). */
-export async function transcribeAudio(token: string, audio: Blob): Promise<string> {
+/** Transcribe a recorded audio blob (mic) or an uploaded audio file to text via the backend
+ * transcriber (M9.2). When `filename` is given (file upload), it is sent as the form filename so the
+ * backend sees the real name + content-type; the mic caller omits it and keeps "recording.webm". */
+export async function transcribeAudio(
+  token: string,
+  audio: Blob,
+  filename = "recording.webm",
+): Promise<string> {
   const form = new FormData();
-  form.append("file", audio, "recording.webm");
+  form.append("file", audio, filename);
   const res = await fetch(`${API_BASE}/api/v1/audio/transcribe`, {
     method: "POST",
     headers: authHeaders(token),
