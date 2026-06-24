@@ -338,9 +338,15 @@ def _current_datetime_messages() -> list[ChatMessage]:
     return [ChatMessage(Role.SYSTEM, line)]
 
 
+# Per-source text carried in the context breakdown is capped so a large source (e.g. retrieved
+# documents) doesn't bloat the SSE payload or the persisted ``meta.context`` (#391). ``chars`` stays
+# accurate to the FULL text; only the ``text`` shown for token visualization is truncated.
+_CONTEXT_TEXT_CAP = 16_000
+
+
 def _context_breakdown(groups: Sequence[tuple[str, Sequence[ChatMessage]]]) -> dict[str, Any]:
     """Summarize what goes into the model's context this turn (grounding, documents, memory, ...),
-    so the UI can show the composition and approximate size as the question is asked (#290)."""
+    so the UI can show the composition, approximate size, and the actual tokens (#290, #391)."""
     items: list[dict[str, Any]] = []
     total = 0
     for label, msgs in groups:
@@ -348,7 +354,10 @@ def _context_breakdown(groups: Sequence[tuple[str, Sequence[ChatMessage]]]) -> d
             continue
         chars = sum(len(m.content) for m in msgs)
         total += chars
-        items.append({"label": label, "count": len(msgs), "chars": chars})
+        text = "\n\n".join(m.content for m in msgs)
+        if len(text) > _CONTEXT_TEXT_CAP:
+            text = text[:_CONTEXT_TEXT_CAP] + "…(truncated)"
+        items.append({"label": label, "count": len(msgs), "chars": chars, "text": text})
     return {"items": items, "total_chars": total}
 
 

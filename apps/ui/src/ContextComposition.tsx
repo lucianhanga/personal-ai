@@ -1,6 +1,64 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { ContextBreakdown } from "./api";
+
+// Alternating tints so adjacent token boundaries are visible (playground-style).
+const TOKEN_TINT_A = "rgba(74,144,217,0.14)";
+const TOKEN_TINT_B = "rgba(127,127,127,0.12)";
+
+/**
+ * Render a source's text as the actual token PIECES it splits into (#391). The tokenizer is an
+ * APPROXIMATE, in-browser GPT-style BPE (o200k_base) — boundaries won't exactly match a local
+ * model, hence the honest "approx" label. Bounded + lazy (only mounted when the token view is on).
+ */
+function TokenChips({ text }: { text: string }): React.ReactElement {
+  // Lazy-load the tokenizer (its o200k vocab is ~2 MB) only when a token view is actually opened,
+  // so it stays out of the main bundle (#391); `null` while it loads.
+  const [pieces, setPieces] = useState<string[] | null>(null);
+  useEffect(() => {
+    let active = true;
+    void import("gpt-tokenizer/encoding/o200k_base").then(({ encode, decode }) => {
+      if (active) setPieces(encode(text).map((id) => decode([id])));
+    });
+    return () => {
+      active = false;
+    };
+  }, [text]);
+  return (
+    <div
+      data-testid="context-tokens"
+      style={{
+        maxHeight: "14em",
+        overflow: "auto",
+        marginTop: 3,
+        padding: "0.3rem 0.4rem",
+        background: "rgba(127,127,127,0.06)",
+        borderRadius: 4,
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+        fontSize: "0.72rem",
+        lineHeight: 1.7,
+      }}
+    >
+      <div style={{ color: "#6b7280", marginBottom: 4 }}>
+        {pieces === null
+          ? "tokenizing…"
+          : `${pieces.length.toLocaleString()} tokens · approx (GPT-style)`}
+      </div>
+      {pieces !== null && (
+        <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+          {pieces.map((p, i) => (
+            <span
+              key={i}
+              style={{ background: i % 2 ? TOKEN_TINT_B : TOKEN_TINT_A, borderRadius: 2 }}
+            >
+              {p}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Plain-language, one-sentence explanations per composition source, keyed by a normalized (trimmed,
 // lowercased) label. The keys match the labels the backend actually emits for each context source.
@@ -63,8 +121,8 @@ export function ContextComposition({
   });
   // Which row's plain-language explanation popover is open (keyboard/tap toggle, AA-readable).
   const [expl, setExpl] = useState<string | null>(null);
-  // Whether the per-source / total token estimates are revealed. Hidden by default for a cleaner
-  // breakdown; one toggle governs the whole composition's token display.
+  // Whether the token view is shown: each source's text rendered as the actual token pieces (#391).
+  // Hidden by default for a cleaner breakdown; one toggle governs the whole composition.
   const [showTokens, setShowTokens] = useState<boolean>(false);
 
   function toggleOpen(): void {
@@ -161,8 +219,8 @@ export function ContextComposition({
                         type="button"
                         tabIndex={0}
                         aria-pressed={showTokens}
-                        title={showTokens ? "Hide token counts" : "Show token counts"}
-                        aria-label={showTokens ? "Hide token counts" : "Show token counts"}
+                        title={showTokens ? "Hide tokens" : "Show tokens"}
+                        aria-label={showTokens ? "Hide tokens" : "Show tokens"}
                         onClick={(e) => {
                           e.stopPropagation();
                           setShowTokens((s) => !s);
@@ -184,7 +242,11 @@ export function ContextComposition({
                       </button>
                     )}
                   </span>
-                  {showTokens && <span style={{ color: "#888" }}>~{fmt(tokens)} tok</span>}
+                  {showTokens && (
+                    <span style={{ color: "#888" }} title="character-based estimate">
+                      ~{fmt(tokens)} tok
+                    </span>
+                  )}
                 </div>
                 {expl === it.label && (
                   <div
@@ -205,6 +267,9 @@ export function ContextComposition({
                 <div style={{ height: 4, borderRadius: 3, background: "rgba(127,127,127,0.15)" }}>
                   <div style={{ width: `${share}%`, height: "100%", background: BAR, borderRadius: 3 }} />
                 </div>
+                {/* The actual token pieces of this source's text (#391) — only when the token view
+                    is on and the source carries text (absent on pre-#391 persisted turns). */}
+                {showTokens && it.text ? <TokenChips text={it.text} /> : null}
                 {hovered === it.label && (
                   <div
                     data-testid="context-tooltip"
