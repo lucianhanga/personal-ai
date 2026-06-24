@@ -1,6 +1,7 @@
 import type { Dispatch, SetStateAction } from "react";
 
-import type { ContextBreakdown, UsageInfo } from "./api";
+import type { ChatMessage, ContextBreakdown, TraceItem, UsageInfo } from "./api";
+import { ActivityTimeline } from "./ActivityTimeline";
 import { AppLogs } from "./AppLogs";
 import { ContextMeter } from "./ContextMeter";
 import { ToolLog } from "./ToolLog";
@@ -8,9 +9,13 @@ import { ToolLog } from "./ToolLog";
 interface SidePanelProps {
   token: string;
   conversationId: string | null;
+  messages: ChatMessage[];
+  trace: Record<number, TraceItem[]>;
   usage: UsageInfo | null;
   totals: { tokens: number; ms: number; turns: number };
   context: ContextBreakdown | null;
+  busy: boolean;
+  onAllowHost?: (host: string) => void;
   collapsed: boolean;
   setCollapsed: Dispatch<SetStateAction<boolean>>;
   showLog: boolean;
@@ -23,9 +28,13 @@ interface SidePanelProps {
 export function SidePanel({
   token,
   conversationId,
+  messages,
+  trace,
   usage,
   totals,
   context,
+  busy,
+  onAllowHost,
   collapsed,
   setCollapsed,
   showLog,
@@ -68,16 +77,23 @@ export function SidePanel({
         </button>
       </div>
 
-      {(context || usage) && <ContextMeter usage={usage} totals={totals} context={context} />}
+      {/* Live window-usage + chat totals only — the per-turn context composition now lives in the
+          timeline's newest turn, so pass context={null} here to avoid duplicating it. */}
+      {usage && <ContextMeter usage={usage} totals={totals} context={null} />}
+
+      {/* The centerpiece: a unified, reverse-chronological activity timeline (context + tools +
+          reasoning) per question. Raw logs below stay available as a complementary view. */}
+      <ActivityTimeline
+        messages={messages}
+        trace={trace}
+        liveContext={context}
+        liveUsage={usage}
+        busy={busy}
+        onAllowHost={onAllowHost}
+      />
 
       {showLog && <ToolLog token={token} conversationId={conversationId} />}
       {showAppLogs && <AppLogs token={token} conversationId={conversationId} />}
-
-      {!showLog && !showAppLogs && !context && !usage && (
-        <p data-testid="side-hint" style={{ color: "#888", fontSize: "0.8rem" }}>
-          Open a panel above to view activity or app logs; the context appears here as you chat.
-        </p>
-      )}
     </aside>
   );
 }

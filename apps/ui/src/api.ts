@@ -69,6 +69,9 @@ export interface ChatMessage {
   images?: string[];
   // Persisted per-assistant-message detail (tool calls + reasoning), shown collapsed in the UI.
   meta?: MessageMeta | null;
+  // ISO timestamp set when the message was persisted (GET /conversations/{id}); absent for the
+  // in-flight (live) message that hasn't been written yet — the timeline treats that as "now".
+  created_at?: string;
 }
 
 export interface DocumentInfo {

@@ -1592,7 +1592,13 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         if conv is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation")
         messages = [
-            {"role": m.role, "content": m.content, "meta": m.meta}
+            {
+                "role": m.role,
+                "content": m.content,
+                "meta": m.meta,
+                # Surfaced so the UI's activity timeline can show real relative times per turn.
+                "created_at": m.created_at.isoformat(),
+            }
             for m in await storage.conversations.list_messages(conversation_id)
         ]
         return StructuredResult(
