@@ -51,6 +51,13 @@ function relTime(iso: string | undefined, now: number): string {
   return `${Math.round(h / 24)}d ago`;
 }
 
+// Wall-clock time-of-day in UTC for a turn, e.g. "14:04:03Z" (the live turn uses the current time).
+// Steps within a turn share the turn's timestamp — the trace doesn't carry per-step times yet.
+function clockUTC(iso: string | undefined): string {
+  const d = iso ? new Date(iso) : new Date();
+  return Number.isNaN(d.getTime()) ? "" : `${d.toISOString().slice(11, 19)}Z`;
+}
+
 // Which filter chips exist; "all" shows everything.
 type Filter = "all" | "tools" | "reasoning" | "context";
 const FILTERS: { id: Filter; label: string }[] = [
@@ -149,13 +156,15 @@ export function ActivityTimeline({
     };
   }
 
-  // A labeled reasoning/plan/critique/verification node (the calm, color-coded spine entries).
+  // An agent marker node (planner/researcher/critic/verify): just the agent NAME + a small timestamp.
+  // The reasoning prose itself is intentionally NOT shown here — the full text stays in the
+  // transcript's per-message Details; the timeline is a compact "who acted, and when" log.
   function labelNode(
     idx: number,
     k: number,
     color: string,
     label: string,
-    text: string | undefined,
+    time: string,
     testid: string,
   ): TurnNode {
     return {
@@ -163,15 +172,20 @@ export function ActivityTimeline({
       kind: "reasoning",
       dot: color,
       render: () => (
-        <div data-testid={testid} style={{ whiteSpace: "pre-wrap" }}>
+        <div data-testid={testid} style={{ display: "flex", alignItems: "baseline", gap: "0.4rem" }}>
           <span style={{ color, fontWeight: 600 }}>{label}</span>
-          {text ? `: ${text}` : ""}
+          {time && <span style={{ color: "#999", fontSize: "0.66rem" }}>{time}</span>}
         </div>
       ),
     };
   }
 
-  function buildNodes(idx: number, items: TraceItem[], context: ContextBreakdown | null): TurnNode[] {
+  function buildNodes(
+    idx: number,
+    items: TraceItem[],
+    context: ContextBreakdown | null,
+    time: string,
+  ): TurnNode[] {
     const nodes: TurnNode[] = [];
     // 1. Context assembled — first event in the turn's chronology.
     if (context && context.items.length > 0) {
@@ -212,26 +226,26 @@ export function ActivityTimeline({
         return;
       }
       if (t.kind === "reasoning") {
-        nodes.push(labelNode(idx, k, COLOR.researcher, "Thinking", t.text, "timeline-reasoning"));
+        nodes.push(labelNode(idx, k, COLOR.researcher, "Researcher", time, "timeline-reasoning"));
         return;
       }
       if (t.kind === "plan") {
-        nodes.push(labelNode(idx, k, COLOR.planner, "Planner", t.text, "timeline-plan"));
+        nodes.push(labelNode(idx, k, COLOR.planner, "Planner", time, "timeline-plan"));
         return;
       }
       if (t.kind === "critique") {
         const label = t.role ? `Critic (${t.role})` : "Critic";
-        nodes.push(labelNode(idx, k, COLOR.critic, label, t.text, "timeline-critique"));
+        nodes.push(labelNode(idx, k, COLOR.critic, label, time, "timeline-critique"));
         return;
       }
       if (t.kind === "verification") {
         const pass = t.verdict === "pass";
         const label = `Verify${t.verdict ? ` (${t.verdict})` : ""}`;
-        nodes.push(labelNode(idx, k, pass ? COLOR.ok : COLOR.err, label, t.text, "timeline-verification"));
+        nodes.push(labelNode(idx, k, pass ? COLOR.ok : COLOR.err, label, time, "timeline-verification"));
         return;
       }
       // Generic fallback so an unknown future kind renders rather than vanishing.
-      nodes.push(labelNode(idx, k, COLOR.researcher, t.kind, t.text, "timeline-other"));
+      nodes.push(labelNode(idx, k, COLOR.researcher, t.kind, time, "timeline-other"));
     });
     return nodes;
   }
@@ -253,7 +267,7 @@ export function ActivityTimeline({
     // the live usage event so the header can still show tokens/time once the stream reports them.
     const usage = m.meta?.usage ?? (i === lastAssistantIndex ? liveUsage : null);
     const isLive = i === lastAssistantIndex && busy && !m.meta?.usage;
-    const nodes = buildNodes(i, items, context ?? null);
+    const nodes = buildNodes(i, items, context ?? null, clockUTC(m.created_at));
     const toolCalls = items.filter((t) => t.kind === "tool_call").length;
     const status = isLive
       ? COLOR.live

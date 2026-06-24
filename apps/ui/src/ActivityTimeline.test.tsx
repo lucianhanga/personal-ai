@@ -96,7 +96,10 @@ test("filter chips hide non-matching nodes within turns", () => {
   renderTimeline();
   // Default All: the newest turn shows both its context and reasoning nodes.
   expect(screen.getByTestId("timeline-context")).toBeInTheDocument();
-  expect(screen.getByTestId("timeline-reasoning")).toBeInTheDocument();
+  // The reasoning node is the agent NAME marker only — the prose ("let me think") is not shown.
+  const reasoning = screen.getByTestId("timeline-reasoning");
+  expect(reasoning).toHaveTextContent("Researcher");
+  expect(reasoning).not.toHaveTextContent("let me think");
 
   // Filter -> Tools: context + reasoning hidden, and turns with no tool node disappear.
   const toolsChip = screen.getAllByTestId("timeline-filter").find((b) => b.textContent === "Tools")!;
@@ -154,7 +157,12 @@ test("falls back to live trace from the trace map when meta.trace is absent", ()
       busy={false}
     />,
   );
-  expect(screen.getByTestId("timeline-plan")).toHaveTextContent("do the thing");
+  // The timeline shows the agent NAME + a UTC timestamp, NOT the reasoning prose (which stays in
+  // the transcript's per-message Details).
+  const plan = screen.getByTestId("timeline-plan");
+  expect(plan).toHaveTextContent("Planner");
+  expect(plan).toHaveTextContent("00:00:00Z");
+  expect(plan).not.toHaveTextContent("do the thing");
 });
 
 test("egress-blocked tool keeps the Allow affordance via ToolIO", () => {
