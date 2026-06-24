@@ -5,14 +5,20 @@ concrete adapter. M0-4 adds the registry/DI machinery: register adapters into :c
 and resolve them by name at the composition root.
 """
 
-from personalai_core.agent import AgentEvent, run_agent
+from personalai_core.agent import AgentEvent, BlockedCall, ResumeFrame, run_agent
 from personalai_core.config import CoreConfig, effective_config
 from personalai_core.gateway import InProcessExecutor, RegisteredTool, ToolGateway
 from personalai_core.graph import (
     AGENT_NAMES,
     DEFAULT_AGENT_PROMPTS,
+    EGRESS_ALLOW_ALWAYS,
+    EGRESS_ALLOW_ONCE,
+    EGRESS_DENY,
+    EGRESS_RESUME_DECISION,
+    EGRESS_RESUME_FRAME,
     TOOL_USING_AGENTS,
     GraphState,
+    read_pending_interrupt,
     resolve_prompts,
     run_graph,
 )
@@ -29,8 +35,15 @@ __version__ = "0.0.0"
 __all__ = [
     "AGENT_NAMES",
     "DEFAULT_AGENT_PROMPTS",
+    "EGRESS_ALLOW_ALWAYS",
+    "EGRESS_ALLOW_ONCE",
+    "EGRESS_DENY",
+    "EGRESS_RESUME_DECISION",
+    "EGRESS_RESUME_FRAME",
     "TOOL_USING_AGENTS",
     "AgentEvent",
+    "BlockedCall",
+    "ResumeFrame",
     "CoreConfig",
     "GraphState",
     "resolve_prompts",
@@ -47,6 +60,7 @@ __all__ = [
     "effective_config",
     "extract_facts",
     "generate_structured",
+    "read_pending_interrupt",
     "run_agent",
     "run_graph",
     "recall",

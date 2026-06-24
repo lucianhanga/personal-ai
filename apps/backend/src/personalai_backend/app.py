@@ -59,11 +59,17 @@ from personalai_contracts.schemas.tools import Permission, PermissionType
 from personalai_core import (
     AGENT_NAMES,
     DEFAULT_AGENT_PROMPTS,
+    EGRESS_ALLOW_ALWAYS,
+    EGRESS_ALLOW_ONCE,
+    EGRESS_DENY,
+    EGRESS_RESUME_DECISION,
+    EGRESS_RESUME_FRAME,
     TOOL_USING_AGENTS,
     CoreConfig,
     RegistryError,
     VectorRetriever,
     effective_config,
+    read_pending_interrupt,
     recall,
     remember,
     split_recent,
@@ -154,11 +160,28 @@ class ChatRequest(BaseModel):
 
 
 class ResumeRequest(BaseModel):
-    """Resume a run suspended at the durable human gate (M8.1c). ``decision`` is the human's choice
-    (e.g. "approve"/"reject"); ``conversation_id`` is where the finalized turn is persisted."""
+    """Resume a run suspended at a durable gate. ``decision`` is the human's verb;
+    ``conversation_id`` is where the finalized turn is persisted.
 
-    decision: str = "approve"
+    Two gates, two namespaces (#377): the ANSWER gate (M8.1c) takes ``approve``/``reject``; the
+    EGRESS gate takes ``egress_allow_once`` / ``egress_allow_always`` / ``egress_deny``. The backend
+    dispatches on the gate's ``reason`` read from the CHECKPOINT (not this body). The body NEVER
+    carries a host — the blocked host is server-trusted (from the checkpoint), so a client cannot
+    smuggle one in to enable an arbitrary destination."""
+
+    decision: Literal[
+        "approve",
+        "reject",
+        "egress_allow_once",
+        "egress_allow_always",
+        "egress_deny",
+    ] = "approve"
     conversation_id: str | None = None
+    # The model provider the original turn ran on. An egress resume RE-RUNS the researcher (a real
+    # model call), so it must continue on the same provider the turn started with rather than the
+    # server default; the UI sends the turn's provider here. (Unlike the egress host, the provider
+    # is not a security boundary — a client could pick any provider by starting a new turn.)
+    provider: str | None = None
 
 
 # Built-in tools (vs MCP-provided ones). Used by /assistant/execute to honour `use_mcp=False`.
@@ -357,6 +380,94 @@ def _mcp_config_path(config: CoreConfig) -> Path:
         if config.mcp_config_path
         else Path.home() / ".personalai" / "mcp.json"
     )
+
+
+# Client-facing keys of an approval_request payload. The egress interrupt payload also carries the
+# server-only resume ``frame`` (the partial convo) and ``subject_id`` (authz) — NEVER surface those
+# to the client. We whitelist the answer-gate keys too so a future field can't accidentally leak.
+_APPROVAL_CLIENT_KEYS = frozenset({"reason", "answer", "critique", "blocked_host", "tool", "args"})
+
+
+def _approval_sse(run_id: str | None, output: Mapping[str, Any]) -> bytes:
+    """Render an approval_request SSE frame, whitelisting client-facing keys (#377): the egress
+    interrupt payload carries a server-only resume frame + subject that must not reach the client.
+    """
+    payload = {"run_id": run_id}
+    payload.update({k: v for k, v in output.items() if k in _APPROVAL_CLIENT_KEYS})
+    return f"event: approval_request\ndata: {json.dumps(payload)}\n\n".encode()
+
+
+class _TurnSse:
+    """Maps a turn's :class:`TurnEvent`s to SSE frames + an ordered trace, shared by the /chat and
+    the /resume streams (#377) so a resumed egress turn forwards the FULL event set (the retried
+    researcher/critic produce new plan/tool/critique/final events), not just the answer gate's
+    `final`.
+
+    Accumulates ``answer`` (the persisted answer text), ``usage``, the ordered ``trace``, whether
+    the run ``suspended`` at a gate, and the (whitelisted) ``approval`` SSE bytes when it did."""
+
+    def __init__(self, run_id: str | None) -> None:
+        self.run_id = run_id
+        self.answer = ""
+        self.usage: Mapping[str, int] = {}
+        self.trace: list[dict[str, Any]] = []
+        self.suspended = False
+
+    def _add_text(self, kind: str, text: str) -> None:
+        # Merge consecutive same-kind streamed deltas (reasoning/plan/critique) into one trace item.
+        if self.trace and self.trace[-1].get("kind") == kind and "text" in self.trace[-1]:
+            self.trace[-1]["text"] += text
+        else:
+            self.trace.append({"kind": kind, "text": text})
+
+    def map(self, ev: Any) -> bytes | None:
+        """Fold one TurnEvent into the accumulators and return its SSE bytes (or None for `final`,
+        which the caller frames with its own done/usage logic)."""
+        if ev.kind == "reasoning":
+            self._add_text("reasoning", ev.text)
+            return f"data: {json.dumps({'thinking': ev.text})}\n\n".encode()
+        if ev.kind == "answer":
+            self.answer += ev.text
+            return f"data: {json.dumps({'delta': ev.text, 'done': False})}\n\n".encode()
+        if ev.kind == "tool":
+            # A tool CALL means any answer streamed so far this turn was tool-use narration (kept in
+            # the trace as reasoning), not the answer -> drop it from the persisted answer.
+            if ev.phase == "call":
+                self.answer = ""
+            item = {
+                "kind": f"tool_{ev.phase}",  # tool_call | tool_result
+                "tool": ev.tool,
+                "args": ev.args,
+                "ok": ev.ok,
+                "output": ev.output,
+                "error": ev.error,
+            }
+            self.trace.append(item)
+            payload = {
+                "phase": ev.phase,
+                "tool": ev.tool,
+                "args": ev.args,
+                "ok": ev.ok,
+                "output": ev.output,
+                "error": ev.error,
+            }
+            return f"event: tool\ndata: {json.dumps(payload)}\n\n".encode()
+        if ev.kind in ("plan", "critique"):
+            self._add_text(ev.kind, ev.text)
+            step = json.dumps({"kind": ev.kind, "text": ev.text})
+            return f"event: {ev.kind}\ndata: {step}\n\n".encode()
+        if ev.kind == "verification":
+            item = {"kind": "verification", "text": ev.text, "verdict": ev.verdict}
+            self.trace.append(item)
+            return f"event: verification\ndata: {json.dumps(item)}\n\n".encode()
+        if ev.kind == "approval_request":
+            # The run is durably checkpointed; surface the (whitelisted) request with the run_id.
+            self.suspended = True
+            return _approval_sse(self.run_id, dict(ev.output or {}))
+        # final
+        if ev.usage:
+            self.usage = ev.usage
+        return None
 
 
 def create_app(boot: Bootstrap | None = None) -> FastAPI:
@@ -975,20 +1086,10 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 yield f"event: context\ndata: {json.dumps(context_breakdown)}\n\n".encode()
                 if citations:
                     yield f"event: citations\ndata: {json.dumps(citations)}\n\n".encode()
-                answer = ""
-                usage: Mapping[str, int] = {}
                 elapsed_ms: int | None = None  # turn wall-clock, set when the answer completes
-                suspended = False  # set if the durable human gate paused the run (no final/persist)
-                # Ordered timeline of reasoning + tool steps, exactly as they happen.
-                trace: list[dict[str, Any]] = []
-
-                def _add_text(kind: str, text: str) -> None:
-                    # Merge consecutive same-kind streamed deltas (reasoning/plan/critique) into one
-                    # trace item; otherwise append a new one in order.
-                    if trace and trace[-1].get("kind") == kind and "text" in trace[-1]:
-                        trace[-1]["text"] += text
-                    else:
-                        trace.append({"kind": kind, "text": text})
+                # Shared turn->SSE mapper: accumulates the answer, usage, ordered trace, and whether
+                # the run suspended at a gate (the egress gate forwards the full event set too).
+                sse = _TurnSse(run_id)
 
                 # Tools get their declared permissions; high-risk still needs approve_tools and
                 # egress is enforced by the gateway. (Built once; run_turn ignores them off-path.)
@@ -1020,67 +1121,10 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                             checkpointer=checkpointer,
                             thread_id=run_id,
                         ):
-                            if ev.kind == "reasoning":
-                                _add_text("reasoning", ev.text)
-                                yield f"data: {json.dumps({'thinking': ev.text})}\n\n".encode()
-                            elif ev.kind == "answer":
-                                answer += ev.text
-                                frame = {"delta": ev.text, "done": False}
-                                yield f"data: {json.dumps(frame)}\n\n".encode()
-                            elif ev.kind == "tool":
-                                # A tool call means any answer text streamed so far this turn was
-                                # tool-use narration (kept in the trace as reasoning), not the
-                                # answer -> drop it from the persisted answer (the UI clears its
-                                # display on the same event). The final turn has no tool call.
-                                if ev.phase == "call":
-                                    answer = ""
-                                trace.append(
-                                    {
-                                        "kind": f"tool_{ev.phase}",  # tool_call | tool_result
-                                        "tool": ev.tool,
-                                        "args": ev.args,
-                                        "ok": ev.ok,
-                                        "output": ev.output,
-                                        "error": ev.error,
-                                    }
-                                )
-                                payload = {
-                                    "phase": ev.phase,
-                                    "tool": ev.tool,
-                                    "args": ev.args,
-                                    "ok": ev.ok,
-                                    "output": ev.output,
-                                    "error": ev.error,
-                                }
-                                yield f"event: tool\ndata: {json.dumps(payload)}\n\n".encode()
-                            elif ev.kind in ("plan", "critique"):
-                                # M8 multi-node graph steps stream as deltas: merge in the trace,
-                                # forward each delta as a live frame.
-                                _add_text(ev.kind, ev.text)
-                                step = {"kind": ev.kind, "text": ev.text}
-                                yield f"event: {ev.kind}\ndata: {json.dumps(step)}\n\n".encode()
-                            elif ev.kind == "verification":
-                                # M8.2 verifier (accurate mode): a one-shot verdict step (not a
-                                # delta) into the ordered trace + a live frame.
-                                item = {
-                                    "kind": "verification",
-                                    "text": ev.text,
-                                    "verdict": ev.verdict,
-                                }
-                                trace.append(item)
-                                yield f"event: verification\ndata: {json.dumps(item)}\n\n".encode()
-                            elif ev.kind == "approval_request":
-                                # Durable human gate (M8.1c): the run is checkpointed; surface the
-                                # request with the run_id so the client can POST .../resume later.
-                                # No `done` — the turn is suspended, not finished.
-                                suspended = True
-                                payload = {"run_id": run_id, **dict(ev.output or {})}
-                                yield (
-                                    f"event: approval_request\ndata: {json.dumps(payload)}\n\n"
-                                ).encode()
-                            else:  # final
-                                if ev.usage:
-                                    usage = ev.usage
+                            frame_bytes = sse.map(ev)
+                            if frame_bytes is not None:
+                                yield frame_bytes
+                            elif ev.kind == "final":  # mapper returns None for `final`
                                 done = {"delta": "", "done": True, "finish_reason": "stop"}
                                 yield f"data: {json.dumps(done)}\n\n".encode()
                 except TimeoutError:
@@ -1098,14 +1142,14 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 except Exception as exc:  # noqa: BLE001 - surface as a structured error event
                     # Persist what happened (partial answer + reasoning/tool trace) so reopening the
                     # chat shows it, then surface the error to the UI. Otherwise the turn vanishes.
-                    if persist_id is not None and storage is not None and (answer or trace):
+                    if persist_id is not None and storage is not None and (sse.answer or sse.trace):
                         meta_err: dict[str, Any] = {"error": str(exc)}
-                        if trace:
-                            meta_err["trace"] = trace
+                        if sse.trace:
+                            meta_err["trace"] = sse.trace
                         await storage.conversations.add_message(
                             conversation_id=persist_id,
                             role="assistant",
-                            content=answer or f"(stopped: {exc})",
+                            content=sse.answer or f"(stopped: {exc})",
                             meta=meta_err,
                         )
                     error = StructuredResult(
@@ -1113,10 +1157,13 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     )
                     yield f"event: error\ndata: {error.model_dump_json()}\n\n".encode()
                     return
-                if suspended:
-                    # Paused at the human gate: the durable checkpoint holds the run; the assistant
-                    # turn is persisted on resume, not here. No usage/empty-check/done frames.
+                if sse.suspended:
+                    # Paused at a gate (answer or egress): the durable checkpoint holds the run; the
+                    # assistant turn is persisted on resume, not here. No usage/empty/done frames.
                     return
+                answer = sse.answer
+                usage = sse.usage
+                trace = sse.trace
                 # Report token usage / context fill / elapsed time for this turn (meter + totals).
                 elapsed_ms = round((time.perf_counter() - turn_started) * 1000)
                 usage_frame = _usage_frame(usage, provider, elapsed_ms)
@@ -1197,7 +1244,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         if await checkpointer.aget_tuple({"configurable": {"thread_id": run_id}}) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run")
 
-        provider = _resolve_provider(None)
+        provider = _resolve_provider(req.provider)
         registries: Registries = app.state.bootstrap.registries
         tool_list = [registries.tools.get(n) for n in registries.tools.names()]
         grants = [p for rt in tool_list for p in rt.manifest.permissions]
@@ -1205,13 +1252,73 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         storage: Storage | None = app.state.storage
         persist_id = req.conversation_id
 
+        # Read the pending interrupt FROM THE CHECKPOINT (server-trusted) to dispatch on the gate's
+        # reason and recover the egress host/subject/frame — never from the request body (#377).
+        pending = await read_pending_interrupt(
+            gateway=app.state.bootstrap.gateway,
+            provider=provider,
+            model=config.default_model,
+            checkpointer=checkpointer,
+            thread_id=run_id,
+            tools=tool_list,
+        )
+        reason = str((pending or {}).get("reason", "approve_answer"))
+
+        # Subject authz (P0): a run may only be resumed by the SAME subject that started it, even
+        # within one tenant. The checkpoint's subject_id is server-trusted; mismatch -> 403.
+        # Enforced on BOTH gates (#377). (The cross-TENANT case already 404s above via the
+        # tenant-bound checkpointer; this is the within-tenant, different-subject case.)
+        owner_subject = str((pending or {}).get("subject_id", ""))
+        if owner_subject and owner_subject != sec.subject_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="not the run's subject"
+            )
+
+        # Build the resume value + the per-request egress config the retried gateway.invoke sees.
+        # The effective config is the tenant's saved settings (so allow_always's persisted host is
+        # honored); for allow_once we add the checkpoint host to a NON-persisted copy. Either way
+        # the per-call SSRF guard in security/egress.py still runs after the allow (it only adds the
+        # public host to the allowlist set — it never short-circuits the loopback/IP checks).
+        eg_config = await _effective_config()
+        resume_value: Any = req.decision  # answer gate: the bare verb (approve/reject) as today
+        if reason == "egress_approval":
+            blocked_host = str((pending or {}).get("blocked_host", "")).strip().lower()
+            if req.decision in (EGRESS_ALLOW_ONCE, EGRESS_ALLOW_ALWAYS):
+                if blocked_host:
+                    _valid_egress_host(blocked_host)  # bare-hostname guard on the checkpoint host
+                    if req.decision == EGRESS_ALLOW_ALWAYS:
+                        # Persist to the tenant allowlist (tenant-scoped + audited) BEFORE resuming
+                        # so the write is visible to the effective config the retry enforces.
+                        await _persist_egress_host(blocked_host)
+                        eg_config = await _effective_config()
+                    else:
+                        # allow_once: a per-request override that is NOT persisted.
+                        merged = tuple(
+                            dict.fromkeys([*eg_config.allowed_egress_hosts, blocked_host])
+                        )
+                        eg_config = eg_config.model_copy(
+                            update={"egress_enabled": True, "allowed_egress_hosts": merged}
+                        )
+            elif req.decision == EGRESS_DENY:
+                pass  # leave egress as-is; the retried call yields the egress error and continues
+            # Pass the resume frame back to the node from the checkpoint (server-trusted): the verb
+            # + the partial convo + the one call to retry. The client supplied only the verb.
+            resume_value = {
+                EGRESS_RESUME_DECISION: req.decision,
+                EGRESS_RESUME_FRAME: (pending or {}).get(EGRESS_RESUME_FRAME),
+            }
+
         async def event_stream() -> AsyncIterator[bytes]:
             cv_token = current_conversation.set(persist_id)
+            # Enforce the (possibly host-augmented) effective egress for the retried tool call. For
+            # the answer gate this is just the tenant's effective config; for an egress allow it
+            # carries the approved host so the one retried gateway.invoke passes.
+            eg_token = current_egress.set(eg_config)
+            # Forward the FULL event set on resume: the answer gate yields only the terminal
+            # `final`, but an egress resume re-runs the researcher/critic, which produce new
+            # plan/tool/answer/critique/final events (and may suspend again at a later block).
+            sse = _TurnSse(run_id)
             try:
-                answer = ""
-                # Resume continues from the gate: only human_gate + finalize run, so the single
-                # `final` event carries the full answer (the original answer deltas were on the
-                # first stream). Re-deliver it so a fresh client ends with the answer.
                 async for ev in run_turn(
                     generation=generation,
                     provider=provider,
@@ -1225,23 +1332,39 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     context=_agent_context(persist_id),
                     checkpointer=checkpointer,
                     thread_id=run_id,
-                    resume=req.decision,
+                    resume=resume_value,
                 ):
-                    # Resume yields just the terminal `final`, whose text is the full answer.
-                    answer = ev.text
-                yield (
-                    f"data: {json.dumps({'delta': answer, 'done': True, 'finish_reason': 'stop'})}"
-                    "\n\n"
-                ).encode()
+                    frame_bytes = sse.map(ev)
+                    if frame_bytes is not None:
+                        yield frame_bytes
+                    elif ev.kind == "final":
+                        # The full answer (the answer gate re-delivers it with no deltas; an egress
+                        # resume streamed it via `answer` events too — keep the persisted answer
+                        # from the mapper, but re-deliver the final text so a client ends with it).
+                        sse.answer = ev.text or sse.answer
+                        done = {
+                            "delta": sse.answer if not sse.trace else "",
+                            "done": True,
+                            "finish_reason": "stop",
+                        }
+                        yield f"data: {json.dumps(done)}\n\n".encode()
+                if sse.suspended:
+                    # Suspended AGAIN at a later egress block: the run stays checkpointed; persisted
+                    # on the next resume, not here.
+                    return
                 if persist_id is not None and storage is not None:
+                    meta: dict[str, Any] = {"resumed": True, "decision": req.decision}
+                    if sse.trace:
+                        meta["trace"] = sse.trace
                     await storage.conversations.add_message(
                         conversation_id=persist_id,
                         role="assistant",
-                        content=answer,
-                        meta={"resumed": True, "decision": req.decision},
+                        content=sse.answer,
+                        meta=meta,
                     )
             finally:
                 current_conversation.reset(cv_token)
+                current_egress.reset(eg_token)
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -1709,6 +1832,32 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         saved = await storage.settings.upsert(body)
         return StructuredResult(ok=True, data={"settings": saved.model_dump()})
 
+    def _valid_egress_host(host: str) -> str:
+        """Normalize + validate a bare hostname (no scheme/path/space); raise 400 if invalid."""
+        host = host.strip().lower()
+        if not host or "://" in host or "/" in host or any(c.isspace() for c in host):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="host must be a bare hostname (no scheme, path, or spaces)",
+            )
+        return host
+
+    async def _persist_egress_host(host: str) -> TenantSettings:
+        """Add ``host`` to the tenant's allowlist and enable egress (tenant-scoped + audited via the
+        settings store). Shared by the Network-panel allow-on-deny endpoint and the egress-approval
+        gate's ``egress_allow_always`` resume path (#377). The host is server-trusted by the caller
+        (the gate takes it from the checkpoint, never the request body)."""
+        storage = _require_storage()
+        current = await storage.settings.get()
+        base: CoreConfig = app.state.config
+        existing = current.allowed_egress_hosts
+        if existing is None:
+            existing = base.allowed_egress_hosts  # inherit the boot allowlist before extending it
+        merged = tuple(dict.fromkeys([*existing, host]))  # dedupe, preserve order
+        return await storage.settings.upsert(
+            current.model_copy(update={"egress_enabled": True, "allowed_egress_hosts": merged})
+        )
+
     @app.post(
         "/api/v1/settings/egress/allow",
         response_model=StructuredResult,
@@ -1718,22 +1867,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         # Interactive allow-on-deny: add one host to the tenant's allowlist and enable egress, so a
         # blocked outbound request can be permitted with one click (then the user re-sends). The
         # host must be a bare hostname (no scheme/path/whitespace), same as the Network panel.
-        host = body.host.strip().lower()
-        if not host or "://" in host or "/" in host or any(c.isspace() for c in host):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="host must be a bare hostname (no scheme, path, or spaces)",
-            )
-        storage = _require_storage()
-        current = await storage.settings.get()
-        base: CoreConfig = app.state.config
-        existing = current.allowed_egress_hosts
-        if existing is None:
-            existing = base.allowed_egress_hosts  # inherit the boot allowlist before extending it
-        merged = tuple(dict.fromkeys([*existing, host]))  # dedupe, preserve order
-        saved = await storage.settings.upsert(
-            current.model_copy(update={"egress_enabled": True, "allowed_egress_hosts": merged})
-        )
+        host = _valid_egress_host(body.host)
+        saved = await _persist_egress_host(host)
         return StructuredResult(ok=True, data={"settings": saved.model_dump(), "host": host})
 
     @app.get(
