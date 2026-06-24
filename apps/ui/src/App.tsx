@@ -39,13 +39,20 @@ export function App(): React.ReactElement {
   const [token, setToken] = useState<string>(readToken);
   const [session, setSession] = useState<SessionState>("loading");
 
-  const refreshSession = useCallback(() => {
-    setSession("loading");
-    fetchSession(token).then(
-      (s) => setSession(s),
-      () => setSession("error"), // backend unreachable -> render the app, not a login wall
-    );
-  }, [token]);
+  // showLoading flips to the full-screen loader, which UNMOUNTS <Chat> and discards its in-memory
+  // state (e.g. a staged composer attachment, #369). So only explicit user actions (login, sign-out)
+  // pass it; background re-validation (mount, token change) stays silent and keeps Chat mounted while
+  // it revalidates. The initial useState("loading") still covers the very first paint.
+  const refreshSession = useCallback(
+    (showLoading = false) => {
+      if (showLoading) setSession("loading");
+      fetchSession(token).then(
+        (s) => setSession(s),
+        () => setSession("error"), // backend unreachable -> render the app, not a login wall
+      );
+    },
+    [token],
+  );
 
   useEffect(() => {
     let active = true;
@@ -57,7 +64,9 @@ export function App(): React.ReactElement {
     };
   }, []);
 
-  useEffect(refreshSession, [refreshSession]);
+  useEffect(() => {
+    refreshSession(); // silent revalidation on mount / token change — keeps Chat mounted
+  }, [refreshSession]);
 
   function updateToken(value: string): void {
     setToken(value);
@@ -72,11 +81,11 @@ export function App(): React.ReactElement {
   );
 
   if (session === "loading") return wrap(<p data-testid="session-loading">Loading...</p>);
-  if (session === null) return wrap(<Login onAuthed={refreshSession} />);
+  if (session === null) return wrap(<Login onAuthed={() => refreshSession(true)} />);
 
   async function signOut(): Promise<void> {
     await logout(token);
-    refreshSession(); // -> 401 in hosted mode -> back to Login
+    refreshSession(true); // -> 401 in hosted mode -> back to Login
   }
 
   // Offer sign-out only for real (cookie) logins; dev/token sessions have nothing to sign out of.

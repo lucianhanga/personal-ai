@@ -40,6 +40,43 @@ import { SidePanel } from "./SidePanel";
 // Key for the not-yet-persisted "new" chat (before its conversation id exists).
 const NEW_CHAT = "__new__";
 
+// The unsent composer draft (typed text + attached images) is kept in sessionStorage so it survives
+// a remount or reload. Without this, any session re-validation unmounts <Chat> (App shows the
+// loading view) and the in-memory draft — including a staged file — is silently lost (#369).
+const DRAFT_KEY = "personalai_composer_draft";
+
+interface ComposerDraft {
+  input: string;
+  attachedImages: string[];
+}
+
+function loadDraft(): ComposerDraft {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY);
+    if (!raw) return { input: "", attachedImages: [] };
+    const d = JSON.parse(raw) as Partial<ComposerDraft>;
+    return {
+      input: typeof d.input === "string" ? d.input : "",
+      attachedImages: Array.isArray(d.attachedImages) ? d.attachedImages.filter((s) => typeof s === "string") : [],
+    };
+  } catch {
+    return { input: "", attachedImages: [] };
+  }
+}
+
+function saveDraft(draft: ComposerDraft): void {
+  try {
+    if (!draft.input && draft.attachedImages.length === 0) {
+      sessionStorage.removeItem(DRAFT_KEY); // keep storage clean once the draft is empty/sent
+      return;
+    }
+    sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  } catch {
+    // Quota exceeded (large base64 images) or storage disabled: degrade to the old in-memory-only
+    // behaviour rather than throwing — the draft simply won't survive a remount in that case.
+  }
+}
+
 // Turn a getUserMedia failure into a plain-language hint instead of a raw DOMException string.
 export function micErrorMessage(e: unknown): string {
   const name = (e as { name?: string } | null)?.name;
@@ -174,9 +211,11 @@ export function Chat({
   // independently against their key, so switching chats never interrupts a generating answer.
   const [chats, setChats] = useState<Record<string, ChatState>>({});
   const [persistence, setPersistence] = useState(false);
-  const [input, setInput] = useState("");
+  // The composer draft is restored from sessionStorage so a remount/reload (e.g. a session
+  // re-validation that unmounts Chat) doesn't discard typed text or a staged attachment (#369).
+  const [input, setInput] = useState(() => loadDraft().input);
   // Image parts attached to the next turn, as data-URLs (M9.1 vision).
-  const [attachedImages, setAttachedImages] = useState<string[]>([]);
+  const [attachedImages, setAttachedImages] = useState<string[]>(() => loadDraft().attachedImages);
   // True while an image is being dragged over the composer (drop-to-attach affordance, #324).
   const [dragOver, setDragOver] = useState(false);
   // Voice input (M9.2): whether STT is configured, and the live recording state.
@@ -332,6 +371,12 @@ export function Chat({
       listRef.current.scrollTop = listRef.current.scrollHeight;
     }
   }, [messages, trace]);
+
+  // Mirror the composer draft into sessionStorage so it survives a remount/reload (#369). send()
+  // clears both pieces of state, which writes an empty draft here and removes the stored key.
+  useEffect(() => {
+    saveDraft({ input, attachedImages });
+  }, [input, attachedImages]);
 
   function newChat(): void {
     setChats((prev) => ({ ...prev, [NEW_CHAT]: EMPTY_CHAT }));
