@@ -12,6 +12,50 @@ generated OpenAPI document.
 ## [Unreleased]
 
 ### Added
+- **Blocking egress-approval gate (#380 backend, #381 UI)**: a **second** durable LangGraph
+  human-in-the-loop gate (alongside the M8.1 answer-approval gate). When a multi-agent researcher
+  tool's outbound call targets a host that is **not** on the tenant's allowlist, the run **pauses
+  durably** (LangGraph `interrupt()` + the tenant-scoped `TenantCheckpointSaver`) and emits an
+  `approval_request` SSE with `reason:"egress_approval"`, `blocked_host`, `tool`, `args` — instead of
+  silently failing the call and continuing. The user chooses **Allow once** (this run only, not
+  persisted), **Allow always** (persist the host to the tenant allowlist, audited), **Don't allow**
+  (resume with the egress error), or **More info** (the redacted outbound args). On an allow, **only
+  the blocked tool is retried** (prior succeeded tools never re-fire) via a checkpointed resume
+  frame; the agent loop stays engine-agnostic (it emits an `egress_blocked` event; the graph's
+  `egress_gate` node fires the interrupt). Security: the blocked host is read from the **checkpoint,
+  never the request body**; resume is **subject-scoped** (a different subject in the same tenant →
+  403); the per-call **SSRF guard still blocks** loopback/RFC1918/metadata after any allow; the
+  allowlist write is tenant-scoped + audited and happens in the backend (no graph node writes the
+  DB); the More-info disclosure deep-redacts secret-looking arg keys. Resume:
+  `POST /api/v1/chat/{run_id}/resume` with the egress verb + the turn's `provider`. See
+  [ADR-0013](docs/architecture/adr/0013-egress-approval-gate.md).
+- **Info-panel Activity timeline (#375/#376)**: a reverse-chronological (newest turn on top) unified
+  timeline in the info panel that combines each turn's **context snapshot** + **tool calls** (ToolIO)
+  + compact **agent-name markers** (Researcher/Planner/Critic/Verify) with UTC timestamps, **filter
+  chips** (All / Tools / Reasoning / Context), and a **live** indicator for the in-flight turn. The
+  reasoning prose is intentionally **not** in the timeline (it stays in the transcript's per-message
+  Details). `GET /api/v1/conversations/{id}` now returns each message's `created_at`.
+- **Per-question + per-chat token/time metrics (#368)**: each assistant message persists its token
+  usage and latency in `meta.usage` (`prompt_tokens` / `completion_tokens` / `total_tokens` /
+  `elapsed_ms`), shown as a **per-message footer** and rolled up into **side-panel chat totals**.
+- **Per-question context snapshot (#373)**: the backend persists the prompt-assembly composition into
+  the assistant message's `meta.context` (`{items:[{label,count,chars}], total_chars}`); the UI shows
+  a per-message **Context (~N tokens)** disclosure via a reusable `ContextComposition` with
+  plain-language per-source explanations.
+- **Tool I/O progressive disclosure (#372)**: a Tier-1 summary + status pill expands to a Tier-2
+  request/response view (copy-full, bounded preview) via new `ToolIO` + `JsonPayload` components;
+  context composition is now collapsible with per-source plain-language explanations, and the
+  user-question turn is color-coded.
+- **Collapsible user questions in the transcript (#379)**: long user questions in the transcript can
+  be collapsed/expanded (collapsed shows a short preview), keeping a long thread scannable.
+
+### Changed
+- **Draft + attachments survive navigation and reload (#370)**: the composer draft and any attached
+  files now persist across in-app navigation **and** a page reload (sessionStorage,
+  `personalai_composer_draft`), and Chat no longer unmounts on background session re-validation — so
+  switching views or refreshing no longer loses an in-progress message.
+
+### Added
 - **Cost + speed on the leaderboard (#330)**: the benchmark leaderboards (HTML + Markdown) now show
   **`$ / run`** and **`tok/s`** next to quality and latency — an artificial-analysis-style view of the
   quality/cost/speed trade-off. Cost comes from token usage × a small **editable** price table
