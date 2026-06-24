@@ -2,45 +2,31 @@ import type { Dispatch, SetStateAction } from "react";
 
 import type { ChatMessage, ContextBreakdown, TraceItem, UsageInfo } from "./api";
 import { ActivityTimeline } from "./ActivityTimeline";
-import { AppLogs } from "./AppLogs";
 import { ContextMeter } from "./ContextMeter";
-import { ToolLog } from "./ToolLog";
 
 interface SidePanelProps {
-  token: string;
-  conversationId: string | null;
   messages: ChatMessage[];
   trace: Record<number, TraceItem[]>;
   usage: UsageInfo | null;
   totals: { tokens: number; ms: number; turns: number };
-  context: ContextBreakdown | null;
+  contexts: Record<number, ContextBreakdown>;
   busy: boolean;
   onAllowHost?: (host: string) => void;
   collapsed: boolean;
   setCollapsed: Dispatch<SetStateAction<boolean>>;
-  showLog: boolean;
-  setShowLog: Dispatch<SetStateAction<boolean>>;
-  showAppLogs: boolean;
-  setShowAppLogs: Dispatch<SetStateAction<boolean>>;
 }
 
-/** Right column: collapsible activity / app-logs / context panels. */
+/** Right column: the collapsible Activity pane (per-turn timeline + live context meter). */
 export function SidePanel({
-  token,
-  conversationId,
   messages,
   trace,
   usage,
   totals,
-  context,
+  contexts,
   busy,
   onAllowHost,
   collapsed,
   setCollapsed,
-  showLog,
-  setShowLog,
-  showAppLogs,
-  setShowAppLogs,
 }: SidePanelProps): React.ReactElement {
   if (collapsed) {
     return (
@@ -60,13 +46,17 @@ export function SidePanel({
       aria-label="panels"
       style={{ flex: 2, minWidth: 0, display: "flex", flexDirection: "column", gap: "0.5rem" }}
     >
-      <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", flexWrap: "wrap" }}>
-        <button data-testid="toollog-show" onClick={() => setShowLog((v) => !v)}>
-          {showLog ? "Hide activity" : "Activity"}
-        </button>
-        <button data-testid="applogs-show" onClick={() => setShowAppLogs((v) => !v)}>
-          {showAppLogs ? "Hide app logs" : "App logs"}
-        </button>
+      {/* Panel header: title (left) + collapse control (right), with a subtle bottom divider. */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "0.4rem",
+          paddingBottom: "0.4rem",
+          borderBottom: "1px solid rgba(127,127,127,0.2)",
+        }}
+      >
+        <strong style={{ fontSize: "0.9rem" }}>Activity</strong>
         <button
           data-testid="side-toggle"
           onClick={() => setCollapsed(true)}
@@ -78,22 +68,19 @@ export function SidePanel({
       </div>
 
       {/* Live window-usage + chat totals only — the per-turn context composition now lives in the
-          timeline's newest turn, so pass context={null} here to avoid duplicating it. */}
+          timeline's per-turn nodes, so pass context={null} here to avoid duplicating it. */}
       {usage && <ContextMeter usage={usage} totals={totals} context={null} />}
 
       {/* The centerpiece: a unified, reverse-chronological activity timeline (context + tools +
-          reasoning) per question. Raw logs below stay available as a complementary view. */}
+          reasoning) per question — the full history of the conversation. */}
       <ActivityTimeline
         messages={messages}
         trace={trace}
-        liveContext={context}
+        contexts={contexts}
         liveUsage={usage}
         busy={busy}
         onAllowHost={onAllowHost}
       />
-
-      {showLog && <ToolLog token={token} conversationId={conversationId} />}
-      {showAppLogs && <AppLogs token={token} conversationId={conversationId} />}
     </aside>
   );
 }

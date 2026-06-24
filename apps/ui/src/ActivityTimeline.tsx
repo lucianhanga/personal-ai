@@ -113,14 +113,14 @@ function visibleNodes(nodes: TurnNode[], filter: Filter): TurnNode[] {
 export function ActivityTimeline({
   messages,
   trace,
-  liveContext,
+  contexts,
   liveUsage,
   busy,
   onAllowHost,
 }: {
   messages: ChatMessage[];
   trace: Record<number, TraceItem[]>;
-  liveContext: ContextBreakdown | null;
+  contexts: Record<number, ContextBreakdown>;
   liveUsage: UsageInfo | null;
   busy: boolean;
   onAllowHost?: (host: string) => void;
@@ -279,7 +279,9 @@ export function ActivityTimeline({
       }
     }
     const items = trace[i]?.length ? trace[i] : (m.meta?.trace ?? []);
-    const context = m.meta?.context ?? (i === lastAssistantIndex ? liveContext : null);
+    // Per-turn context: the live `contexts` map (every turn, this session) wins; reloaded turns fall
+    // back to the persisted `m.meta.context`. So EVERY turn shows its "Context assembled" node.
+    const context = contexts[i] ?? m.meta?.context ?? null;
     // Per-turn usage from meta; for the newest (live) turn that hasn't persisted yet, fall back to
     // the live usage event so the header can still show tokens/time once the stream reports them.
     const usage = m.meta?.usage ?? (i === lastAssistantIndex ? liveUsage : null);
