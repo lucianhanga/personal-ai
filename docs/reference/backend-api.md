@@ -55,7 +55,7 @@ Authentication above). `/health` and `/version` stay unversioned and public.
 | Method | Path | Response | Notes |
 |---|---|---|---|
 | POST | `/api/v1/chat` | `text/event-stream` (SSE) | Streaming chat. See the request/SSE detail below. |
-| POST | `/api/v1/chat/{run_id}/resume` | `text/event-stream` (SSE) | Resume a run suspended at the durable human gate (M8.1c). Body `{decision, conversation_id?}`. Tenant-scoped: a foreign `run_id` → 404. |
+| POST | `/api/v1/chat/{run_id}/resume` | `text/event-stream` (SSE) | Resume a run suspended at a durable gate (answer-approval or egress-approval). Body `{decision, conversation_id?, provider?}` where `decision` ∈ `approve`/`reject` (answer gate) or `egress_allow_once`/`egress_allow_always`/`egress_deny` (egress gate). The backend dispatches on the gate's `reason` read from the checkpoint, not the body. Tenant-scoped (foreign `run_id` → 404) and subject-scoped (a different subject in the same tenant → 403). |
 
 ### Files & RAG
 
@@ -125,16 +125,30 @@ curl -N -X POST http://127.0.0.1:8765/api/v1/chat \
     In the agent loop, reasoning streams as `data: {thinking}` frames.
   - `event: plan` / `event: critique` — `{kind, text}` planner/critic steps (M8 typed graph, when
     `PERSONALAI_AGENT_GRAPH_ENABLED`).
-  - `event: approval_request` — `{run_id, reason, answer, critique}` when the durable human gate
-    (`PERSONALAI_AGENT_HUMAN_GATE`) suspends the turn; the stream ends without `done`. Continue with
-    `POST /api/v1/chat/{run_id}/resume`.
+  - `event: approval_request` — a durable gate suspended the turn; the stream ends without `done`.
+    Two shapes by `reason` (continue with `POST /api/v1/chat/{run_id}/resume`):
+    - **answer gate** (`PERSONALAI_AGENT_HUMAN_GATE`) — `{run_id, reason:"approve_answer", answer,
+      critique}`.
+    - **egress gate** (always armed when the graph runs with a checkpointer) —
+      `{run_id, reason:"egress_approval", blocked_host, tool, args}` (the payload is whitelisted to
+      these client-facing keys; the blocked host lives in the checkpoint, not the body). See
+      [the agent guide](../guides/agent.md#durable-gates-answer-approval--egress-approval) and
+      [ADR-0013](../architecture/adr/0013-egress-approval-gate.md).
   - `event: usage` — `{prompt_tokens, completion_tokens, total_tokens, context_limit}` for the
-    UI context-usage meter (`context_limit` is set only for the local Ollama provider).
+    UI context-usage meter (`context_limit` is set only for the local Ollama provider). The same
+    counts (plus `elapsed_ms`) are persisted per assistant message under `meta.usage` and shown as a
+    per-message footer + side-panel chat totals.
   - `event: error` — a `StructuredResult` error envelope on failure.
-- **Persisted detail (`meta.trace`):** when a turn uses tools/reasoning and is persisted to a
-  conversation, the assistant message stores an ordered timeline (reasoning + tool calls/results)
-  under `meta.trace`, surfaced per message as **Details** and returned by
-  `GET /api/v1/conversations/{id}`.
+- **Persisted detail (`meta`):** when a turn is persisted to a conversation, the assistant message
+  carries a `meta` object returned by `GET /api/v1/conversations/{id}`:
+  - `meta.trace` — an ordered timeline (reasoning + tool calls/results), surfaced per message as
+    **Details** (when the turn used tools/reasoning).
+  - `meta.usage` — `{prompt_tokens, completion_tokens, total_tokens, elapsed_ms}` for the
+    per-message token/time footer and per-chat totals.
+  - `meta.context` — the prompt-assembly snapshot `{items: [{label, count, chars}], total_chars}`
+    that drives the per-message **Context (~N tokens)** disclosure and the info-panel timeline.
+  - Each message in the response also carries `created_at` (ISO 8601), used by the info-panel
+    **Activity timeline** to order turns.
 
 ### Providers (local + remote)
 

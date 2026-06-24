@@ -60,6 +60,9 @@ language the user used**.
 - Tools run through the **gateway**: least-privilege permissions, **egress allowlist**, JSON-Schema
   I/O, **risk approval** (HIGH/CRITICAL need *approve high-risk*), timeout, and an append-only
   **audit** (the **Activity** panel, per chat).
+- In the multi-agent graph, a tool call to a **non-allowlisted host** pauses the run for an explicit
+  decision via the [egress-approval gate](#2-egress-approval-gate-blocking) instead of silently
+  failing.
 - Tool output is **untrusted data**, never instructions.
 
 ## Multi-agent graph (M8.1)
@@ -69,7 +72,8 @@ as a LangGraph graph instead of the single loop. The graph is defined in
 `core/src/personalai_core/graph.py`:
 
 ```
-START → planner → researcher → critic → [revise? → researcher] → [human_gate] → finalize → END
+START → planner → researcher → [egress_gate? → researcher] → critic → [revise? → researcher]
+        → [human_gate] → finalize → END
 ```
 
 - **planner** — one tool-free model call producing a short 1–3 bullet plan; emits a `plan` step.
@@ -83,7 +87,11 @@ START → planner → researcher → critic → [revise? → researcher] → [hu
 - **bounded reflection loop** — on a `REVISE` verdict the researcher **retries once** (the critique
   is fed back so it takes a different path); `MAX_ATTEMPTS = 2` (initial attempt + one retry), after
   which the turn proceeds regardless of the verdict.
-- **human_gate** (only when the durable gate is on) — suspends the turn for human approval.
+- **egress_gate** (only when a checkpointer is wired) — if the researcher's tools try to reach a
+  **non-allowlisted host**, the run **pauses for egress approval** before that call is allowed. This
+  is the second durable gate. See [Durable gates](#durable-gates-answer-approval--egress-approval).
+- **human_gate** (only when the durable answer gate is on) — suspends the turn before `finalize`
+  for human approval of the answer.
 - **finalize** — emits the single terminal answer.
 
 The **current date is injected up front** (a system message) so every agent is date-aware and
@@ -123,40 +131,96 @@ With the graph on, the per-message **Details** trace shows the extra steps, colo
 | Critic | amber | the critique |
 | Verify | green / red | verification verdict (M8.2) |
 
-### Durable human approval gate
+### Durable gates (answer-approval + egress-approval)
 
-`PERSONALAI_AGENT_HUMAN_GATE=true` (requires `PERSONALAI_AGENT_GRAPH_ENABLED=true` **and** a
-reachable Postgres) inserts the `human_gate` node before `finalize`. Each turn then **suspends after
-the critic** and waits for you to approve or reject the answer:
+The multi-agent graph has **two** durable human-in-the-loop gates. Both use the **same durable
+machinery** — a LangGraph `interrupt()` plus the **tenant-scoped checkpoint**
+(`TenantCheckpointSaver`, migration `0014_agent_checkpoints.sql`, Postgres RLS), so a suspended run
+survives a restart and stays tenant-isolated. Both resume through the **same** endpoint,
+`POST /api/v1/chat/{run_id}/resume`, which dispatches on the gate's `reason` **read from the
+checkpoint** (never from the request body). On resume, a **fresh `SecurityContext`** is in scope
+(with CSRF in hosted mode), the checkpoint loads **only under the resumer's tenant** (a foreign
+`run_id` → **404**, cross-tenant resume is impossible), and the run may be resumed **only by the
+same subject that started it** (a different subject in the same tenant → **403**).
 
-1. The backend emits an `approval_request` SSE frame (`{run_id, reason, answer, critique}`) and the
-   stream ends **without** a `done` frame.
-2. The run state is persisted in a **tenant-scoped checkpoint** (`TenantCheckpointSaver`, migration
-   `0014_agent_checkpoints.sql`, Postgres RLS), so it survives restarts and stays tenant-isolated.
-3. The UI shows the answer + critique with **Approve / Reject** controls.
-4. Resume with `POST /api/v1/chat/{run_id}/resume` and body `{decision, conversation_id?}`. The
-   resume runs under a **fresh `SecurityContext`** (with CSRF in hosted mode); the checkpoint loads
-   **only under the resumer's tenant**, so a foreign `run_id` returns **404** (cross-tenant resume
-   is impossible).
+#### 1. Answer-approval gate
+
+`PERSONALAI_AGENT_HUMAN_GATE=true` (requires `PERSONALAI_AGENT_GRAPH_ENABLED=true` / `agent_mode=multi`
+**and** a reachable Postgres) inserts the `human_gate` node before `finalize`. Each turn then
+**suspends after the critic** and waits for you to approve or reject the answer:
+
+1. The backend emits an `approval_request` SSE frame (`{run_id, reason:"approve_answer", answer,
+   critique}`) and the stream ends **without** a `done` frame.
+2. The UI shows the answer + critique with **Approve / Reject** controls.
+3. Resume with body `{decision: "approve" | "reject", conversation_id?}`.
 
 The user-visible flow is: **plan → answer + tool steps → critique → approve/reject → final answer.**
+
+#### 2. Egress-approval gate (blocking)
+
+This gate needs **no flag** — it is always armed whenever the graph runs with a checkpointer (a
+reachable Postgres). It turns a blocked outbound call into an **explicit, blocking decision** instead
+of a silent tool error (ADR-0013):
+
+1. When a researcher tool's outbound call targets a **host that is not on the tenant's egress
+   allowlist**, the agent loop yields an engine-agnostic `egress_blocked` event and **returns**
+   (it does not re-prompt the model). The graph routes to the `egress_gate` node, which calls
+   `interrupt()` to **pause the run durably**.
+2. The backend emits an `approval_request` SSE frame with
+   `{run_id, reason:"egress_approval", blocked_host, tool, args}` (args are persisted from the
+   checkpoint; the SSE payload is whitelisted to exactly these client-facing keys). The stream ends
+   without a `done` frame.
+3. The UI shows **four** choices:
+   - **Allow once** (`egress_allow_once`) — permit this host for **this run only**; the host is
+     added to a **non-persisted** config copy.
+   - **Allow always** (`egress_allow_always`) — **persist** the host to the **tenant** egress
+     allowlist (tenant-scoped + audited) and enable egress, then resume.
+   - **Don't allow** (`egress_deny`) — resume with the egress denial; the blocked call returns its
+     error to the agent and the turn continues without it.
+   - **More info** — reveal the **redacted** outbound args (secret-looking keys — `authorization`,
+     `token`, `api_key`, `password`, `cookie`, `bearer`, … — are deep-redacted before display).
+4. Resume with body `{decision: <egress verb>, conversation_id?, provider?}`. Because an egress
+   resume **re-runs the researcher** (a real model call), the UI sends the turn's original
+   `provider` so the retry runs on the same model.
+5. On an allow, **only the blocked tool is retried** — the prior succeeded tools are already in the
+   checkpointed conversation as TOOL-role messages and **never re-fire**. The run may suspend again
+   at a later blocked call.
+
+**Why the gate is durable + server-trusted, not a client toggle:**
+
+- The **blocked host comes from the checkpoint**, never the request body — a client sends only the
+  verb, so it cannot smuggle in an arbitrary destination.
+- The **per-call SSRF guard still runs after any allow.** Allowing a host only adds it to the
+  allowlist set; the tool's public-host check still refuses loopback, RFC1918, link-local/metadata
+  (`169.254.169.254`), and other non-public addresses. "Allow always" on a metadata IP is still
+  blocked at fetch time.
+- The **allowlist write happens in the backend** (tenant-scoped + audited). No graph node touches
+  the database — the `egress_gate` node only calls `interrupt()` (ADR-0012 seam: the engine gets no
+  privileges of its own).
+
+The user-visible flow is: **plan → researcher hits a blocked host → pause → allow-once / allow-always
+/ deny / more-info → (on allow) retry just that call → continue → answer.**
 
 ### Enabling it
 
 Set it per-tenant in **Settings → Agents** (preferred), or via env for the boot default:
 
 ```bash
-# Multi-agent graph only (no gate; works without a DB):
+# Multi-agent graph, no checkpointer (no durable gates; works without a DB):
 PERSONALAI_AGENT_MODE=multi make run-backend
 
-# Graph + durable human gate (needs Postgres):
+# Graph + Postgres: the egress-approval gate is armed automatically (no flag needed);
+# add PERSONALAI_AGENT_HUMAN_GATE=true to also arm the answer-approval gate:
 PERSONALAI_AGENT_MODE=multi PERSONALAI_AGENT_HUMAN_GATE=true make run-backend
 ```
 
-`agent_mode` defaults to **single** and the human gate to **off**. The legacy
-`PERSONALAI_AGENT_GRAPH_ENABLED=true` still maps to `multi` for backward compatibility. See
-[backend API](../reference/backend-api.md) for the exact SSE frames and the resume endpoint, and
-[ADR-0012](../architecture/adr/0012-langgraph-orchestration.md) for the design.
+`agent_mode` defaults to **single** and the **answer**-approval gate to **off**. The
+**egress**-approval gate has no flag — it is armed whenever the graph runs with a checkpointer
+(a reachable Postgres). The legacy `PERSONALAI_AGENT_GRAPH_ENABLED=true` still maps to `multi` for
+backward compatibility. See [backend API](../reference/backend-api.md) for the exact SSE frames and
+the resume endpoint, [ADR-0012](../architecture/adr/0012-langgraph-orchestration.md) for the
+orchestration design, and [ADR-0013](../architecture/adr/0013-egress-approval-gate.md) for the
+egress gate.
 
 ## Configuration
 
@@ -198,8 +262,9 @@ setting) controls how deeply the multi-agent graph verifies an answer:
   bounded attempt cap as the reflection loop) before finalizing. The verdict streams to the
   reasoning pane as the green/red **Verify** step.
 
-**Security gates are never accuracy-gated**: the durable human approval gate (and egress/approval
-checks) always run regardless of the verification depth.
+**Security gates are never accuracy-gated**: both durable gates — the answer-approval gate and the
+[egress-approval gate](#2-egress-approval-gate-blocking) — always run regardless of the verification
+depth.
 
 ## What's next
 

@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/lucianhanga/personal-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/lucianhanga/personal-ai/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![Status: M8.2 multi-agent quality + config done](https://img.shields.io/badge/status-M8.2%20done-brightgreen.svg)](./docs/architecture/adr/0012-langgraph-orchestration.md)
+[![Status: M8.3 egress gate + transparency panel done](https://img.shields.io/badge/status-M8.3%20done-brightgreen.svg)](./docs/architecture/adr/0013-egress-approval-gate.md)
 [![Local-first](https://img.shields.io/badge/local--first-yes-brightgreen.svg)](#principles)
 [![Structured-output-first](https://img.shields.io/badge/structured--output--first-yes-brightgreen.svg)](#principles)
 [![Security-first](https://img.shields.io/badge/security--first-yes-brightgreen.svg)](./SECURITY.md)
@@ -16,21 +16,25 @@ PersonalAI is **extensible** (tools + MCP), **structured-output-first** (schemas
 **open-source-first** (verified provenance only), and **security-first** (zero-trust toward
 tools, files, prompts, model outputs, and MCP servers).
 
-> **Current state:** **M0–M8.2 complete (multi-agent quality + per-tenant configuration + a
-> streamlined two-view UI).**
+> **Current state:** **M0–M8.3 complete (multi-agent quality + per-tenant configuration + a
+> blocking egress-approval gate + a two-view UI with a transparency panel).**
 > Streaming chat in a React UI over **local Ollama models** or **remote OpenAI-compatible
 > providers**; **chat-with-your-documents** (file ingestion → pgvector RAG with citations);
 > **persistent conversation history**; **memory** (per-chat short-term summary + cross-chat long-term
 > memory you can view/edit/erase); a security-first **Tool/MCP gateway** (permissions, egress
 > allowlist, schema-validated I/O, risk approval, audit) with **live MCP server management** (M7);
 > an **agent mode** you choose per tenant — a **single-agent loop** or a **multi-agent graph** on
-> LangGraph (planner → researcher → critic) with a **bounded reflection loop**, a durable **human
-> approval gate**, **per-agent prompts + tool scoping**, and **query contextualization** (M8,
-> ADR-0012); a **Chat | Settings** UI where per-tenant **settings** live (model/agent/behavior,
-> embedding engine, **network egress** with one-click allow-on-deny, turn timeout); and
-> **always-on multi-tenancy** (ADR-0010) — Postgres Row-Level Security, an `IdentityProvider`
-> (argon2id passwords + cookie sessions), and per-request tenant isolation. **Local runs zero-login**
-> (`app_mode=local`); **hosted** mode adds real login + CSRF. The HTTP API is versioned under
+> LangGraph (planner → researcher → critic) with a **bounded reflection loop**, **two durable
+> human-in-the-loop gates** — an **answer-approval gate** and a **blocking egress-approval gate**
+> that pauses the run when a tool reaches a non-allowlisted host so you can allow-once / allow-always
+> / deny / inspect (ADR-0013) — **per-agent prompts + tool scoping**, and **query contextualization**
+> (M8, ADR-0012); a transparent **info panel** with a reverse-chronological **Activity timeline**
+> (context snapshots + tool I/O + agent markers), **per-question and per-chat token/time metrics**,
+> and a **per-question context snapshot**; a **Chat | Settings** UI where per-tenant **settings** live
+> (model/agent/behavior, embedding engine, **network egress** with one-click allow-on-deny, turn
+> timeout); and **always-on multi-tenancy** (ADR-0010) — Postgres Row-Level Security, an
+> `IdentityProvider` (argon2id passwords + cookie sessions), and per-request tenant isolation.
+> **Local runs zero-login** (`app_mode=local`); **hosted** mode adds real login + CSRF. The HTTP API is versioned under
 > **`/api/v1`** (see [CHANGELOG](./CHANGELOG.md)). See the
 > [architecture report](./docs/architecture/PersonalAI-Architecture-Research.md), the
 > [local chat guide](./docs/guides/local-chat.md), [remote providers](./docs/guides/remote-providers.md),
@@ -134,6 +138,7 @@ reason, alternatives) lives in
 | **Pre-M8 hardening** | Audit-driven fixes (run_turn seam, unit-of-work, tenant tests, ...) | done |
 | **M8.1** | Multi-agent graph on LangGraph (planner → researcher → critic) + durable human gate (ADR-0012) | done |
 | **M8.2** | Agent modes + per-tenant config (prompts, tool scoping, egress, timeout), bounded reflection loop, schema-driven tool-arg repair, query contextualization, Chat \| Settings UI | done |
+| **M8.3** | Blocking egress-approval gate (ADR-0013), transparency panel (Activity timeline, tool-I/O progressive disclosure, per-question context snapshot + token/time metrics), draft persistence | done |
 | **M9** | Multimodal (vision / STT / TTS) | next |
 | **M10** | Browser extension (MV3) | planned |
 | **M11** | KAG / graph memory (graph upgrade of M4) | planned |
