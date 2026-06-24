@@ -4,7 +4,12 @@ import { afterEach, expect, test, vi } from "vitest";
 import { Chat, formatDuration, micErrorMessage, transcribeErrorMessage } from "./Chat";
 import * as api from "./api";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  sessionStorage.clear();
+});
+
+const DRAFT_KEY = "personalai_composer_draft";
 
 const MODELS = {
   defaultModel: "qwen3.6:35b-a3b",
@@ -57,6 +62,39 @@ test("loads providers + models and shows capability badges", async () => {
     ),
   );
   expect(screen.getByTestId("model-caps")).toHaveTextContent(/vision/);
+});
+
+test("restores an unsent composer draft (text + attachment) from sessionStorage (#369)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  // Simulate the draft a previous mount left behind before <Chat> was unmounted by a re-validation.
+  sessionStorage.setItem(
+    DRAFT_KEY,
+    JSON.stringify({
+      input: "half-written question",
+      attachedImages: ["data:image/png;base64,AAAA"],
+    }),
+  );
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("composer") as HTMLTextAreaElement).value).toBe(
+      "half-written question",
+    ),
+  );
+  // The staged image is back too, not silently dropped.
+  expect(screen.getByTestId("image-attachments").querySelectorAll("img")).toHaveLength(1);
+});
+
+test("persists the composer draft to sessionStorage so a remount keeps it (#369)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  render(<Chat token="demo" />);
+  const composer = await screen.findByTestId("composer");
+  fireEvent.change(composer, { target: { value: "remember me" } });
+  await waitFor(() => {
+    const raw = sessionStorage.getItem(DRAFT_KEY);
+    expect(raw && (JSON.parse(raw) as { input: string }).input).toBe("remember me");
+  });
 });
 
 test("switching provider reloads its models", async () => {
