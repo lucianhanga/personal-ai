@@ -227,7 +227,7 @@ def test_resume_allow_once_retries_and_does_not_persist_the_host() -> None:
             "POST",
             f"/api/v1/chat/{run_id}/resume",
             headers=_csrf(client),
-            json={"decision": "egress_allow_once", "conversation_id": cid},
+            json={"decision": "egress_allow_once", "conversation_id": cid, "provider": "fake"},
         ) as resp:
             assert resp.status_code == 200
             resumed = "".join(resp.iter_text())
@@ -249,7 +249,7 @@ def test_resume_allow_always_persists_the_host() -> None:
             "POST",
             f"/api/v1/chat/{run_id}/resume",
             headers=_csrf(client),
-            json={"decision": "egress_allow_always", "conversation_id": cid},
+            json={"decision": "egress_allow_always", "conversation_id": cid, "provider": "fake"},
         ) as resp:
             assert resp.status_code == 200
             "".join(resp.iter_text())
@@ -269,7 +269,7 @@ def test_resume_deny_yields_the_egress_error_and_completes() -> None:
             "POST",
             f"/api/v1/chat/{run_id}/resume",
             headers=_csrf(client),
-            json={"decision": "egress_deny", "conversation_id": cid},
+            json={"decision": "egress_deny", "conversation_id": cid, "provider": "fake"},
         ) as resp:
             assert resp.status_code == 200
             resumed = "".join(resp.iter_text())
@@ -296,6 +296,7 @@ def test_host_in_resume_body_is_ignored_host_comes_from_checkpoint() -> None:
             json={
                 "decision": "egress_allow_always",
                 "conversation_id": cid,
+                "provider": "fake",
                 "host": "evil.attacker.test",  # extra field: must be ignored by the verb-only model
             },
         ) as resp:
@@ -321,7 +322,7 @@ def test_ssrf_guard_still_blocks_after_allow_always_on_metadata_host() -> None:
             "POST",
             f"/api/v1/chat/{run_id}/resume",
             headers=_csrf(client),
-            json={"decision": "egress_allow_always", "conversation_id": cid},
+            json={"decision": "egress_allow_always", "conversation_id": cid, "provider": "fake"},
         ) as resp:
             assert resp.status_code == 200
             resumed = "".join(resp.iter_text())
@@ -378,6 +379,6 @@ def test_subject_mismatch_resume_is_forbidden_same_tenant() -> None:
         denied = bob.post(
             f"/api/v1/chat/{run_id}/resume",
             headers=_csrf(bob),
-            json={"decision": "egress_allow_once", "conversation_id": cid},
+            json={"decision": "egress_allow_once", "conversation_id": cid, "provider": "fake"},
         )
         assert denied.status_code == 403

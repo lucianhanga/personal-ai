@@ -177,6 +177,11 @@ class ResumeRequest(BaseModel):
         "egress_deny",
     ] = "approve"
     conversation_id: str | None = None
+    # The model provider the original turn ran on. An egress resume RE-RUNS the researcher (a real
+    # model call), so it must continue on the same provider the turn started with rather than the
+    # server default; the UI sends the turn's provider here. (Unlike the egress host, the provider
+    # is not a security boundary — a client could pick any provider by starting a new turn.)
+    provider: str | None = None
 
 
 # Built-in tools (vs MCP-provided ones). Used by /assistant/execute to honour `use_mcp=False`.
@@ -1239,7 +1244,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         if await checkpointer.aget_tuple({"configurable": {"thread_id": run_id}}) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run")
 
-        provider = _resolve_provider(None)
+        provider = _resolve_provider(req.provider)
         registries: Registries = app.state.bootstrap.registries
         tool_list = [registries.tools.get(n) for n in registries.tools.names()]
         grants = [p for rt in tool_list for p in rt.manifest.permissions]
