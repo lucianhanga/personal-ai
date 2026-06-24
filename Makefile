@@ -2,7 +2,7 @@
 # Python is managed by uv; JS by pnpm. See CONTRIBUTING.md.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup lint format typecheck test arch schemas run-backend run-ui run-bench-ui sbom audit drift secrets hooks signing-smoke db db-down js-install js-typecheck js-test js-lint js check
+.PHONY: help setup dev lint format typecheck test arch schemas run-backend run-ui run-bench-ui sbom audit drift secrets hooks signing-smoke db db-down js-install js-typecheck js-test js-lint js check
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -11,6 +11,9 @@ help: ## Show this help
 setup: ## Install Python (uv) + JS (pnpm) dependencies
 	uv sync
 	pnpm install
+
+dev: ## One-command bootstrap: check deps, install, start db, run backend + UI (Ctrl-C stops all)
+	bash scripts/bootstrap.sh
 
 lint: ## Ruff lint (Python)
 	uv run ruff check .
