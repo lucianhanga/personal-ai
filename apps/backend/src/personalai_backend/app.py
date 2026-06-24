@@ -1154,6 +1154,11 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     }
                     if trace:
                         turn_meta["trace"] = trace
+                    # Snapshot what was assembled into the prompt this turn (the same payload the
+                    # live `context` SSE event carried), so the per-question context view survives a
+                    # reload and can be browsed in history (#371 phase 2).
+                    if context_breakdown.get("items"):
+                        turn_meta["context"] = context_breakdown
                     await storage.conversations.add_message(
                         conversation_id=persist_id,
                         role="assistant",

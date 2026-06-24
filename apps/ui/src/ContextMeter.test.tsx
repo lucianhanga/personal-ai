@@ -123,7 +123,7 @@ test("an unknown source falls back to the generic explanation", () => {
   render(
     <ContextMeter
       usage={null}
-      context={{ items: [{ label: "Grounding", count: 1, chars: 100 }], total_chars: 100 }}
+      context={{ items: [{ label: "Mystery source", count: 1, chars: 100 }], total_chars: 100 }}
     />,
   );
   fireEvent.click(screen.getByTestId("context-help-btn"));

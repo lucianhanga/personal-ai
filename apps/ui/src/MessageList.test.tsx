@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { createRef } from "react";
 import { expect, test } from "vitest";
 
@@ -49,6 +49,36 @@ test("compacts large token counts in the footer", () => {
 test("renders no footer when a message has no usage", () => {
   renderList([{ role: "assistant", content: "x" }]);
   expect(screen.queryByTestId("msg-usage")).toBeNull();
+});
+
+test("shows a per-message context disclosure that reveals the composition when opened", () => {
+  renderList([
+    {
+      role: "assistant",
+      content: "hello",
+      meta: {
+        context: {
+          items: [
+            { label: "Grounding", count: 1, chars: 400 },
+            { label: "Documents", count: 4, chars: 1600 },
+          ],
+          total_chars: 2000,
+        },
+      },
+    },
+  ]);
+  const disclosure = screen.getByTestId("msg-context");
+  expect(disclosure).toHaveTextContent(/Context \(~\d+ tokens\)/);
+  // Collapsed-by-default <details>: the composition renders but is hidden until opened.
+  expect(screen.getByTestId("context-breakdown")).toBeInTheDocument();
+  fireEvent.click(disclosure.querySelector("summary")!);
+  expect(disclosure).toHaveTextContent("Grounding");
+  expect(disclosure).toHaveTextContent("Documents (4)");
+});
+
+test("renders no context disclosure when a message has no context snapshot", () => {
+  renderList([{ role: "assistant", content: "x", meta: { usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, elapsed_ms: 1 } } }]);
+  expect(screen.queryByTestId("msg-context")).toBeNull();
 });
 
 test("user message blocks get a tinted background + left accent border to delimit turns", () => {
