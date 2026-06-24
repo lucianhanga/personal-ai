@@ -63,6 +63,9 @@ export function ContextComposition({
   });
   // Which row's plain-language explanation popover is open (keyboard/tap toggle, AA-readable).
   const [expl, setExpl] = useState<string | null>(null);
+  // Whether the per-source / total token estimates are revealed. Hidden by default for a cleaner
+  // breakdown; one toggle governs the whole composition's token display.
+  const [showTokens, setShowTokens] = useState<boolean>(false);
 
   function toggleOpen(): void {
     setOpen((o) => {
@@ -106,7 +109,7 @@ export function ContextComposition({
       {/* Composition: what was assembled into the prompt for this question. */}
       {open && (
         <div data-testid="context-breakdown">
-          {context.items.map((it) => {
+          {context.items.map((it, idx) => {
             const share = context.total_chars
               ? Math.round((it.chars / context.total_chars) * 100)
               : 0;
@@ -150,8 +153,38 @@ export function ContextComposition({
                     >
                       ?
                     </button>
+                    {/* One global token toggle for the whole composition, anchored to the first
+                        row's controls so it's discoverable next to the `?` button. */}
+                    {idx === 0 && (
+                      <button
+                        data-testid="context-tokens-toggle"
+                        type="button"
+                        tabIndex={0}
+                        aria-pressed={showTokens}
+                        title={showTokens ? "Hide token counts" : "Show token counts"}
+                        aria-label={showTokens ? "Hide token counts" : "Show token counts"}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowTokens((s) => !s);
+                        }}
+                        style={{
+                          width: 14,
+                          height: 14,
+                          lineHeight: "12px",
+                          fontSize: "0.62rem",
+                          borderRadius: "50%",
+                          border: "1px solid rgba(127,127,127,0.5)",
+                          background: showTokens ? "rgba(74,144,217,0.15)" : "none",
+                          color: showTokens ? "#4a90d9" : "#6b7280",
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      >
+                        #
+                      </button>
+                    )}
                   </span>
-                  <span style={{ color: "#888" }}>~{fmt(tokens)} tok</span>
+                  {showTokens && <span style={{ color: "#888" }}>~{fmt(tokens)} tok</span>}
                 </div>
                 {expl === it.label && (
                   <div
@@ -201,9 +234,11 @@ export function ContextComposition({
               </div>
             );
           })}
-          <div style={{ color: "#888", marginTop: 2 }}>
-            Assembled ~{fmt(approxTokens(context.total_chars))} tokens (estimate)
-          </div>
+          {showTokens && (
+            <div style={{ color: "#888", marginTop: 2 }}>
+              Assembled ~{fmt(approxTokens(context.total_chars))} tokens (estimate)
+            </div>
+          )}
         </div>
       )}
     </>

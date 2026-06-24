@@ -18,8 +18,43 @@ test("renders a row per source plus the assembled-tokens footer", () => {
   const breakdown = screen.getByTestId("context-breakdown");
   expect(breakdown).toHaveTextContent("Grounding");
   expect(breakdown).toHaveTextContent("Documents (4)");
+  // Token counts are toggle-gated (hidden by default); reveal them to see the assembled footer.
+  fireEvent.click(screen.getByTestId("context-tokens-toggle"));
   expect(breakdown).toHaveTextContent(/Assembled ~\d+ tokens/);
   expect(screen.getAllByTestId("context-item")).toHaveLength(2);
+});
+
+test("token counts are hidden by default and the toggle reveals per-source + assembled totals", () => {
+  render(
+    <ContextComposition
+      context={{
+        items: [
+          { label: "Grounding", count: 1, chars: 400 },
+          { label: "Documents", count: 4, chars: 1600 },
+        ],
+        total_chars: 2000,
+      }}
+    />,
+  );
+  const breakdown = screen.getByTestId("context-breakdown");
+  // Default: hidden — no per-source "~N tok" and no assembled footer.
+  expect(breakdown).not.toHaveTextContent(/~\d+ tok/);
+  expect(breakdown).not.toHaveTextContent(/Assembled ~\d+ tokens/);
+
+  const toggle = screen.getByTestId("context-tokens-toggle");
+  expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+  // On: per-source counts + the assembled total appear.
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute("aria-pressed", "true");
+  expect(breakdown).toHaveTextContent(/~\d+ tok/);
+  expect(breakdown).toHaveTextContent(/Assembled ~\d+ tokens/);
+
+  // Off again: both hidden.
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute("aria-pressed", "false");
+  expect(breakdown).not.toHaveTextContent(/~\d+ tok/);
+  expect(breakdown).not.toHaveTextContent(/Assembled ~\d+ tokens/);
 });
 
 test("the '?' button opens a real-label explanation (not the generic fallback)", () => {
