@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { AGENT_BG, AGENT_FG } from "./agentColors";
 import { blockedEgressHost, type ToolStep, type TraceItem } from "./api";
+import { ToolIO } from "./ToolIO";
 
 // Color code for the agent-flow trace (no emoji, per project convention): shared per-agent hues
 // (so the Agents config matches), plus tool violet and green/red for results + verification.
@@ -185,7 +186,13 @@ export function MessageDetails({
               overflowY: "auto",
             }}
           >
-          {withResearcherHeaders(items).map((t, k) => {
+          {(() => {
+            const rows = withResearcherHeaders(items);
+            // tool_call rows render one <ToolIO> that absorbs their paired tool_result; mark the
+            // consumed result so the look-behind below skips re-rendering it as its own row.
+            const consumed = new Set<number>();
+            return rows.map((t, k) => {
+            if (consumed.has(k)) return null;
             if (t.kind === "researcher_header") {
               return (
                 <div key={k} data-testid="details-researcher" style={rowStyle("reasoning")}>
@@ -201,41 +208,60 @@ export function MessageDetails({
               );
             }
             if (t.kind === "tool_call") {
+              // Look ahead for the next tool_result for the same tool and fold it into one ToolIO,
+              // so a call + its result read as a single progressive-disclosure interaction.
+              let result: TraceItem | undefined;
+              for (let j = k + 1; j < rows.length; j++) {
+                const r = rows[j];
+                if ("kind" in r && r.kind === "tool_result" && (r.tool == null || r.tool === t.tool)) {
+                  result = r;
+                  consumed.add(j);
+                  break;
+                }
+              }
+              const host = result && !result.ok ? blockedEgressHost(result.error) : null;
               return (
-                <div key={k} style={rowStyle("tool_call")}>
-                  <Tag color={TRACE.tool}>Tool</Tag> {t.tool}({JSON.stringify(t.args ?? {})})
-                </div>
+                <ToolIO
+                  key={k}
+                  tool={t.tool ?? "tool"}
+                  args={t.args ?? {}}
+                  ok={result ? result.ok ?? false : undefined}
+                  output={result?.output}
+                  error={result?.error}
+                  host={host}
+                  allowed={host ? allowed.has(host) : false}
+                  onAllow={
+                    host && onAllowHost
+                      ? () => {
+                          setAllowed((a) => new Set(a).add(host));
+                          onAllowHost(host);
+                        }
+                      : undefined
+                  }
+                />
               );
             }
             if (t.kind === "tool_result") {
+              // An orphan result (no preceding call, e.g. legacy/partial trace) still renders via ToolIO.
               const host = t.ok ? null : blockedEgressHost(t.error);
               return (
-                <div key={k} style={rowStyle("tool_result", { color: t.ok ? TRACE.ok : TRACE.err })}>
-                  <Tag color={t.ok ? TRACE.ok : TRACE.err}>Result</Tag> {t.tool}:{" "}
-                  {t.ok ? "ok" : `error: ${t.error}`}
-                  {host &&
-                    onAllowHost &&
-                    (allowed.has(host) ? (
-                      <span data-testid="egress-allowed" style={{ color: TRACE.ok }}>
-                        {" "}
-                        — allowed {host}; re-send to use it.
-                      </span>
-                    ) : (
-                      <span style={{ color: "#555" }}>
-                        {" "}
-                        — allow outbound to <strong>{host}</strong> from now on?{" "}
-                        <button
-                          data-testid="egress-allow-btn"
-                          onClick={() => {
-                            setAllowed((a) => new Set(a).add(host));
-                            onAllowHost(host);
-                          }}
-                        >
-                          Allow
-                        </button>
-                      </span>
-                    ))}
-                </div>
+                <ToolIO
+                  key={k}
+                  tool={t.tool ?? "tool"}
+                  ok={t.ok ?? false}
+                  output={t.output}
+                  error={t.error}
+                  host={host}
+                  allowed={host ? allowed.has(host) : false}
+                  onAllow={
+                    host && onAllowHost
+                      ? () => {
+                          setAllowed((a) => new Set(a).add(host));
+                          onAllowHost(host);
+                        }
+                      : undefined
+                  }
+                />
               );
             }
             if (t.kind === "plan") {
@@ -275,7 +301,8 @@ export function MessageDetails({
                 {t.text ? `: ${t.text}` : ""}
               </div>
             );
-          })}
+            });
+          })()}
           </div>
         </div>
       )}

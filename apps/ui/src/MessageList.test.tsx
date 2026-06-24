@@ -50,3 +50,14 @@ test("renders no footer when a message has no usage", () => {
   renderList([{ role: "assistant", content: "x" }]);
   expect(screen.queryByTestId("msg-usage")).toBeNull();
 });
+
+test("user message blocks get a tinted background + left accent border to delimit turns", () => {
+  renderList([
+    { role: "user", content: "hi" },
+    { role: "assistant", content: "hello" },
+  ]);
+  const user = screen.getByTestId("msg-user");
+  // Inline-style tint + accent so each user turn reads as a distinct block.
+  expect(user).toHaveStyle({ background: "#eef3fb" });
+  expect(user).toHaveStyle({ borderLeft: "3px solid #4a90d9" });
+});

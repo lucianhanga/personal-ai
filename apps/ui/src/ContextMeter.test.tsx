@@ -80,6 +80,56 @@ test("shows the context composition breakdown", () => {
   expect(screen.getAllByTestId("context-item")).toHaveLength(2);
 });
 
+test("the composition section collapses and re-expands via the header toggle", () => {
+  localStorage.removeItem("personalai_context_open");
+  render(
+    <ContextMeter
+      usage={null}
+      context={{ items: [{ label: "Documents", count: 4, chars: 1600 }], total_chars: 1600 }}
+    />,
+  );
+  // Default open: breakdown is visible.
+  expect(screen.getByTestId("context-breakdown")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByTestId("context-collapse-toggle"));
+  expect(screen.queryByTestId("context-breakdown")).toBeNull();
+  expect(localStorage.getItem("personalai_context_open")).toBe("0");
+
+  fireEvent.click(screen.getByTestId("context-collapse-toggle"));
+  expect(screen.getByTestId("context-breakdown")).toBeInTheDocument();
+  expect(localStorage.getItem("personalai_context_open")).toBe("1");
+});
+
+test("an accessible explanation popover opens on click of the '?' info button", () => {
+  localStorage.removeItem("personalai_context_open");
+  render(
+    <ContextMeter
+      usage={null}
+      context={{ items: [{ label: "Documents", count: 4, chars: 1600 }], total_chars: 1600 }}
+    />,
+  );
+  expect(screen.queryByTestId("context-expl")).toBeNull();
+  fireEvent.click(screen.getByTestId("context-help-btn"));
+  expect(screen.getByTestId("context-expl")).toHaveTextContent(
+    "Passages retrieved from files you uploaded",
+  );
+  // Toggling off closes it again.
+  fireEvent.click(screen.getByTestId("context-help-btn"));
+  expect(screen.queryByTestId("context-expl")).toBeNull();
+});
+
+test("an unknown source falls back to the generic explanation", () => {
+  localStorage.removeItem("personalai_context_open");
+  render(
+    <ContextMeter
+      usage={null}
+      context={{ items: [{ label: "Grounding", count: 1, chars: 100 }], total_chars: 100 }}
+    />,
+  );
+  fireEvent.click(screen.getByTestId("context-help-btn"));
+  expect(screen.getByTestId("context-expl")).toHaveTextContent("Included in the prompt for this turn.");
+});
+
 test("shows a token overlay when hovering a context category", () => {
   render(
     <ContextMeter

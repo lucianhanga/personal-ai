@@ -67,7 +67,7 @@ export function MessageList({
       {messages.length === 0 && <p style={{ color: "#888" }}>Ask your local model anything.</p>}
       {messages.map((m, i) =>
         m.role === "assistant" ? (
-          <div key={i} data-testid="msg-assistant" style={{ margin: "0.4rem 0" }}>
+          <div key={i} data-testid="msg-assistant" style={{ margin: "0.4rem 0", padding: "0 0.6rem" }}>
             <strong>AI:</strong>
             {/* Read aloud (M9.3) — only once the answer has finished streaming and TTS is enabled. */}
             {ttsEnabled && !(busy && i === messages.length - 1) && (
@@ -96,7 +96,19 @@ export function MessageList({
             <UsageFooter usage={m.meta?.usage} />
           </div>
         ) : (
-          <div key={i} data-testid="msg-user" style={{ margin: "0.4rem 0" }}>
+          <div
+            key={i}
+            data-testid="msg-user"
+            // Tint + left accent so each user turn is a clearly delimited block in the transcript.
+            style={{
+              margin: "0.4rem 0",
+              background: "#eef3fb",
+              color: "#1f2937",
+              borderLeft: "3px solid #4a90d9",
+              borderRadius: 6,
+              padding: "0.5rem 0.6rem",
+            }}
+          >
             <strong>You:</strong> {m.content}
             {m.images && m.images.length > 0 && (
               <div data-testid="msg-images" style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", marginTop: "0.25rem" }}>

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 
 import { MessageDetails } from "./MessageDetails";
 
@@ -89,6 +89,49 @@ test("shows a 'jump to latest' affordance only when the user has scrolled up", (
   // Clicking it returns to the bottom and hides the affordance again.
   fireEvent.click(screen.getByTestId("details-jump"));
   expect(screen.queryByTestId("details-jump")).toBeNull();
+});
+
+test("pairs a tool_call with its tool_result into a single ToolIO (one row per interaction)", () => {
+  render(
+    <MessageDetails
+      defaultOpen
+      trace={[
+        { kind: "tool_call", tool: "web_search", args: { query: "x" } },
+        { kind: "tool_result", tool: "web_search", ok: true, output: { results: [] } },
+      ]}
+    />,
+  );
+  // One ToolIO for the call+result pair, not two separate rows.
+  expect(screen.getAllByTestId("toolio")).toHaveLength(1);
+  const summary = screen.getByTestId("toolio-summary");
+  expect(summary).toHaveTextContent("web_search");
+  expect(screen.getByTestId("toolio-status")).toHaveTextContent("ok");
+  // Expanding reveals the request + response payloads.
+  fireEvent.click(summary);
+  expect(screen.getByTestId("toolio-detail")).toHaveTextContent("Response");
+});
+
+test("an egress-blocked result keeps the Allow affordance inside the ToolIO", () => {
+  const onAllowHost = vi.fn();
+  render(
+    <MessageDetails
+      defaultOpen
+      onAllowHost={onAllowHost}
+      trace={[
+        { kind: "tool_call", tool: "fetch", args: { url: "http://x" } },
+        {
+          kind: "tool_result",
+          tool: "fetch",
+          ok: false,
+          error: "egress blocked: host 'example.com' is not in the egress allowlist",
+        },
+      ]}
+    />,
+  );
+  // The pending egress block auto-expands the ToolIO; the Allow button is visible without a click.
+  fireEvent.click(screen.getByTestId("egress-allow-btn"));
+  expect(onAllowHost).toHaveBeenCalledWith("example.com");
+  expect(screen.getByTestId("egress-allowed")).toHaveTextContent("example.com");
 });
 
 test("renders an ordered trace: reasoning, tool call, more reasoning", () => {
