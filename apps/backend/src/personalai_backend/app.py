@@ -1099,8 +1099,11 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         # Persist the user turn now (if a conversation is targeted and storage is available). Carry
         # the attached images (data-URLs) in meta so they survive a reload (not just the live turn).
         if persist_id is not None and storage is not None and last_user is not None:
+            # Take THIS turn's user images (the last user message), not "the most recent user
+            # message that happens to have images" — otherwise an image-less question inherits an
+            # earlier question's image on reload (#396).
             last_images = next(
-                (list(m.images) for m in reversed(req.messages) if m.role == "user" and m.images),
+                (list(m.images) for m in reversed(req.messages) if m.role == "user"),
                 [],
             )
             await storage.conversations.add_message(
