@@ -977,6 +977,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     yield f"event: citations\ndata: {json.dumps(citations)}\n\n".encode()
                 answer = ""
                 usage: Mapping[str, int] = {}
+                elapsed_ms: int | None = None  # turn wall-clock, set when the answer completes
                 suspended = False  # set if the durable human gate paused the run (no final/persist)
                 # Ordered timeline of reasoning + tool steps, exactly as they happen.
                 trace: list[dict[str, Any]] = []
@@ -1139,11 +1140,25 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 # Persist the assistant turn (with tool/reasoning meta). Also persist when the
                 # answer is empty but tools/reasoning happened, so the trace isn't lost on reload.
                 if persist_id is not None and storage is not None and (answer or trace):
+                    # Persist the turn's usage alongside the trace so per-question/chat token + time
+                    # metrics survive a reload (the same record the live `usage` event carried).
+                    p_tok = usage.get("prompt_tokens")
+                    c_tok = usage.get("completion_tokens")
+                    turn_meta: dict[str, Any] = {
+                        "usage": {
+                            "prompt_tokens": p_tok,
+                            "completion_tokens": c_tok,
+                            "total_tokens": ((p_tok or 0) + (c_tok or 0)) or None,
+                            "elapsed_ms": elapsed_ms,
+                        }
+                    }
+                    if trace:
+                        turn_meta["trace"] = trace
                     await storage.conversations.add_message(
                         conversation_id=persist_id,
                         role="assistant",
                         content=answer,
-                        meta={"trace": trace} if trace else None,
+                        meta=turn_meta,
                     )
                     # Long-term memory: extract durable facts in the BACKGROUND so the stream closes
                     # right after the answer (otherwise this extra LLM call keeps Send disabled).

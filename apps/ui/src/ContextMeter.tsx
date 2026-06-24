@@ -134,24 +134,26 @@ export function ContextMeter({
         </>
       )}
 
-      {/* Per-chat running totals across every turn (tokens + wall-clock time). */}
+      {/* Per-chat running totals across every turn (tokens + wall-clock time), plus the average. */}
       {totals && totals.turns > 0 && (
         <div
           data-testid="chat-totals"
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            marginTop: 4,
-            paddingTop: 4,
-            borderTop: "1px solid rgba(127,127,127,0.2)",
-          }}
+          style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid rgba(127,127,127,0.2)" }}
         >
-          <span style={{ color: "#888" }}>
-            Chat total · {totals.turns} {totals.turns === 1 ? "turn" : "turns"}
-          </span>
-          <span>
-            {fmt(totals.tokens)} tokens · {fmtMs(totals.ms)}
-          </span>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span style={{ color: "#888" }}>
+              Chat total · {totals.turns} {totals.turns === 1 ? "turn" : "turns"}
+            </span>
+            <span>
+              {fmt(totals.tokens)} tokens · {fmtMs(totals.ms)}
+            </span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", color: "#aaa" }}>
+            <span>avg / turn</span>
+            <span>
+              {fmt(Math.round(totals.tokens / totals.turns))} tokens · {fmtMs(totals.ms / totals.turns)}
+            </span>
+          </div>
         </div>
       )}
     </div>
