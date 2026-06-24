@@ -391,6 +391,7 @@ export async function transcribeAudio(
   token: string,
   audio: Blob,
   filename = "recording.webm",
+  signal?: AbortSignal,
 ): Promise<string> {
   const form = new FormData();
   form.append("file", audio, filename);
@@ -399,6 +400,7 @@ export async function transcribeAudio(
     headers: authHeaders(token),
     credentials: CREDS,
     body: form,
+    signal,
   });
   if (!res.ok) throw new Error(`transcribe failed: ${res.status}`);
   const body = (await res.json()) as {

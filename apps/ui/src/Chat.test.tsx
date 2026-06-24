@@ -328,65 +328,119 @@ test("shows a friendly error when mic permission is denied (M9.2f)", async () =>
   );
 });
 
-test("transcribes an uploaded audio file into the composer with a progress indicator (#389)", async () => {
+// Drop an audio file onto the composer dropzone (drag-drop is the only way to add audio now, #406).
+function dropAudio(file: File): void {
+  fireEvent.drop(screen.getByTestId("composer-dropzone"), {
+    dataTransfer: { files: [file], types: ["Files"] },
+  });
+}
+
+test("dropping an audio file creates a transcribing chip that becomes done with a snippet (#406)", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
-  // Defer the resolution so the in-progress indicator is observable, then resolve.
+  // Defer resolution so the transcribing state is observable, then resolve.
   let resolve!: (text: string) => void;
   const transcribe = vi
     .spyOn(api, "transcribeAudio")
     .mockReturnValue(new Promise<string>((r) => (resolve = r)));
 
   render(<Chat token="demo" />);
-  await waitFor(() => expect(screen.getByTestId("audio-file-input")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByTestId("composer-dropzone")).toBeInTheDocument());
 
   const file = new File(["x"], "meeting.mp3", { type: "audio/mpeg" });
-  fireEvent.change(screen.getByTestId("audio-file-input"), { target: { files: [file] } });
+  dropAudio(file);
 
-  // Progress indicator names the file while transcribing.
-  await waitFor(() =>
-    expect(screen.getByTestId("audio-progress")).toHaveTextContent(/transcribing meeting\.mp3/i),
-  );
-  // The real filename is passed through to the backend.
-  expect(transcribe).toHaveBeenCalledWith("demo", file, "meeting.mp3");
+  // A chip appears in the transcribing state.
+  await waitFor(() => {
+    const chip = screen.getByTestId("audio-attachment");
+    expect(chip).toHaveAttribute("data-status", "transcribing");
+    expect(chip).toHaveTextContent(/meeting\.mp3/);
+    expect(chip).toHaveTextContent(/transcribing/i);
+  });
+  // The filename + an AbortSignal are forwarded to the backend.
+  expect(transcribe).toHaveBeenCalledWith("demo", file, "meeting.mp3", expect.any(AbortSignal));
 
   await act(async () => {
-    resolve("the transcript text");
+    resolve("the full transcript of the meeting recording goes on for a while");
   });
 
-  // Transcript lands in the composer, progress clears, and it is NOT auto-sent (no banner).
+  // The chip becomes done with a one-line snippet of the transcript; no auto-send banner.
   await waitFor(() =>
-    expect((screen.getByTestId("composer") as HTMLTextAreaElement).value).toContain(
-      "the transcript text",
-    ),
+    expect(screen.getByTestId("audio-attachment")).toHaveAttribute("data-status", "done"),
   );
-  expect(screen.queryByTestId("audio-progress")).toBeNull();
+  expect(screen.getByTestId("audio-attachment")).toHaveTextContent(/the full transcript/i);
   expect(screen.queryByTestId("autosend-banner")).toBeNull();
 });
 
-test("an empty audio transcript shows a soft no-speech notice (#389)", async () => {
+test("an empty audio transcript yields a no-speech chip (#406)", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
   vi.spyOn(api, "transcribeAudio").mockResolvedValue("");
 
   render(<Chat token="demo" />);
-  await waitFor(() => expect(screen.getByTestId("audio-file-input")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByTestId("composer-dropzone")).toBeInTheDocument());
 
-  const file = new File(["x"], "silent.wav", { type: "audio/wav" });
-  fireEvent.change(screen.getByTestId("audio-file-input"), { target: { files: [file] } });
+  dropAudio(new File(["x"], "silent.wav", { type: "audio/wav" }));
 
-  await waitFor(() =>
-    expect(screen.getByTestId("audio-notice")).toHaveTextContent(/no speech detected/i),
-  );
+  await waitFor(() => {
+    const chip = screen.getByTestId("audio-attachment");
+    expect(chip).toHaveAttribute("data-status", "empty");
+    expect(chip).toHaveTextContent(/no speech/i);
+  });
 });
 
-test("Summarize sends the composer text wrapped in a summarize instruction (#389)", async () => {
+test("a done audio chip opens a transcript panel on focus with a Copy button (#406)", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
+  vi.spyOn(api, "transcribeAudio").mockResolvedValue("hello transcript world");
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("composer-dropzone")).toBeInTheDocument());
+
+  dropAudio(new File(["x"], "talk.mp3", { type: "audio/mpeg" }));
+  await waitFor(() =>
+    expect(screen.getByTestId("audio-attachment")).toHaveAttribute("data-status", "done"),
+  );
+
+  // Panel is closed until the chip is focused.
+  expect(screen.queryByTestId("audio-panel")).toBeNull();
+  fireEvent.focus(screen.getByTestId("audio-attachment"));
+
+  const panel = await screen.findByTestId("audio-panel");
+  expect(panel).toHaveTextContent("hello transcript world");
+  // Copy button is present (reuses the JsonPayload copy pattern).
+  expect(panel.querySelector("[data-testid^='copy-audio-']")).not.toBeNull();
+});
+
+test("removing an audio chip drops it from the row (#406)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
+  vi.spyOn(api, "transcribeAudio").mockResolvedValue("some words");
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("composer-dropzone")).toBeInTheDocument());
+
+  dropAudio(new File(["x"], "clip.mp3", { type: "audio/mpeg" }));
+  await waitFor(() =>
+    expect(screen.getByTestId("audio-attachment")).toHaveAttribute("data-status", "done"),
+  );
+
+  const remove = screen.getByRole("button", { name: /remove clip\.mp3/i });
+  fireEvent.click(remove);
+  await waitFor(() => expect(screen.queryByTestId("audio-attachment")).toBeNull());
+});
+
+test("sending folds the audio transcript into the message content as a labeled block (#406)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
+  vi.spyOn(api, "transcribeAudio").mockResolvedValue("the spoken words");
   const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
-    onDelta("Here is a summary.");
+    onDelta("ok");
   });
 
   render(<Chat token="demo" />);
@@ -394,19 +448,36 @@ test("Summarize sends the composer text wrapped in a summarize instruction (#389
     expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
   );
 
-  fireEvent.change(screen.getByTestId("composer"), { target: { value: "long transcript body" } });
-  fireEvent.click(screen.getByTestId("summarize-send"));
+  dropAudio(new File(["x"], "memo.mp3", { type: "audio/mpeg" }));
+  await waitFor(() =>
+    expect(screen.getByTestId("audio-attachment")).toHaveAttribute("data-status", "done"),
+  );
+
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "please review" } });
+  fireEvent.click(screen.getByTestId("send"));
 
   await waitFor(() => expect(stream).toHaveBeenCalled());
-  const params = stream.mock.calls[0][0] as { messages: api.ChatMessage[] };
-  const last = params.messages[params.messages.length - 1];
+  const sent = stream.mock.calls[0][0].messages;
+  const last = sent[sent.length - 1];
   expect(last.role).toBe("user");
-  expect(last.content).toBe("Summarize the following:\n\nlong transcript body");
-  // The user bubble shows the wrapped content; the composer is cleared like a normal send.
-  await waitFor(() =>
-    expect(screen.getByTestId("msg-user")).toHaveTextContent("Summarize the following:"),
-  );
-  expect((screen.getByTestId("composer") as HTMLTextAreaElement).value).toBe("");
+  expect(last.content).toBe("please review\n\n[Audio: memo.mp3]\nthe spoken words");
+  // The chip row clears after a successful send.
+  await waitFor(() => expect(screen.queryByTestId("audio-attachment")).toBeNull());
+});
+
+test("the old file-picker and Summarize affordances are gone (#406)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("composer-dropzone")).toBeInTheDocument());
+
+  expect(screen.queryByTestId("audio-file-btn")).toBeNull();
+  expect(screen.queryByTestId("audio-file-input")).toBeNull();
+  // Summarize never appears, even with composer text.
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "anything" } });
+  expect(screen.queryByTestId("summarize-send")).toBeNull();
 });
 
 test("attaches an image and sends it with the user message (vision)", async () => {

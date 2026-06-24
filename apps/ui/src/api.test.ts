@@ -129,3 +129,19 @@ test("transcribeAudio defaults the mic filename to recording.webm", async () => 
   const part = (init.body as FormData).get("file") as File;
   expect(part.name).toBe("recording.webm");
 });
+
+test("transcribeAudio forwards an AbortSignal to fetch (#406)", async () => {
+  const fetchMock = vi.fn(async () =>
+    new Response(JSON.stringify({ ok: true, data: { text: "hi" } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+
+  const controller = new AbortController();
+  await transcribeAudio("t", new Blob(["x"], { type: "audio/mp3" }), "clip.mp3", controller.signal);
+
+  const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+  expect(init.signal).toBe(controller.signal);
+});
