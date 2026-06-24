@@ -29,6 +29,7 @@ import {
   type ModelInfo,
   type TenantSettings,
   type TraceItem,
+  type TurnUsage,
   type UsageInfo,
 } from "./api";
 import { ChatsPanel } from "./ChatsPanel";
@@ -90,10 +91,25 @@ const EMPTY_CHAT: ChatState = {
   pending: null,
 };
 
-/** Set the latest turn's usage and fold it into the per-chat running totals. */
+/** Set the latest turn's usage, attach it to its assistant message (for the per-message footer),
+ * and fold it into the per-chat running totals. */
 function withUsage(s: ChatState, u: UsageInfo): ChatState {
+  const turn: TurnUsage = {
+    prompt_tokens: u.prompt_tokens,
+    completion_tokens: u.completion_tokens,
+    total_tokens: u.total_tokens,
+    elapsed_ms: u.elapsed_ms,
+  };
+  const messages = s.messages.slice();
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "assistant") {
+      messages[i] = { ...messages[i], meta: { ...messages[i].meta, usage: turn } };
+      break;
+    }
+  }
   return {
     ...s,
+    messages,
     usage: u,
     totals: {
       tokens: s.totals.tokens + (u.total_tokens ?? 0),
@@ -330,11 +346,23 @@ export function Chat({
     if (chats[id]?.busy) return;
     try {
       const conv = await fetchConversation(token, id);
+      // Rebuild the per-chat token/time totals from each persisted turn's usage, so they survive a
+      // reload (and show the last turn in the meter).
+      const totals = { tokens: 0, ms: 0, turns: 0 };
+      let lastUsage: UsageInfo | null = null;
+      for (const m of conv.messages) {
+        const u = m.role === "assistant" ? m.meta?.usage : undefined;
+        if (!u) continue;
+        totals.tokens += u.total_tokens ?? 0;
+        totals.ms += u.elapsed_ms ?? 0;
+        totals.turns += 1;
+        lastUsage = { ...u, context_limit: null }; // window % is only known live, not on reload
+      }
       // If the chat started streaming while we were loading, keep its live state (don't clobber).
       setChats((prev) =>
         prev[id]?.busy
           ? prev
-          : { ...prev, [id]: { ...EMPTY_CHAT, messages: conv.messages, usage: prev[id]?.usage ?? null } },
+          : { ...prev, [id]: { ...EMPTY_CHAT, messages: conv.messages, totals, usage: lastUsage } },
       );
     } catch (e: unknown) {
       setError(String(e));

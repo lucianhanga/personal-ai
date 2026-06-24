@@ -41,9 +41,19 @@ export interface ApprovalRequest {
   critique?: string;
 }
 
+// Per-assistant-turn token + time metrics, persisted so they survive a reload.
+export interface TurnUsage {
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  total_tokens: number | null;
+  elapsed_ms: number | null;
+}
+
 export interface MessageMeta {
   // Ordered timeline of reasoning + tool steps (new format).
   trace?: TraceItem[];
+  // Token + time metrics for this turn (shown as a per-message footer; summed into chat totals).
+  usage?: TurnUsage;
   // Legacy (pre-ordered-trace) fields, kept for older persisted messages.
   tool_steps?: ToolStep[];
   thinking?: string;

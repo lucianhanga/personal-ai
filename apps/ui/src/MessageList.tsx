@@ -1,7 +1,32 @@
-import type { ChatMessage, Citation, TraceItem } from "./api";
+import type { ChatMessage, Citation, TraceItem, TurnUsage } from "./api";
 import { Markdown } from "./Markdown";
 import { MessageDetails } from "./MessageDetails";
 import { ReadAloudButton } from "./ReadAloudButton";
+
+const fmtMs = (ms: number): string =>
+  ms < 1000
+    ? `${Math.round(ms)} ms`
+    : ms < 60000
+      ? `${(ms / 1000).toFixed(1)} s`
+      : `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+// Compact in the dense footer (6.0k at >=10k); the full split is in the hover title.
+const compactTok = (n: number): string => (n >= 10000 ? `${(n / 1000).toFixed(1)}k` : n.toLocaleString());
+
+/** A subtle per-turn metrics footer under an assistant message: tokens + time, full split on hover. */
+function UsageFooter({ usage }: { usage?: TurnUsage }): React.ReactElement | null {
+  if (!usage || (usage.total_tokens == null && usage.elapsed_ms == null)) return null;
+  const title =
+    `${usage.prompt_tokens ?? "?"} prompt + ${usage.completion_tokens ?? "?"} reply ` +
+    `= ${usage.total_tokens ?? "?"} tokens` +
+    (usage.elapsed_ms != null ? ` in ${fmtMs(usage.elapsed_ms)}` : "");
+  return (
+    <div data-testid="msg-usage" title={title} style={{ fontSize: "0.7rem", color: "#999", marginTop: 2 }}>
+      {usage.total_tokens != null && <>{compactTok(usage.total_tokens)} tok</>}
+      {usage.total_tokens != null && usage.elapsed_ms != null && " · "}
+      {usage.elapsed_ms != null && <>{fmtMs(usage.elapsed_ms)}</>}
+    </div>
+  );
+}
 
 interface MessageListProps {
   messages: ChatMessage[];
@@ -68,6 +93,7 @@ export function MessageList({
                   .join("   ")}
               </div>
             ) : null}
+            <UsageFooter usage={m.meta?.usage} />
           </div>
         ) : (
           <div key={i} data-testid="msg-user" style={{ margin: "0.4rem 0" }}>
