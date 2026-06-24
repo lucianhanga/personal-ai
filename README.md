@@ -17,16 +17,25 @@ PersonalAI is **extensible** (tools + MCP), **structured-output-first** (schemas
 **open-source-first** (verified provenance only), and **security-first** (zero-trust toward
 tools, files, prompts, model outputs, and MCP servers).
 
-**Current state:** the core product works end to end — streaming chat over local or remote models,
-chat-with-your-documents (RAG with citations), long-term memory, a security-first tool/MCP gateway,
-single- or multi-agent modes with durable human-in-the-loop gates, and always-on multi-tenancy,
-behind a two-view UI with a transparency panel. Milestones **M0–M9** have shipped — including
-**M9 Multimodal** (vision · speech-to-text · text-to-speech); the most recent work, **M8.3**, added
-the blocking egress-approval gate and the transparency panel. The MV3 browser extension (M10) is next.
+**Current state:** the core product works end to end. Milestones **M0–M9** have shipped (latest:
+**M8.3** — the blocking egress gate + transparency panel); the MV3 browser extension (**M10**) is next.
+
+What it does today:
+
+- **Streaming chat** over local Ollama or remote OpenAI-compatible models.
+- **Chat with your documents** — pgvector RAG with inline citations.
+- **Memory** you control — long-term + short-term, viewable / editable / erasable.
+- **Tool / MCP gateway**, security-first — permissions, egress allowlist, append-only audit.
+- **Single- or multi-agent** modes (planner → researcher → critic) with durable
+  **human-in-the-loop gates** (answer-approval + blocking egress-approval).
+- **Transparency panel** — activity timeline plus per-question context and token/time metrics.
+- **Always-on multi-tenancy** (Postgres RLS) — local zero-login or hosted login + CSRF.
+
+Learn more:
 
 - **What's new / full history:** [CHANGELOG](./CHANGELOG.md)
 - **Roadmap:** [§22 Modular Implementation Roadmap](./docs/architecture/PersonalAI-Architecture-Research.md#22-modular-implementation-roadmap)
-- **Learn how it works:** the [How it works](#how-it-works) section below, then the
+- **How it works:** the [How it works](#how-it-works) section below, then the
   [Documentation](#documentation) table.
 
 ## Quickstart (local chat)
