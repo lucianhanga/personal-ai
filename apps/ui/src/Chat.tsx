@@ -1307,9 +1307,13 @@ export function Chat({
           <SidePanel
             token={token}
             conversationId={activeId}
+            messages={messages}
+            trace={trace}
             usage={usage}
             totals={totals}
             context={context}
+            busy={busy}
+            onAllowHost={(host) => void onAllowHost(host)}
             collapsed={sidebarCollapsed}
             setCollapsed={setSidebarCollapsed}
             showLog={showLog}

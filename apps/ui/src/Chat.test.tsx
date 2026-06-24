@@ -476,11 +476,13 @@ test("offers to allow an egress-blocked host inline in the reasoning pane", asyn
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "weather?" } });
   fireEvent.click(screen.getByTestId("send"));
 
-  // The allow prompt is inline in the reasoning pane (Details, open while the turn streams).
-  const btn = await screen.findByTestId("egress-allow-btn");
-  fireEvent.click(btn);
+  // The allow prompt is inline in the reasoning pane (Details, open while the turn streams). The
+  // same blocked tool also surfaces in the side-panel timeline, so there can be more than one Allow
+  // button — clicking either triggers the same allow-on-deny flow.
+  const btns = await screen.findAllByTestId("egress-allow-btn");
+  fireEvent.click(btns[0]);
   await waitFor(() => expect(allow).toHaveBeenCalledWith("demo", "api.open-meteo.com"));
-  await waitFor(() => expect(screen.getByTestId("egress-allowed")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getAllByTestId("egress-allowed").length).toBeGreaterThan(0));
 });
 
 test("renders citations returned with a RAG answer", async () => {

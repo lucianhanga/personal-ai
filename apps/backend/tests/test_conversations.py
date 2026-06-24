@@ -160,6 +160,8 @@ def test_chat_persists_turns() -> None:
         roles = [m["role"] for m in msgs]
         assert "user" in roles and "assistant" in roles
         assert any(m["content"] == "remember this" for m in msgs)
+        # Each message carries an ISO timestamp (the activity timeline shows relative time).
+        assert all(isinstance(m["created_at"], str) and m["created_at"] for m in msgs)
 
 
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
