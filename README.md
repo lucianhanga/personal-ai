@@ -40,6 +40,17 @@ Learn more:
 
 ## Quickstart (local chat)
 
+**One command (easiest).** From a fresh clone, `make dev` checks your tooling, installs deps,
+starts the database, and runs the backend + UI together with prefixed logs (Ctrl-C stops
+everything; the DB container keeps running). Use `scripts/bootstrap.sh --no-run` to set up without
+launching, or `scripts/bootstrap.sh --help` for options. macOS and Linux (use WSL2 on Windows).
+
+```bash
+make dev                     # deps check + install + db + backend + UI, in one command
+```
+
+**Or run each step yourself** (the explicit path `make dev` automates):
+
 ```bash
 make setup
 make db                      # local Postgres + pgvector (docker compose)
