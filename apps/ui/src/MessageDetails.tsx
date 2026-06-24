@@ -23,6 +23,7 @@ const TRACE_BG: Record<string, string> = {
   tool_call: "#f6f0fe", // tool (violet)
   tool_result: "#f6f0fe",
   verification: AGENT_BG.planner,
+  draft: "#fff7d6", // a highlighter-style tint so the proposed (draft) answer stands out (#393)
 };
 
 function rowStyle(kind: string, extra?: React.CSSProperties): React.CSSProperties {
@@ -44,7 +45,7 @@ function Tag({ color, children }: { color: string; children: React.ReactNode }):
 // The researcher produces these step kinds; a new researcher block starts when one of them follows
 // another agent's step (planner/critic/verifier). Used to label the researcher's block like the
 // other agents (it only appears in the multi-agent graph, where those boundary steps exist).
-const RESEARCHER_KINDS = new Set(["reasoning", "tool_call", "tool_result"]);
+const RESEARCHER_KINDS = new Set(["reasoning", "tool_call", "tool_result", "draft"]);
 const AGENT_BLOCK_KINDS = new Set(["plan", "critique", "verification"]);
 
 /** Insert a synthetic "researcher header" marker before each researcher block (multi-agent only). */
@@ -191,6 +192,15 @@ export function MessageDetails({
             // tool_call rows render one <ToolIO> that absorbs their paired tool_result; mark the
             // consumed result so the look-behind below skips re-rendering it as its own row.
             const consumed = new Set<number>();
+            // The last `draft` is the current proposal; earlier ones were superseded by a revise
+            // loop and render dimmed (#393).
+            let lastDraftIdx = -1;
+            for (let j = rows.length - 1; j >= 0; j--) {
+              if (rows[j].kind === "draft") {
+                lastDraftIdx = j;
+                break;
+              }
+            }
             return rows.map((t, k) => {
             if (consumed.has(k)) return null;
             if (t.kind === "researcher_header") {
@@ -276,6 +286,26 @@ export function MessageDetails({
                 <div key={k} data-testid="details-critique" style={rowStyle("critique")}>
                   <Tag color={TRACE.critic}>Critic</Tag>
                   {t.role ? ` (${t.role})` : ""}: {t.text}
+                </div>
+              );
+            }
+            if (t.kind === "draft") {
+              // The researcher's proposed answer, highlighted in the reasoning pane (#393). The
+              // accepted answer is written to the output bubble by finalize; superseded drafts dim.
+              const superseded = k !== lastDraftIdx;
+              const label = `Draft answer${t.attempt && t.attempt > 1 ? ` · attempt ${t.attempt}` : ""}`;
+              return (
+                <div
+                  key={k}
+                  data-testid="details-draft"
+                  style={rowStyle("draft", {
+                    borderLeft: `3px solid ${TRACE.researcher}`,
+                    opacity: superseded ? 0.5 : 1,
+                  })}
+                >
+                  <Tag color={TRACE.researcher}>{label}</Tag>
+                  {superseded ? " (superseded)" : ""}
+                  {t.text ? `: ${t.text}` : ""}
                 </div>
               );
             }

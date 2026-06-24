@@ -297,6 +297,12 @@ def _build_graph(
                 evidence.append(
                     f"[{ev.tool}] {json.dumps(dict(ev.output), ensure_ascii=False)[:1500]}"
                 )
+            # Do NOT forward the researcher's `answer` deltas to the stream (#393): the draft is a
+            # reasoning-pane artifact, not the output bubble. We emit it once as a `draft` event
+            # after the loop (below); only finalize's `answer` fills the output. Reasoning + tool
+            # steps are still forwarded.
+            if ev.type == "answer":
+                return
             writer(ev)
 
         async def _drive(agent_iter: AsyncIterator[AgentEvent]) -> AgentEvent | None:
@@ -388,11 +394,18 @@ def _build_graph(
             # error) without interrupting (interrupt() requires a checkpointer).
             agent_iter = _resume_iter(frame_state)
 
+        attempt = state.get("attempts", 0) + 1
+        # Emit the completed draft once, into the reasoning pane (NOT the output bubble) — labeled
+        # by attempt so each revise-loop pass shows as its own highlighted draft (#393). This runs
+        # only after the drive loop completes (an egress block returns above, before here), so a
+        # resumed egress turn emits exactly one draft per completed researcher pass.
+        if answer:
+            writer(AgentEvent(type="draft", answer=answer, attempt=attempt))
         return {
             "answer": answer,
             "usage": usage,
             "evidence": evidence,
-            "attempts": state.get("attempts", 0) + 1,
+            "attempts": attempt,
             "egress_pending": None,
             "egress_decision": "",
         }
@@ -475,9 +488,14 @@ def _build_graph(
         return {"decision": str(decision)}
 
     async def finalize(state: GraphState) -> dict[str, Any]:
-        get_stream_writer()(
-            AgentEvent(type="final", answer=state.get("answer", ""), usage=state.get("usage", {}))
-        )
+        writer = get_stream_writer()
+        answer = state.get("answer", "")
+        # The OUTPUT bubble fills ONLY here (#393): emit the accepted answer as a single `answer`
+        # event (reusing the existing answer->delta->bubble path) BEFORE the terminal `final`. The
+        # researcher's drafts went to the reasoning pane, never the bubble.
+        if answer:
+            writer(AgentEvent(type="answer", answer=answer))
+        writer(AgentEvent(type="final", answer=answer, usage=state.get("usage", {})))
         return {}
 
     builder = StateGraph(GraphState)

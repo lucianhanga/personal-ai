@@ -748,6 +748,22 @@ export function Chat({
               }),
             },
           })),
+        // The researcher's draft answer -> reasoning pane (#393), NOT the output bubble. Only
+        // finalize's accepted answer fills the bubble (via onDelta), so a rejected draft never
+        // appears in the output and the revision loop stays in the reasoning trace.
+        (step) =>
+          patchChat(key, (s) => ({
+            ...s,
+            trace: {
+              ...s.trace,
+              [assistantIndex]: appendTrace(s.trace[assistantIndex], {
+                kind: "draft",
+                text: step.text,
+                attempt: step.attempt,
+                ts: step.ts,
+              }),
+            },
+          })),
       );
       if (persistence) setConversations(await fetchConversations(token));
     } catch (e: unknown) {
@@ -1022,8 +1038,23 @@ export function Chat({
                   fontSize: "0.85rem",
                 }}
               >
-                <strong>Approval needed</strong> — review the proposed answer above before it is
-                finalized.
+                <strong>Approval needed</strong> — review the proposed answer before it is finalized.
+                {/* The proposed (draft) answer lives in the reasoning trace, not the output bubble
+                    (#393); show it here from the gate payload so the reviewer can see it. */}
+                {pending.answer ? (
+                  <div
+                    data-testid="approval-answer"
+                    style={{
+                      margin: "0.35rem 0",
+                      padding: "0.4rem 0.55rem",
+                      background: "rgba(127,127,127,0.08)",
+                      borderRadius: 4,
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    {pending.answer}
+                  </div>
+                ) : null}
                 {pending.critique ? (
                   <p style={{ margin: "0.35rem 0", color: "#555" }}>Critique: {pending.critique}</p>
                 ) : null}

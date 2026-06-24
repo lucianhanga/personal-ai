@@ -533,7 +533,7 @@ test("shows conversations and lazily creates one on first send", async () => {
   await waitFor(() =>
     expect(stream).toHaveBeenCalledWith(
       expect.objectContaining({ conversationId: "c2" }),
-      ...Array(10).fill(expect.any(Function)),
+      ...Array(11).fill(expect.any(Function)),
     ),
   );
 });
@@ -699,7 +699,7 @@ test("the chosen reasoning amount is sent to the chat request", async () => {
   await waitFor(() =>
     expect(stream).toHaveBeenCalledWith(
       expect.objectContaining({ reasoning: "brief", think: true }),
-      ...Array(10).fill(expect.any(Function)),
+      ...Array(11).fill(expect.any(Function)),
     ),
   );
 
@@ -710,7 +710,7 @@ test("the chosen reasoning amount is sent to the chat request", async () => {
   await waitFor(() =>
     expect(stream).toHaveBeenCalledWith(
       expect.objectContaining({ reasoning: "off", think: false }),
-      ...Array(10).fill(expect.any(Function)),
+      ...Array(11).fill(expect.any(Function)),
     ),
   );
 });
@@ -791,13 +791,37 @@ test("opens a past conversation and loads its messages", async () => {
   expect(screen.getByTestId("msg-assistant")).toHaveTextContent("earlier answer");
 });
 
+test("a draft answer goes to the reasoning trace, not the output bubble (#393)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "streamChat").mockImplementation(
+    async (_p, onDelta, _c, _t, _u, _th, _e, _ap, _as, _ctx, _v, onDraft) => {
+      onDraft?.({ text: "DRAFT_TEXT", attempt: 1 }); // researcher draft -> reasoning pane
+      onDelta("FINAL_TEXT"); // finalize -> output bubble
+    },
+  );
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "hi" } });
+  fireEvent.click(screen.getByTestId("send"));
+
+  // The output bubble shows the finalized answer.
+  await waitFor(() => expect(screen.getByText("FINAL_TEXT")).toBeInTheDocument());
+  // The draft lives ONLY in the reasoning Details (auto-open while streaming), not the bubble:
+  // its text appears exactly once, inside the draft row.
+  expect(screen.getByTestId("details-draft")).toHaveTextContent("DRAFT_TEXT");
+  expect(screen.getAllByText(/DRAFT_TEXT/)).toHaveLength(1);
+});
+
 test("durable human gate: shows approve/reject and resumes on approve", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
-  // The turn streams a draft answer then suspends at the human gate (approval_request).
+  // The turn suspends at the human gate (approval_request). Per #393 the draft answer is NOT
+  // streamed to the output bubble; it's carried in the approval payload and shown in the gate.
   vi.spyOn(api, "streamChat").mockImplementation(
-    async (_p, onDelta, _onCit, _onTool, _onUsage, _onThink, _onError, onApproval) => {
-      onDelta("draft answer");
+    async (_p, _onDelta, _onCit, _onTool, _onUsage, _onThink, _onError, onApproval) => {
       onApproval?.({ run_id: "r1", answer: "draft answer", critique: "looks ok" });
     },
   );

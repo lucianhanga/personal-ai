@@ -42,6 +42,44 @@ def test_run_turn_streams_answer_then_a_single_final() -> None:
     assert sum(1 for e in events if e.kind == "final") == 1
     answer = "".join(e.text for e in events if e.kind == "answer")
     assert "echo:" in answer  # FakeModelProvider echoes the prompt across answer events
+    # Single-agent streams the answer to the output (no `draft`) — #393 is multi-agent only.
+    assert all(e.kind != "draft" for e in events)
+
+
+def _multi_events() -> list[TurnEvent]:
+    gen = GenerationRequest(messages=[ChatMessage(Role.USER, "hi there")], model="fake")
+
+    async def _run() -> list[TurnEvent]:
+        return [
+            ev
+            async for ev in run_turn(
+                generation=gen,
+                provider=FakeModelProvider(name="fake"),
+                use_tools=True,  # the graph path is taken only on the tool path
+                approve_tools=False,
+                tools=[],
+                grants=[],
+                gateway=None,
+                max_iterations=8,
+                graph_enabled=True,
+            )
+        ]
+
+    return asyncio.run(_run())
+
+
+def test_multi_agent_draft_to_trace_output_answer_from_finalize() -> None:
+    # #393: in multi-agent mode the researcher's answer is a `draft` (reasoning pane); the OUTPUT
+    # answer is emitted by finalize. So the stream carries a `draft`, ends in one `final`, and the
+    # joined output `answer` equals the accepted draft.
+    events = _multi_events()
+    kinds = [e.kind for e in events]
+    assert "draft" in kinds
+    assert kinds[-1] == "final"
+    drafts = [e for e in events if e.kind == "draft"]
+    assert drafts and drafts[0].attempt == 1
+    answer = "".join(e.text for e in events if e.kind == "answer")
+    assert answer and answer == drafts[-1].text  # output answer == the accepted draft
 
 
 class _RecordingProvider(FakeModelProvider):

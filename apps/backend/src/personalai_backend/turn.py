@@ -47,6 +47,7 @@ class TurnEvent:
         "critique",
         "verification",
         "approval_request",
+        "draft",
     ]
     text: str = ""
     phase: str = ""  # "call" | "result" for tool events
@@ -57,6 +58,7 @@ class TurnEvent:
     error: str | None = None
     usage: Mapping[str, int] | None = None
     verdict: str | None = None  # verification outcome (pass/needs_revision/fail) — M8.2
+    attempt: int | None = None  # which researcher pass produced a `draft` (#393)
 
 
 async def run_turn(
@@ -131,6 +133,9 @@ async def run_turn(
                 yield TurnEvent("critique", text=ev.text or "")
             elif ev.type == "verification":
                 yield TurnEvent("verification", text=ev.text or "", verdict=ev.verdict)
+            elif ev.type == "draft":
+                # The researcher's draft answer -> reasoning pane, not the output bubble (#393).
+                yield TurnEvent("draft", text=ev.answer or "", attempt=ev.attempt)
             elif ev.type == "approval_request":
                 yield TurnEvent("approval_request", output=ev.output or {})
             elif ev.type == "final":

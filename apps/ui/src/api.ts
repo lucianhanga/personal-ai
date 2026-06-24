@@ -22,7 +22,7 @@ export interface ModelInfo {
 // tool_result; M8 (ADR-0011) adds multi-agent + verification kinds (plan/critique/verification). The
 // UI renders unknown kinds generically, so adding kinds server-side never breaks an older client.
 export interface TraceItem {
-  kind: "reasoning" | "tool_call" | "tool_result" | "plan" | "critique" | "verification";
+  kind: "reasoning" | "tool_call" | "tool_result" | "plan" | "critique" | "verification" | "draft";
   text?: string;
   role?: string | null; // which agent produced it (researcher/critic/verifier) — M8
   verdict?: string | null; // verification outcome (e.g. "pass"/"fail"/"needs-revision") — M8
@@ -32,6 +32,7 @@ export interface TraceItem {
   output?: Record<string, unknown> | null;
   error?: string | null;
   ts?: string; // wall-clock UTC ISO when this step happened (per-step time in the activity timeline)
+  attempt?: number; // which researcher pass produced a `draft` answer (#393)
 }
 
 /** A durable human-gate approval request (M8.1c): the run is suspended until POST .../resume.
@@ -844,6 +845,7 @@ export async function streamChat(
   onAgentStep?: (step: { kind: "plan" | "critique"; text: string; ts?: string }) => void,
   onContext?: (context: ContextBreakdown) => void,
   onVerification?: (step: { text: string; verdict?: string; ts?: string }) => void,
+  onDraft?: (step: { text: string; attempt?: number; ts?: string }) => void,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/chat`, {
     method: "POST",
@@ -885,6 +887,10 @@ export async function streamChat(
     if (event === "verification") {
       const v = parsed as { text?: string; verdict?: string; ts?: string };
       return onVerification?.({ text: v.text ?? "", verdict: v.verdict, ts: v.ts });
+    }
+    if (event === "draft") {
+      const d = parsed as { text?: string; attempt?: number; ts?: string };
+      return onDraft?.({ text: d.text ?? "", attempt: d.attempt, ts: d.ts });
     }
     if (event === "usage") return onUsage?.(parsed as UsageInfo);
     if (event === "approval_request") return onApproval?.(parsed as ApprovalRequest);

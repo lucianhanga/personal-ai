@@ -478,6 +478,17 @@ class _TurnSse:
             }
             self.trace.append(item)
             return f"event: verification\ndata: {json.dumps(item)}\n\n".encode()
+        if ev.kind == "draft":
+            # The researcher's draft answer -> reasoning pane (#393). Trace-only; MUST NOT touch
+            # self.answer (only finalize's `answer` fills the bubble + the persisted answer).
+            item = {
+                "kind": "draft",
+                "text": ev.text,
+                "attempt": ev.attempt,
+                "ts": self._now(),
+            }
+            self.trace.append(item)
+            return f"event: draft\ndata: {json.dumps(item)}\n\n".encode()
         if ev.kind == "approval_request":
             # The run is durably checkpointed; surface the (whitelisted) request with the run_id.
             self.suspended = True
@@ -1538,6 +1549,10 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                         trace.append(
                             {"kind": "verification", "text": ev.text, "verdict": ev.verdict}
                         )
+                    elif ev.kind == "draft":
+                        # Draft answer -> reasoning trace only; the final answer comes from `answer`
+                        # events emitted by finalize (#393), so don't fold drafts into `answer`.
+                        trace.append({"kind": "draft", "text": ev.text, "attempt": ev.attempt})
                     else:  # final
                         if ev.usage:
                             usage = ev.usage
