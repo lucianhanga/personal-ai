@@ -54,6 +54,10 @@ _ENV_FIELDS = {
     "TRANSCRIBE_BASE_URL": "transcribe_base_url",
     "TRANSCRIBE_API_KEY": "transcribe_api_key",  # pragma: allowlist secret  (env var name)
     "TTS_ENABLED": "tts_enabled",
+    "WEB_SEARCH_PROVIDER": "web_search_provider",
+    "WEB_SEARCH_BASE_URL": "web_search_base_url",
+    "WEB_SEARCH_API_KEY": "web_search_api_key",  # pragma: allowlist secret  (env var name)
+    "WEB_SEARCH_MAX_RESULTS": "web_search_max_results",
     "DATABASE_URL": "database_url",
     "DB_POOL_MAX_SIZE": "db_pool_max_size",
     "EMBED_PROVIDER": "embed_provider",
@@ -83,6 +87,7 @@ _INT_FIELDS = {
     "agent_timeout_seconds",
     "session_idle_seconds",
     "session_absolute_seconds",
+    "web_search_max_results",
 }
 _FLOAT_FIELDS = {"ollama_temperature", "ollama_top_p"}
 _BOOL_FIELDS = {
@@ -228,6 +233,25 @@ class CoreConfig(StrictModel):
     # Text-to-speech (M9.3): read assistant answers aloud. Slice 1 uses the browser's built-in
     # speech synthesis (client-side, zero-setup); this flag just gates the read-aloud control.
     tts_enabled: bool = Field(default=True, description="Enable reading answers aloud (TTS).")
+    # Web search provider (#395): the built-in web_search tool's backend.
+    #   "duckduckgo" = zero-setup HTML scrape, no key, egress html.duckduckgo.com (the default, so
+    #     existing users are unaffected);
+    #   "searxng" = a self-hosted SearXNG JSON instance (needs web_search_base_url; local-first —
+    #     a loopback instance works with egress disabled);
+    #   "tavily" = the Tavily search API (needs web_search_api_key + egress api.tavily.com).
+    # A provider whose required setting is missing falls back to DuckDuckGo (logged), never crashes.
+    web_search_provider: str = Field(
+        default="duckduckgo", description="duckduckgo | searxng | tavily"
+    )
+    web_search_base_url: str | None = Field(
+        default=None, description="SearXNG instance base URL (e.g. http://127.0.0.1:8888)."
+    )
+    web_search_api_key: str | None = Field(
+        default=None, description="Tavily API key (secret); required for the tavily provider."
+    )
+    web_search_max_results: int = Field(
+        default=5, description="Default number of web_search results (the tool caps it at 10)."
+    )
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> CoreConfig:

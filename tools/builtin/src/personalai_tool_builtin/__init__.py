@@ -10,7 +10,15 @@ from personalai_tool_builtin.memory_edit import (
     UpdateMemoryTool,
 )
 from personalai_tool_builtin.remember import REMEMBER_MANIFEST, RememberTool, SaveMemory
-from personalai_tool_builtin.web_search import WEB_SEARCH_MANIFEST, WebSearch
+from personalai_tool_builtin.web_search import (
+    WEB_SEARCH_MANIFEST,
+    DuckDuckGoSearch,
+    SearxngSearch,
+    TavilySearch,
+    WebSearch,
+    WebSearchProvider,
+    web_search_manifest,
+)
 
 __all__ = [
     "CALCULATOR_MANIFEST",
@@ -20,12 +28,17 @@ __all__ = [
     "UPDATE_MEMORY_MANIFEST",
     "WEB_SEARCH_MANIFEST",
     "Calculator",
+    "DuckDuckGoSearch",
     "EgressAllowed",
     "EmbedText",
     "ForgetMemoryTool",
     "HttpFetch",
     "RememberTool",
     "SaveMemory",
+    "SearxngSearch",
+    "TavilySearch",
     "UpdateMemoryTool",
     "WebSearch",
+    "WebSearchProvider",
+    "web_search_manifest",
 ]

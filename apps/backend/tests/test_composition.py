@@ -21,3 +21,39 @@ def test_registered_adapters_resolve_by_name() -> None:
     boot.registries.retrievers.register("fake", FakeRetriever([]))
     assert boot.registries.model_providers.get("fake").name == "fake"
     assert "fake" in boot.registries.retrievers
+
+
+def test_web_search_defaults_to_duckduckgo_egress() -> None:
+    # Default config: zero-setup DuckDuckGo, egress pinned to its host (#395 backward-compat).
+    boot = bootstrap(config=CoreConfig())
+    manifest = boot.registries.tools.get("web_search").manifest
+    assert manifest.egress == ("html.duckduckgo.com",)
+
+
+def test_web_search_searxng_without_base_url_falls_back_to_ddg() -> None:
+    # A misconfigured provider degrades to DuckDuckGo instead of crashing the boot.
+    boot = bootstrap(config=CoreConfig(web_search_provider="searxng"))
+    manifest = boot.registries.tools.get("web_search").manifest
+    assert manifest.egress == ("html.duckduckgo.com",)
+
+
+def test_web_search_searxng_with_base_url_pins_its_host() -> None:
+    boot = bootstrap(
+        config=CoreConfig(
+            web_search_provider="searxng", web_search_base_url="http://127.0.0.1:8888"
+        )
+    )
+    manifest = boot.registries.tools.get("web_search").manifest
+    assert manifest.egress == ("127.0.0.1",)
+    assert manifest.permissions[0].scope == "127.0.0.1"
+
+
+def test_web_search_tavily_with_key_pins_api_host() -> None:
+    boot = bootstrap(
+        config=CoreConfig(
+            web_search_provider="tavily",
+            web_search_api_key="tvly-secret",  # pragma: allowlist secret
+        )
+    )
+    manifest = boot.registries.tools.get("web_search").manifest
+    assert manifest.egress == ("api.tavily.com",)

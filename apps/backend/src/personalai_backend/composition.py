@@ -7,10 +7,12 @@ New capabilities are added here as new adapters behind existing ports, without c
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from personalai_core import CoreConfig, InProcessExecutor, Registries, ToolGateway
 from personalai_core.security import (
@@ -19,6 +21,11 @@ from personalai_core.security import (
     assert_egress_allowed,
     effective_egress_config,
 )
+
+if TYPE_CHECKING:
+    from personalai_tool_builtin import WebSearchProvider
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -29,6 +36,38 @@ class Bootstrap:
     config: CoreConfig
     gateway: ToolGateway
     audit: AuditLog
+
+
+def _build_web_search_provider(config: CoreConfig) -> WebSearchProvider:
+    """Select the web_search backend from config (#395), falling back to DuckDuckGo when a required
+    setting is missing (logged, never crashes) so a misconfigured provider degrades gracefully.
+
+    - ``searxng`` requires ``web_search_base_url`` (a self-hosted instance);
+    - ``tavily`` requires ``web_search_api_key``;
+    - anything else (incl. the default) is zero-setup DuckDuckGo.
+    """
+    from personalai_tool_builtin import DuckDuckGoSearch, SearxngSearch, TavilySearch
+
+    provider = (config.web_search_provider or "duckduckgo").strip().lower()
+    if provider == "searxng":
+        if config.web_search_base_url:
+            return SearxngSearch(config.web_search_base_url)
+        logger.warning(
+            "web_search provider 'searxng' selected but PERSONALAI_WEB_SEARCH_BASE_URL is unset; "
+            "falling back to DuckDuckGo."
+        )
+        return DuckDuckGoSearch()
+    if provider == "tavily":
+        if config.web_search_api_key:
+            return TavilySearch(config.web_search_api_key)
+        logger.warning(
+            "web_search provider 'tavily' selected but PERSONALAI_WEB_SEARCH_API_KEY is unset; "
+            "falling back to DuckDuckGo."
+        )
+        return DuckDuckGoSearch()
+    if provider != "duckduckgo":
+        logger.warning("unknown web_search provider %r; falling back to DuckDuckGo.", provider)
+    return DuckDuckGoSearch()
 
 
 def register_adapters(registries: Registries, config: CoreConfig) -> None:
@@ -79,15 +118,24 @@ def register_adapters(registries: Registries, config: CoreConfig) -> None:
     from personalai_tool_builtin import (
         CALCULATOR_MANIFEST,
         HTTP_FETCH_MANIFEST,
-        WEB_SEARCH_MANIFEST,
         Calculator,
         HttpFetch,
         WebSearch,
+        web_search_manifest,
     )
 
     registries.tools.register("calculator", RegisteredTool(CALCULATOR_MANIFEST, Calculator()))
-    # web_search declares a static egress host, so the gateway enforces the egress allowlist for it.
-    registries.tools.register("web_search", RegisteredTool(WEB_SEARCH_MANIFEST, WebSearch()))
+    # web_search: select the provider from config, then build the manifest with the ACTIVE
+    # provider's egress host so the gateway enforces the allowlist against the host actually
+    # contacted (the gateway iterates manifest.egress).
+    search_provider = _build_web_search_provider(config)
+    registries.tools.register(
+        "web_search",
+        RegisteredTool(
+            web_search_manifest(search_provider.host),
+            WebSearch(search_provider, max_results=config.web_search_max_results),
+        ),
+    )
 
     def _fetch_egress_allowed(host: str) -> bool:
         # Honor the request tenant's effective egress (#290), falling back to boot config.
