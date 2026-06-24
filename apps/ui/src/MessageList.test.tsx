@@ -81,6 +81,37 @@ test("renders no context disclosure when a message has no context snapshot", () 
   expect(screen.queryByTestId("msg-context")).toBeNull();
 });
 
+test("user questions are collapsible: toggle hides full text + images, shows ellipsized preview", () => {
+  const longQuestion =
+    "This is a very long user question that exceeds eighty characters so the collapsed preview gets clipped with an ellipsis.";
+  renderList([
+    { role: "user", content: longQuestion, images: ["data:image/png;base64,AAAA"] },
+    { role: "assistant", content: "hello" },
+  ]);
+
+  const toggle = screen.getByTestId("question-toggle");
+  // Default expanded: full text + images visible, aria-expanded true.
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  expect(toggle).toHaveAttribute("aria-label", "Collapse question");
+  expect(screen.getByTestId("msg-user")).toHaveTextContent(longQuestion);
+  expect(screen.getByTestId("msg-images")).toBeInTheDocument();
+
+  // Collapse: full text hidden, ellipsized first-80-chars preview shown, images gone.
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(toggle).toHaveAttribute("aria-label", "Expand question");
+  const preview = `${longQuestion.slice(0, 80)}…`;
+  expect(screen.getByTestId("msg-user")).toHaveTextContent(preview);
+  expect(screen.getByTestId("msg-user")).not.toHaveTextContent(longQuestion);
+  expect(screen.queryByTestId("msg-images")).toBeNull();
+
+  // Expand again: full text + images back, aria-expanded flips true.
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByTestId("msg-user")).toHaveTextContent(longQuestion);
+  expect(screen.getByTestId("msg-images")).toBeInTheDocument();
+});
+
 test("user message blocks get a tinted background + left accent border to delimit turns", () => {
   renderList([
     { role: "user", content: "hi" },
