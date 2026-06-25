@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 
 import { ActivityTimeline, type LiveActivity } from "./ActivityTimeline";
@@ -393,4 +393,157 @@ test("(removed-before-submit) an empty liveActivities array renders no cluster",
   expect(screen.queryByTestId("timeline-preturn")).toBeNull();
   // With no turns and no cluster, the empty-state copy shows.
   expect(screen.getByTestId("timeline-empty")).toBeInTheDocument();
+});
+
+// --- RAG-pipeline prelude steps (#437): indexing / retrieval / ner --------------------------------
+
+const RAG_INDEXING: TraceItem = {
+  kind: "indexing",
+  text: "Indexed report.pdf",
+  ts: "2020-01-01T00:00:03Z",
+  ref: "report.pdf",
+  chunks: 48,
+  ms: 1400,
+};
+const RAG_RETRIEVAL: TraceItem = {
+  kind: "retrieval",
+  text: "Retrieved 3 passages",
+  ts: "2020-01-01T00:00:05Z",
+  ms: 320,
+  query: "Q3 runway guidance from the board deck",
+  top_k: 8,
+  hits: 3,
+  scope: "union",
+  citations: [
+    { source: "notes.md", score: 0.61 },
+    { source: "Q3-board.pdf", score: 0.82 },
+    { source: "Q3-board.pdf", score: 0.74 },
+  ],
+};
+
+// A turn whose assistant meta["trace"] leads with the RAG prelude (the backend prepends it), then
+// an agent step — mirroring the persisted, ordered array the renderer honors.
+function ragTurn(trace: TraceItem[]): ChatMessage[] {
+  return [
+    { role: "user", content: "what did the deck say about runway?" },
+    {
+      role: "assistant",
+      content: "it said 18 months",
+      created_at: "2020-01-01T00:00:10Z",
+      meta: {
+        trace: [...trace, { kind: "reasoning", text: "thinking" }] as TraceItem[],
+        context: CONTEXT,
+        usage: { prompt_tokens: 20, completion_tokens: 8, total_tokens: 28, elapsed_ms: 1200 },
+      },
+    },
+  ];
+}
+
+test("(#437) indexing + retrieval render before the context node, in array order", () => {
+  renderTimeline({ messages: ragTurn([RAG_INDEXING, RAG_RETRIEVAL]), contexts: {} });
+  const nodes = screen.getAllByTestId("timeline-node");
+  // node[0] = indexing, node[1] = retrieval, node[2] = context, node[3] = reasoning (agent).
+  expect(nodes[0]).toHaveTextContent("Indexed report.pdf - 48 chunks");
+  expect(nodes[1]).toHaveTextContent("Retrieved 3 passages (union)");
+  expect(nodes[2]).toHaveTextContent("Context assembled");
+  // The RAG chips precede the agent reasoning step.
+  expect(screen.getByTestId("timeline-indexing")).toBeInTheDocument();
+  expect(screen.getByTestId("timeline-retrieval")).toBeInTheDocument();
+});
+
+test("(#437) indexing Tier-2 shows chunks + duration; success has no error", () => {
+  renderTimeline({ messages: ragTurn([RAG_INDEXING]), contexts: {} });
+  const chip = screen.getByTestId("timeline-indexing");
+  expect(chip).toHaveAttribute("data-status", "done");
+  fireEvent.click(within(chip).getByTestId("pipelineio-summary"));
+  const detail = within(chip).getByTestId("pipelineio-detail");
+  expect(detail).toHaveTextContent("Chunks: 48");
+  expect(detail).toHaveTextContent("Duration: 1.4 s"); // fmtMs(1400)
+  expect(within(chip).queryByTestId("pipelineio-error")).toBeNull();
+});
+
+test("(#437) retrieval citation list is ordered by descending score; numeric score is accessible", () => {
+  renderTimeline({ messages: ragTurn([RAG_RETRIEVAL]), contexts: {} });
+  const chip = screen.getByTestId("timeline-retrieval");
+  // hits>0 -> the chip defaults open, so the citation <ol> is present.
+  const list = within(chip).getByTestId("retrieval-citations");
+  const scores = within(list).getAllByTestId("retrieval-score").map((n) => n.textContent);
+  expect(scores).toEqual(["0.82", "0.74", "0.61"]); // sorted desc, two decimals
+  // Query + meta header present in Tier 2.
+  expect(chip).toHaveTextContent("Top-k: 8");
+  expect(chip).toHaveTextContent("Hits: 3");
+});
+
+test("(#437) a 0-hit retrieval renders as a 'No passages retrieved' signal, pill done", () => {
+  const zero: TraceItem = {
+    kind: "retrieval",
+    text: "Retrieved 0 passages",
+    ts: "2020-01-01T00:00:05Z",
+    ms: 12,
+    query: "obscure thing",
+    top_k: 8,
+    hits: 0,
+    scope: "global",
+    citations: [],
+  };
+  renderTimeline({ messages: ragTurn([zero]), contexts: {} });
+  const chip = screen.getByTestId("timeline-retrieval");
+  expect(chip).toHaveTextContent("No passages retrieved (global)");
+  expect(within(chip).getByTestId("pipelineio-status")).toHaveTextContent("done"); // signal, not error
+  fireEvent.click(within(chip).getByTestId("pipelineio-summary"));
+  expect(chip).toHaveTextContent("No passages matched.");
+  expect(within(chip).queryByTestId("retrieval-citations")).toBeNull();
+});
+
+test("(#437) the RAG filter shows only the three kinds and hides turns with none", () => {
+  // An older RAG-less turn + the newest RAG turn (open by default).
+  const messages: ChatMessage[] = [
+    { role: "user", content: "plain question" },
+    {
+      role: "assistant",
+      content: "plain answer",
+      created_at: "2020-01-01T00:00:00Z",
+      meta: { trace: [{ kind: "reasoning", text: "x" }] as TraceItem[] },
+    },
+    ...ragTurn([RAG_INDEXING, RAG_RETRIEVAL]),
+  ];
+  renderTimeline({ messages, contexts: {} });
+  const ragChip = screen.getAllByTestId("timeline-filter").find((b) => b.textContent === "RAG")!;
+  fireEvent.click(ragChip);
+  // Only the indexing + retrieval chips remain; the reasoning + context nodes are hidden.
+  expect(screen.getByTestId("timeline-indexing")).toBeInTheDocument();
+  expect(screen.getByTestId("timeline-retrieval")).toBeInTheDocument();
+  expect(screen.queryByTestId("timeline-reasoning")).toBeNull();
+  expect(screen.queryByTestId("timeline-context")).toBeNull();
+});
+
+test("(#437) ner is dormant: no ner item -> no chip; a ner item -> entities chip + breakdown", () => {
+  // No ner item on a normal RAG turn -> no chip (dormant).
+  const { unmount } = renderTimeline({ messages: ragTurn([RAG_RETRIEVAL]), contexts: {} });
+  expect(screen.queryByTestId("timeline-ner")).toBeNull();
+  unmount();
+  // Phase-6 fixture: a ner item -> the entities chip renders with the type breakdown.
+  const ner: TraceItem = {
+    kind: "ner",
+    text: "Extracted 6 entities",
+    ts: "2020-01-01T00:00:06Z",
+    count: 6,
+    types: [
+      { type: "PERSON", count: 3 },
+      { type: "ORG", count: 2 },
+      { type: "DATE", count: 1 },
+    ],
+  };
+  renderTimeline({ messages: ragTurn([ner]), contexts: {} });
+  const chip = screen.getByTestId("timeline-ner");
+  expect(chip).toHaveTextContent("Extracted 6 entities");
+  fireEvent.click(within(chip).getByTestId("pipelineio-summary"));
+  expect(chip).toHaveTextContent("PERSON: 3 - ORG: 2 - DATE: 1");
+});
+
+test("(#437 legacy) a turn with none of the new kinds renders exactly as today", () => {
+  renderTimeline(); // default two-turn fixture has no RAG items
+  expect(screen.queryByTestId("timeline-indexing")).toBeNull();
+  expect(screen.queryByTestId("timeline-retrieval")).toBeNull();
+  expect(screen.queryByTestId("timeline-ner")).toBeNull();
 });
