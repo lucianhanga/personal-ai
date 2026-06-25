@@ -31,7 +31,10 @@ async def recall(
     top_k: int = 5,
 ) -> list[MemoryItem]:
     """Return the memories most relevant to ``query`` (empty if nothing embeds/matches)."""
-    embeddings = await embed_provider.embed([query], embed_model)
+    # Cap the query length before embedding: a recall query is a question, not a document, so a
+    # query polluted with folded attachment text (e.g. an inlined PDF, #416) must never exceed the
+    # embedding model's input limit and 400 the embeddings endpoint. Mirrors VectorRetriever.
+    embeddings = await embed_provider.embed([query[:2000]], embed_model)
     if not embeddings.vectors:
         return []
     return list(await store.search(embeddings.vectors[0], top_k))

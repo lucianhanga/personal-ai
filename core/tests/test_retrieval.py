@@ -56,6 +56,26 @@ def test_retriever_locator_none_without_chunk_index() -> None:
     asyncio.run(_run())
 
 
+def test_retriever_caps_query_length_before_embedding() -> None:
+    """A query polluted with folded attachment text (e.g. an inlined PDF, #416) must be bounded
+    before embedding so it can never overflow the embedding model and 400 the endpoint."""
+    seen: list[str] = []
+
+    class _Recording(FakeModelProvider):
+        async def embed(self, texts: Sequence[str], model: str) -> EmbeddingResult:
+            seen.extend(texts)
+            return await super().embed(texts, model)
+
+    async def _run() -> None:
+        huge = "x" * 60_000
+        await VectorRetriever(_Recording(), InMemoryVectorRepository(), "m").retrieve(
+            RetrievalQuery(text=huge, top_k=1)
+        )
+        assert seen and len(seen[0]) == 2000
+
+    asyncio.run(_run())
+
+
 def test_retriever_empty_when_no_embedding() -> None:
     class _NoEmbed(FakeModelProvider):
         async def embed(self, texts: Sequence[str], model: str) -> EmbeddingResult:

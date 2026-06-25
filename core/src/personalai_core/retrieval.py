@@ -17,6 +17,13 @@ from personalai_contracts.ports import (
     VectorRepository,
 )
 
+# A retrieval query is a question, not a document. Cap its length before embedding so a query that
+# has been polluted with folded attachment text (e.g. an inlined PDF/document, #416) can never
+# exceed the embedding model's input limit and 400 the embeddings endpoint (Ollama's embed runner
+# EOFs on oversized input even with truncate=true). ~2000 chars (~500 tokens) is ample for a search
+# query and stays well under the embed context window.
+_MAX_QUERY_CHARS = 2000
+
 
 class VectorRetriever:
     """A :class:`Retriever` that embeds the query and searches a vector store."""
@@ -31,7 +38,8 @@ class VectorRetriever:
         self._embed_model = embed_model
 
     async def retrieve(self, query: RetrievalQuery) -> Sequence[RetrievedItem]:
-        embeddings = await self._provider.embed([query.text], self._embed_model)
+        text = query.text[:_MAX_QUERY_CHARS]
+        embeddings = await self._provider.embed([text], self._embed_model)
         if not embeddings.vectors:
             return []
         matches = await self._vectors.query(embeddings.vectors[0], query.top_k)
