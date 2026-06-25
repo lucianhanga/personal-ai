@@ -15,6 +15,11 @@ from personalai_storage_postgres.db import TENANT_ID_SQL, Querier, scope_predica
 # Embedding dimension of the default embedding model (qwen3-embedding:0.6b).
 VECTOR_DIM = 1024
 
+# Reciprocal Rank Fusion constant (#420 hybrid retrieval). 60 is the canonical RRF k from the
+# original paper and the doktokNG HybridPostgresRetriever -- it damps the contribution of low ranks
+# so a single arm's tail can't dominate the fused order.
+_RRF_K = 60
+
 
 def _to_pgvector(values: Sequence[float]) -> str:
     """Render a float sequence as a pgvector literal, e.g. ``[0.1,0.2]``."""
@@ -62,6 +67,68 @@ class PgVectorRepository:
             _to_pgvector(vector),
             *params,
             top_k,
+        )
+        return [
+            VectorMatch(
+                id=row["id"], score=float(row["score"]), metadata=json.loads(row["metadata"])
+            )
+            for row in rows
+        ]
+
+    async def hybrid_query(
+        self,
+        vector: Sequence[float],
+        text: str,
+        top_k: int = 5,
+        *,
+        scope: Scope = GLOBAL_SCOPE,
+    ) -> Sequence[VectorMatch]:
+        # ONE query, two arms fused by Reciprocal Rank Fusion (RRF, k=60 canonical), the doktokNG
+        # HybridPostgresRetriever shape (#420 storage design): a dense arm (pgvector cosine over the
+        # HNSW index) and a lexical arm (ts_rank_cd over the `simple`-config `tsv` GIN, migration
+        # 0023) each take their own top-k, then we fuse by rank -- score = sum(1/(60 + rank)). RRF
+        # is rank-based (no score normalization) so the cosine and FTS halves combine cleanly, and
+        # a lexical-exact hit the dense arm alone would rank lower can surface.
+        #
+        # $1=qvec, $2=qtext, $3=k (per-arm + final LIMIT), $4=rrf constant. The scope predicate's
+        # bound params start at $5 and are reused verbatim in BOTH arms (the same scope filters
+        # dense and lexical identically -- anti-bleed). Tenant is enforced by RLS on the
+        # tenant-bound connection and is intentionally absent from this SQL. `_init_connection` sets
+        # `hnsw.iterative_scan = relaxed_order`, so a scoped (filtered) dense arm still returns a
+        # full k. The scope value is bound, never interpolated.
+        predicate, scope_params = scope_predicate(scope, next_param=5)
+        rows = await self._pool.fetch(
+            "WITH dense AS ("
+            "  SELECT id, metadata, "
+            "         row_number() OVER (ORDER BY embedding <=> $1::vector) AS rnk "
+            "  FROM vectors "
+            f"  WHERE {predicate} "
+            "  ORDER BY embedding <=> $1::vector "
+            "  LIMIT $3"
+            "), "
+            "lexical AS ("
+            "  SELECT id, metadata, "
+            "         row_number() OVER ("
+            "             ORDER BY ts_rank_cd(tsv, plainto_tsquery('simple', $2)) DESC"
+            "         ) AS rnk "
+            "  FROM vectors "
+            f"  WHERE {predicate} "
+            "    AND tsv @@ plainto_tsquery('simple', $2) "
+            "  ORDER BY ts_rank_cd(tsv, plainto_tsquery('simple', $2)) DESC "
+            "  LIMIT $3"
+            ") "
+            "SELECT id, metadata, sum(1.0 / ($4 + rnk)) AS score "
+            "FROM (SELECT id, metadata, rnk FROM dense "
+            "      UNION ALL "
+            "      SELECT id, metadata, rnk FROM lexical) fused "
+            "GROUP BY id, metadata "
+            "ORDER BY score DESC "
+            "LIMIT $3",
+            _to_pgvector(vector),
+            text,
+            top_k,
+            _RRF_K,
+            *scope_params,
         )
         return [
             VectorMatch(

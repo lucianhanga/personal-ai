@@ -91,6 +91,24 @@ class VectorRepository(Protocol):
         self, vector: Sequence[float], top_k: int = 5, *, scope: Scope = GLOBAL_SCOPE
     ) -> Sequence[VectorMatch]: ...
 
+    async def hybrid_query(
+        self,
+        vector: Sequence[float],
+        text: str,
+        top_k: int = 5,
+        *,
+        scope: Scope = GLOBAL_SCOPE,
+    ) -> Sequence[VectorMatch]:
+        """Dense (pgvector cosine) + lexical (FTS) retrieval fused by Reciprocal Rank Fusion (#420).
+
+        Runs ONE query: a dense arm over the embedding index and a lexical arm over the chunk-text
+        full-text column, each top-N, fused by RRF (k=60). ``score`` on the returned matches is the
+        RRF score (rank-based, not cosine), so citations are preserved while ranking improves. Same
+        ``scope`` / anti-bleed semantics as :meth:`query`; the global default excludes
+        conversation/project rows.
+        """
+        ...
+
     async def delete(self, ids: Sequence[str]) -> None: ...
 
 
