@@ -52,7 +52,10 @@ class RepairRequest(VersionedModel):
 
     schema_id: str
     target_version: str
-    invalid_payload: Mapping[str, Any]
+    # Any JSON value the model produced — it may be a non-object (list/scalar) when the model
+    # returned the wrong shape, which is exactly the case repair must handle, so this is NOT
+    # constrained to a Mapping (a list payload must not crash the repair loop).
+    invalid_payload: Any
     errors: Sequence[str]
     attempt: int = Field(ge=1, description="1-based attempt counter; bounded by the caller.")
     schema_version: str = Field(default=SCHEMA_VERSION)
