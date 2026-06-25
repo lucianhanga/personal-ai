@@ -658,3 +658,115 @@ def test_single_question_skips_the_interpreted_request() -> None:
         assert resp.status_code == 200
         text = "".join(resp.iter_text())
     assert "Interpreted request" not in text
+
+
+# --- image description endpoint (#419) ----------------------------------------------------------
+
+_VISION = ModelCapabilities(text=True, vision=True)
+_PNG = ("cat.png", b"\x89PNG\r\n\x1a\n", "image/png")
+
+
+def test_describe_image_returns_a_description() -> None:
+    client = _app_with_provider("fake", FakeModelProvider(name="fake", capabilities=_VISION))
+    res = client.post(
+        "/api/v1/images/describe",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        files={"file": _PNG},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["data"]["description"].startswith("echo:")  # FakeModelProvider echoes the prompt
+
+
+def test_describe_image_no_vision_model_is_structured_error() -> None:
+    # The default FakeModelProvider has vision=False -> a structured E_NO_VISION_MODEL, not a 500.
+    client = _app_with_provider("fake", FakeModelProvider(name="fake"))
+    res = client.post(
+        "/api/v1/images/describe",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        files={"file": _PNG},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "E_NO_VISION_MODEL"
+
+
+def test_describe_image_oversized_is_413() -> None:
+    config = CoreConfig(model_provider="fake", auth_token=TOKEN, max_upload_bytes=4)
+    boot = bootstrap(config=config)
+    boot.registries.model_providers.register(
+        "fake", FakeModelProvider(name="fake", capabilities=_VISION), overwrite=True
+    )
+    client = TestClient(create_app(boot))
+    res = client.post(
+        "/api/v1/images/describe",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        files={"file": ("big.png", b"xxxxxxxxxx", "image/png")},
+    )
+    assert res.status_code == 413
+
+
+def test_describe_image_requires_token() -> None:
+    client = _app_with_provider("fake", FakeModelProvider(name="fake", capabilities=_VISION))
+    res = client.post("/api/v1/images/describe", files={"file": _PNG})
+    assert res.status_code == 401
+
+
+# --- document text-extraction endpoint (#416, tier-1 of #420) ------------------------------------
+
+
+def test_extract_file_returns_plain_text(client: TestClient) -> None:
+    res = client.post(
+        "/api/v1/files/extract",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        files={"file": ("notes.txt", b"hello document world", "text/plain")},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["data"]["name"] == "notes.txt"
+    assert body["data"]["text"] == "hello document world"
+    assert body["data"]["truncated"] is False
+
+
+def test_extract_file_reads_markdown(client: TestClient) -> None:
+    res = client.post(
+        "/api/v1/files/extract",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        files={"file": ("readme.md", b"# Title\n\nsome **markdown** body", "text/markdown")},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert "markdown" in body["data"]["text"]
+
+
+def test_extract_file_unsupported_type_is_structured_error(client: TestClient) -> None:
+    # An unparseable type yields a structured E_UNSUPPORTED_FILE, not a 500.
+    res = client.post(
+        "/api/v1/files/extract",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        files={"file": ("movie.mp4", b"\x00\x00\x00\x18ftyp", "video/mp4")},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "E_UNSUPPORTED_FILE"
+
+
+def test_extract_file_oversized_is_413() -> None:
+    config = CoreConfig(model_provider="fake", auth_token=TOKEN, max_upload_bytes=4)
+    client = TestClient(create_app(bootstrap(config=config)))
+    res = client.post(
+        "/api/v1/files/extract",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        files={"file": ("big.txt", b"way too many bytes", "text/plain")},
+    )
+    assert res.status_code == 413
+
+
+def test_extract_file_requires_token(client: TestClient) -> None:
+    res = client.post("/api/v1/files/extract", files={"file": ("notes.txt", b"hi", "text/plain")})
+    assert res.status_code == 401

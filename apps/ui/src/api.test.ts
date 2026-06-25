@@ -3,6 +3,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import {
   type ApprovalRequest,
   describeImage,
+  extractDocument,
   resumeChat,
   streamChat,
   transcribeAudio,
@@ -182,4 +183,44 @@ test("describeImage throws a structured error (e.g. no vision model) (#419)", as
   await expect(describeImage("t", new Blob(["x"], { type: "image/jpeg" }))).rejects.toThrow(
     /vision/,
   );
+});
+
+test("extractDocument posts the file, forwards the signal, returns the extracted text (#416)", async () => {
+  const fetchMock = vi.fn(async () =>
+    new Response(
+      JSON.stringify({
+        ok: true,
+        data: { name: "notes.txt", mime: "text/plain", text: "hello doc", truncated: false },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const controller = new AbortController();
+  const doc = await extractDocument(
+    "t",
+    new File(["hello doc"], "notes.txt", { type: "text/plain" }),
+    controller.signal,
+  );
+  expect(doc.text).toBe("hello doc");
+  expect(doc.truncated).toBe(false);
+  const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+  expect(String(url)).toContain("/api/v1/files/extract");
+  expect((init.body as FormData).get("file")).toBeInstanceOf(File);
+  expect(init.signal).toBe(controller.signal);
+});
+
+test("extractDocument throws a structured error for an unsupported type (#416)", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      new Response(JSON.stringify({ ok: false, error: { message: "unsupported file type" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    ),
+  );
+  await expect(
+    extractDocument("t", new File(["x"], "movie.mp4", { type: "video/mp4" })),
+  ).rejects.toThrow(/unsupported/);
 });

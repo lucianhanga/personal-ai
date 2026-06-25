@@ -19,6 +19,7 @@ import {
   saveSettings,
   streamChat,
   describeImage,
+  extractDocument,
   transcribeAudio,
   uploadFile,
   type ApprovalRequest,
@@ -35,6 +36,7 @@ import {
 } from "./api";
 import { AudioChips, type AudioAttachment } from "./AudioChips";
 import { ChatsPanel } from "./ChatsPanel";
+import { DocumentChips, type DocumentAttachment } from "./DocumentChips";
 import { ImageChips, type ImageAttachment } from "./ImageChips";
 import { EgressApproval, type EgressDecision } from "./EgressApproval";
 import { MessageList } from "./MessageList";
@@ -65,17 +67,35 @@ interface DraftImage {
   description: string;
 }
 
+// A persisted document chip: extracted text + name (the small/large status is recomputed from the
+// text on load, so it isn't stored). In-flight/error chips are never saved (#416).
+interface DraftDocument {
+  id: string;
+  name: string;
+  text: string;
+}
+
 interface ComposerDraft {
   input: string;
   images: DraftImage[];
   audio: DraftAudio[];
+  documents: DraftDocument[];
 }
 
 function loadDraft(): ComposerDraft {
   try {
     const raw = sessionStorage.getItem(DRAFT_KEY);
-    if (!raw) return { input: "", images: [], audio: [] };
+    if (!raw) return { input: "", images: [], audio: [], documents: [] };
     const d = JSON.parse(raw) as Partial<ComposerDraft>;
+    const documents = Array.isArray(d.documents)
+      ? d.documents.filter(
+          (doc): doc is DraftDocument =>
+            !!doc &&
+            typeof doc.id === "string" &&
+            typeof doc.name === "string" &&
+            typeof doc.text === "string",
+        )
+      : [];
     const audio = Array.isArray(d.audio)
       ? d.audio.filter(
           (a): a is DraftAudio =>
@@ -98,15 +118,21 @@ function loadDraft(): ComposerDraft {
       input: typeof d.input === "string" ? d.input : "",
       images,
       audio,
+      documents,
     };
   } catch {
-    return { input: "", images: [], audio: [] };
+    return { input: "", images: [], audio: [], documents: [] };
   }
 }
 
 function saveDraft(draft: ComposerDraft): void {
   try {
-    if (!draft.input && draft.images.length === 0 && draft.audio.length === 0) {
+    if (
+      !draft.input &&
+      draft.images.length === 0 &&
+      draft.audio.length === 0 &&
+      draft.documents.length === 0
+    ) {
       sessionStorage.removeItem(DRAFT_KEY); // keep storage clean once the draft is empty/sent
       return;
     }
@@ -145,6 +171,18 @@ export function describeImageError(e: unknown): string {
 // Cap on attached images per turn, and the longest-edge a kept image is downscaled to (#419) — large
 // enough to stay understandable, small enough to bound vision tokens, payload, and DB storage.
 const MAX_IMAGES = 6;
+// A document whose extracted text is at/under this token estimate folds inline; over it, the chip is
+// gated `large` and NOT folded (Tier-2 ephemeral RAG is a later phase, #420). ~6k tokens ≈ 4-5 pages.
+const DOC_INLINE_TOKEN_GATE = 6000;
+const DOC_MIMES = new Set(["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain", "text/markdown"]);
+const DOC_EXTS = /\.(pdf|docx|txt|md|markdown)$/i;
+function isDocumentFile(f: File): boolean {
+  return DOC_MIMES.has(f.type) || DOC_EXTS.test(f.name);
+}
+// Estimate tokens from chars (~4 chars/token) to decide the inline gate.
+function docTokenEstimate(text: string): number {
+  return Math.ceil(text.length / 4);
+}
 const IMAGE_MAX_EDGE = 1024;
 
 /** Downscale an image file to a data-URL ONLY if its longest edge exceeds IMAGE_MAX_EDGE; otherwise
@@ -328,6 +366,18 @@ export function Chat({
   // One AbortController per in-flight transcription, keyed by chip id, so removing a chip mid-flight
   // cancels its fetch. Never persisted.
   const audioAbortRef = useRef<Map<string, AbortController>>(new Map());
+  // Document attachment chips (#416, tier-1 of #420): a dropped doc's text is extracted in the
+  // background and gated small (folds inline) vs large (shown for read/copy, not folded). Restored
+  // from the draft with the status recomputed from the text.
+  const [documentAttachments, setDocumentAttachments] = useState<DocumentAttachment[]>(() =>
+    loadDraft().documents.map((doc) => ({
+      id: doc.id,
+      name: doc.name,
+      text: doc.text,
+      status: docTokenEstimate(doc.text) <= DOC_INLINE_TOKEN_GATE ? "small" : "large",
+    })),
+  );
+  const docAbortRef = useRef<Map<string, AbortController>>(new Map());
   // True while an image is being dragged over the composer (drop-to-attach affordance, #324).
   const [dragOver, setDragOver] = useState(false);
   // Voice input (M9.2): whether STT is configured, and the live recording state.
@@ -494,8 +544,11 @@ export function Chat({
     const images = imageAttachments
       .filter((im) => im.status === "done")
       .map((im) => ({ id: im.id, src: im.src, description: im.description }));
-    saveDraft({ input, images, audio });
-  }, [input, imageAttachments, audioAttachments]);
+    const documents = documentAttachments
+      .filter((d) => d.status === "small" || d.status === "large")
+      .map((d) => ({ id: d.id, name: d.name, text: d.text }));
+    saveDraft({ input, images, audio, documents });
+  }, [input, imageAttachments, audioAttachments, documentAttachments]);
 
   function newChat(): void {
     setChats((prev) => ({ ...prev, [NEW_CHAT]: EMPTY_CHAT }));
@@ -627,14 +680,17 @@ export function Chat({
   }
 
   useEffect(() => {
-    // Clear every STT timer and abort any in-flight transcription on unmount.
+    // Clear every STT timer and abort any in-flight transcription / extraction on unmount.
     const aborts = audioAbortRef.current;
+    const docAborts = docAbortRef.current;
     return () => {
       cancelAutoSend();
       stopRecordTimer();
       clearModelHint();
       aborts.forEach((c) => c.abort());
       aborts.clear();
+      docAborts.forEach((c) => c.abort());
+      docAborts.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -812,6 +868,47 @@ export function Chat({
   const doneAudio = audioAttachments.filter((a) => a.status === "done");
   const audioTranscribing = audioAttachments.some((a) => a.status === "transcribing");
 
+  // Extract text from each dropped document; gate small (folds) vs large (shown, not folded) (#416).
+  function onDocumentFiles(files: File[]): void {
+    for (const file of files) {
+      const id = `doc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const controller = new AbortController();
+      docAbortRef.current.set(id, controller);
+      setDocumentAttachments((cur) => [
+        ...cur,
+        { id, name: file.name, status: "extracting", text: "" },
+      ]);
+      void extractDocument(token, file, controller.signal)
+        .then((doc) => {
+          docAbortRef.current.delete(id);
+          const status = docTokenEstimate(doc.text) <= DOC_INLINE_TOKEN_GATE ? "small" : "large";
+          setDocumentAttachments((cur) =>
+            cur.map((c) => (c.id === id ? { ...c, status, text: doc.text } : c)),
+          );
+        })
+        .catch((e: unknown) => {
+          docAbortRef.current.delete(id);
+          if ((e as { name?: string } | null)?.name === "AbortError") return;
+          setDocumentAttachments((cur) =>
+            cur.map((c) => (c.id === id ? { ...c, status: "error", error: String(e) } : c)),
+          );
+        });
+    }
+  }
+
+  function removeDocument(id: string): void {
+    const controller = docAbortRef.current.get(id);
+    if (controller) {
+      controller.abort();
+      docAbortRef.current.delete(id);
+    }
+    setDocumentAttachments((cur) => cur.filter((c) => c.id !== id));
+  }
+
+  // Only SMALL docs fold into the message; large ones are informational (Tier-2 RAG, #420).
+  const smallDocs = documentAttachments.filter((d) => d.status === "small");
+  const docExtracting = documentAttachments.some((d) => d.status === "extracting");
+
   async function send(): Promise<void> {
     cancelAutoSend();
     const typed = input.trim();
@@ -828,7 +925,9 @@ export function Chat({
       !isVision && descriptions.some(Boolean)
         ? descriptions.filter(Boolean).map((d) => `[Image: ${d}]`).join("\n\n")
         : "";
-    const content = [typed, audioBlocks, imageBlocks].filter(Boolean).join("\n\n");
+    // Fold each SMALL document's text inline (#416); large docs are not folded (Tier-2 RAG, #420).
+    const docBlocks = smallDocs.map((d) => `[Document: ${d.name}]\n${d.text}`).join("\n\n");
+    const content = [typed, audioBlocks, imageBlocks, docBlocks].filter(Boolean).join("\n\n");
     // Allow sending with only an image or only a transcript (no typed text). Block while a chip is
     // still transcribing/describing (the Send button is also disabled).
     if (
@@ -836,13 +935,15 @@ export function Chat({
       !model ||
       view.busy ||
       audioTranscribing ||
-      imageDescribing
+      imageDescribing ||
+      docExtracting
     )
       return;
     setError(null);
     setInput("");
     setImageAttachments([]);
     setAudioAttachments([]);
+    setDocumentAttachments([]);
 
     const startKey = activeId ?? NEW_CHAT;
     const userMsg: ChatMessage = {
@@ -1471,6 +1572,10 @@ export function Chat({
             {/* Attached image chips (#419): each is downsized + described by the vision model in the
                 background; hover a done thumbnail for its description + a Copy button. Removable. */}
             <ImageChips chips={imageAttachments} onRemove={removeImage} />
+
+            {/* Document attachment chips (#416): drag-drop a PDF/DOCX/txt/md; small docs fold into the
+                message, large ones are gated (read/copy only) until Tier-2 retrieval (#420). */}
+            <DocumentChips chips={documentAttachments} onRemove={removeDocument} />
             {imageAttachments.length > 0 && selected && !selected.capabilities.vision && (
               <span data-testid="vision-hint" style={{ color: "#b06f00", fontSize: "0.8rem" }}>
                 The selected model isn’t a vision model — its description is sent as text instead.
@@ -1495,12 +1600,14 @@ export function Chat({
                   // Split the drop: images attach (as today); audio files each become a transcribing
                   // chip (#406). Anything else is ignored. Audio is drag-drop ONLY now.
                   onAttachImages(e.dataTransfer.files); // images only; non-images ignored here
+                  const dropped = Array.from(e.dataTransfer.files);
                   if (transcribeEnabled) {
-                    const audio = Array.from(e.dataTransfer.files).filter((f) =>
-                      f.type.startsWith("audio/"),
-                    );
+                    const audio = dropped.filter((f) => f.type.startsWith("audio/"));
                     if (audio.length) onAudioFiles(audio);
                   }
+                  // Documents (PDF/DOCX/txt/md) → text extraction + the small/large inline gate (#416).
+                  const docs = dropped.filter(isDocumentFile);
+                  if (docs.length) onDocumentFiles(docs);
                 }}
               >
                 <textarea
@@ -1562,7 +1669,9 @@ export function Chat({
                       pointerEvents: "none",
                     }}
                   >
-                    {transcribeEnabled ? "Drop images or audio to attach" : "Drop image(s) to attach"}
+                    {transcribeEnabled
+                      ? "Drop images, audio, or documents to attach"
+                      : "Drop images or documents to attach"}
                   </div>
                 )}
               </div>
@@ -1602,8 +1711,12 @@ export function Chat({
                     transcribing ||
                     audioTranscribing ||
                     imageDescribing ||
+                    docExtracting ||
                     !model ||
-                    (input.trim() === "" && doneImages.length === 0 && doneAudio.length === 0)
+                    (input.trim() === "" &&
+                      doneImages.length === 0 &&
+                      doneAudio.length === 0 &&
+                      smallDocs.length === 0)
                   }
                   aria-label="Send message"
                   title="Send message (Enter)"

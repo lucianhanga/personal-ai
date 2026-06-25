@@ -84,7 +84,7 @@ from personalai_core.security import (
     current_security,
     effective_egress_config,
 )
-from personalai_modality_files import UnsupportedFileTypeError
+from personalai_modality_files import UnsupportedFileTypeError, parse_document
 from personalai_storage_postgres import (
     Conversation,
     PgAgentConfigStore,
@@ -1768,6 +1768,45 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             return StructuredResult(ok=False, error=ErrorInfo(code="E_DESCRIBE", message=str(exc)))
         description = (result.text or "").strip()[:_IMAGE_DESCRIPTION_CAP]
         return StructuredResult(ok=True, data={"description": description})
+
+    @app.post(
+        "/api/v1/files/extract",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def extract_file_text(file: UploadFile = File(...)) -> StructuredResult:
+        # Extract TEXT from an uploaded document (PDF/DOCX/txt/md) for a per-question attachment
+        # (#416, tier-1 of #420) — no vectorization, no storage. The UI folds SMALL docs into the
+        # message; large ones are gated client-side (Tier-2 ephemeral RAG is a later phase).
+        config: CoreConfig = app.state.config
+        content = await file.read(config.max_upload_bytes + 1)
+        if len(content) > config.max_upload_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"file exceeds {config.max_upload_bytes} bytes",
+            )
+        try:
+            parsed = parse_document(content, file.filename or "document")
+        except UnsupportedFileTypeError as exc:
+            return StructuredResult(
+                ok=False, error=ErrorInfo(code="E_UNSUPPORTED_FILE", message=str(exc))
+            )
+        # Cap the returned text so a huge document can't return an unbounded payload (the UI's token
+        # gate decides small-vs-large from this text).
+        extract_cap = 128_000
+        text = parsed.text
+        truncated = len(text) > extract_cap
+        if truncated:
+            text = text[:extract_cap]
+        return StructuredResult(
+            ok=True,
+            data={
+                "name": file.filename or "document",
+                "mime": parsed.mime,
+                "text": text,
+                "truncated": truncated,
+            },
+        )
 
     @app.get(
         "/api/v1/files", response_model=StructuredResult, dependencies=[Depends(require_context)]
