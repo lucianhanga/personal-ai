@@ -72,7 +72,7 @@ test("restores an unsent composer draft (text + attachment) from sessionStorage 
     DRAFT_KEY,
     JSON.stringify({
       input: "half-written question",
-      attachedImages: ["data:image/png;base64,AAAA"],
+      images: [{ id: "i1", src: "data:image/png;base64,AAAA", description: "a cat" }],
     }),
   );
   render(<Chat token="demo" />);
@@ -81,7 +81,7 @@ test("restores an unsent composer draft (text + attachment) from sessionStorage 
       "half-written question",
     ),
   );
-  // The staged image is back too, not silently dropped.
+  // The staged (described) image is back too, not silently dropped.
   expect(screen.getByTestId("image-attachments").querySelectorAll("img")).toHaveLength(1);
 });
 
@@ -514,9 +514,10 @@ test("the old file-picker and Summarize affordances are gone (#406)", async () =
   expect(screen.queryByTestId("summarize-send")).toBeNull();
 });
 
-test("attaches an image and sends it with the user message (vision)", async () => {
+test("attaches an image, describes it eagerly, and sends it (vision) (#419)", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  const describe = vi.spyOn(api, "describeImage").mockResolvedValue("a tabby cat on a sofa");
   const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
     onDelta("I see a cat.");
   });
@@ -526,12 +527,16 @@ test("attaches an image and sends it with the user message (vision)", async () =
     expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
   );
 
-  // Drag-drop a fake PNG onto the composer (FileReader yields a data-URL; jsdom supports it).
+  // Drag-drop a fake PNG onto the composer; it's downscaled (no-op here) + described in the bg.
   const file = new File(["x"], "cat.png", { type: "image/png" });
   fireEvent.drop(screen.getByTestId("composer-dropzone"), {
     dataTransfer: { files: [file], types: ["Files"] },
   });
-  await waitFor(() => expect(screen.getByTestId("image-attachments")).toBeInTheDocument());
+  // Chip appears, then becomes `done` once the eager description resolves.
+  await waitFor(() => expect(describe).toHaveBeenCalled());
+  await waitFor(() =>
+    expect(screen.getByTestId("image-attachment")).toHaveAttribute("data-status", "done"),
+  );
 
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "what is this?" } });
   fireEvent.click(screen.getByTestId("send"));
@@ -541,10 +546,79 @@ test("attaches an image and sends it with the user message (vision)", async () =
   await waitFor(() => {
     const sent = stream.mock.calls[0][0].messages;
     const lastUser = sent[sent.length - 1];
-    expect(lastUser.images?.[0]).toMatch(/^data:image\/png/);
+    expect(lastUser.images?.[0]).toMatch(/^data:image\//);
+    // Vision model: the image is sent; the description is NOT folded into the content.
+    expect(lastUser.content).not.toContain("[Image:");
+    expect(lastUser.image_descriptions?.[0]).toBe("a tabby cat on a sofa");
   });
   // The attachment tray clears after sending.
   expect(screen.queryByTestId("image-attachments")).toBeNull();
+});
+
+test("non-vision model folds the image description into the message content (#419)", async () => {
+  // A non-vision default model can't see the image, so its description is folded as text.
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue({
+    defaultModel: "textonly",
+    models: [
+      {
+        name: "textonly",
+        local: true,
+        capabilities: {
+          text: true,
+          vision: false,
+          embeddings: false,
+          tool_calling: false,
+          structured_output: false,
+          thinking: false,
+          max_context_tokens: 8192,
+        },
+      },
+    ],
+  });
+  vi.spyOn(api, "describeImage").mockResolvedValue("a tabby cat on a sofa");
+  const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
+    onDelta("ok");
+  });
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("textonly"),
+  );
+  const file = new File(["x"], "cat.png", { type: "image/png" });
+  fireEvent.drop(screen.getByTestId("composer-dropzone"), {
+    dataTransfer: { files: [file], types: ["Files"] },
+  });
+  await waitFor(() =>
+    expect(screen.getByTestId("image-attachment")).toHaveAttribute("data-status", "done"),
+  );
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "what is this?" } });
+  fireEvent.click(screen.getByTestId("send"));
+  await waitFor(() => {
+    const sent = stream.mock.calls[0][0].messages;
+    expect(sent[sent.length - 1].content).toContain("[Image: a tabby cat on a sofa]");
+  });
+});
+
+test("removing an image chip aborts its in-flight description (#419)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  // Never-resolving describe so the chip stays `describing` and the abort is observable.
+  let abortSignal: AbortSignal | undefined;
+  vi.spyOn(api, "describeImage").mockImplementation((_t, _b, signal) => {
+    abortSignal = signal;
+    return new Promise<string>(() => {});
+  });
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("composer-dropzone")).toBeInTheDocument());
+  const file = new File(["x"], "cat.png", { type: "image/png" });
+  fireEvent.drop(screen.getByTestId("composer-dropzone"), {
+    dataTransfer: { files: [file], types: ["Files"] },
+  });
+  await waitFor(() => expect(screen.getByTestId("image-attachment")).toBeInTheDocument());
+  const remove = screen.getByTestId("image-attachments").querySelector("button");
+  fireEvent.click(remove!);
+  expect(screen.queryByTestId("image-attachments")).toBeNull();
+  expect(abortSignal?.aborted).toBe(true);
 });
 
 test("shows a drag-and-drop hint and no Image button (#324)", async () => {

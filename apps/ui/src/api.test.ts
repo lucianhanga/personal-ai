@@ -1,6 +1,12 @@
 import { afterEach, expect, test, vi } from "vitest";
 
-import { type ApprovalRequest, resumeChat, streamChat, transcribeAudio } from "./api";
+import {
+  type ApprovalRequest,
+  describeImage,
+  resumeChat,
+  streamChat,
+  transcribeAudio,
+} from "./api";
 
 function sseResponse(chunks: string[]): Response {
   const stream = new ReadableStream<Uint8Array>({
@@ -144,4 +150,36 @@ test("transcribeAudio forwards an AbortSignal to fetch (#406)", async () => {
 
   const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
   expect(init.signal).toBe(controller.signal);
+});
+
+test("describeImage posts the image, forwards the signal, returns the description (#419)", async () => {
+  const fetchMock = vi.fn(async () =>
+    new Response(JSON.stringify({ ok: true, data: { description: "a tabby cat" } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const controller = new AbortController();
+  const desc = await describeImage("t", new Blob(["x"], { type: "image/jpeg" }), controller.signal);
+  expect(desc).toBe("a tabby cat");
+  const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+  expect(String(url)).toContain("/api/v1/images/describe");
+  expect((init.body as FormData).get("file")).toBeInstanceOf(File);
+  expect(init.signal).toBe(controller.signal);
+});
+
+test("describeImage throws a structured error (e.g. no vision model) (#419)", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      new Response(
+        JSON.stringify({ ok: false, error: { message: "not a vision model" } }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    ),
+  );
+  await expect(describeImage("t", new Blob(["x"], { type: "image/jpeg" }))).rejects.toThrow(
+    /vision/,
+  );
 });

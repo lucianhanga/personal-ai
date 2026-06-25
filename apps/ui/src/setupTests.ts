@@ -18,3 +18,16 @@ if (typeof globalThis.localStorage === "undefined") {
 if (typeof Element !== "undefined" && !Element.prototype.scrollTo) {
   Element.prototype.scrollTo = () => {};
 }
+
+// jsdom doesn't decode images: fire `onload` on src-set with 0 dimensions so the image-downscale
+// helper (#419) resolves (0 dims -> "no downscale needed" -> returns the original data-URL).
+class FakeImage {
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  naturalWidth = 0;
+  naturalHeight = 0;
+  set src(_v: string) {
+    queueMicrotask(() => this.onload?.());
+  }
+}
+globalThis.Image = FakeImage as unknown as typeof Image;

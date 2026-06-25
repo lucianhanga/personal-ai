@@ -85,6 +85,9 @@ export interface ChatMessage {
   content: string;
   // Attached image parts as data-URLs (data:image/...;base64,...) for vision models (M9.1).
   images?: string[];
+  // Parallel to `images`: an eager vision description per image (#419), shown on hover + persisted.
+  // Request-only metadata (not sent to the model — vision models get the image itself).
+  image_descriptions?: string[];
   // Persisted per-assistant-message detail (tool calls + reasoning), shown collapsed in the UI.
   meta?: MessageMeta | null;
   // ISO timestamp set when the message was persisted (GET /conversations/{id}); absent for the
@@ -410,6 +413,33 @@ export async function transcribeAudio(
   };
   if (body.ok === false) throw new Error(body.error?.message ?? "transcribe failed");
   return body.data?.text ?? "";
+}
+
+/** Describe an attached image with the vision model (#419) — eager caption shown on hover + stored.
+ * `image` is the (already-downsized) image blob. Throws on transport/HTTP error or a structured
+ * error (e.g. `E_NO_VISION_MODEL`). */
+export async function describeImage(
+  token: string,
+  image: Blob,
+  signal?: AbortSignal,
+): Promise<string> {
+  const form = new FormData();
+  form.append("file", image, "image.jpg");
+  const res = await fetch(`${API_BASE}/api/v1/images/describe`, {
+    method: "POST",
+    headers: authHeaders(token),
+    credentials: CREDS,
+    body: form,
+    signal,
+  });
+  if (!res.ok) throw new Error(`describe failed: ${res.status}`);
+  const body = (await res.json()) as {
+    ok?: boolean;
+    error?: { message?: string };
+    data?: { description?: string };
+  };
+  if (body.ok === false) throw new Error(body.error?.message ?? "describe failed");
+  return body.data?.description ?? "";
 }
 
 /** List ingested documents. */
