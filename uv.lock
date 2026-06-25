@@ -1741,6 +1741,7 @@ source = { editable = "apps/backend" }
 dependencies = [
     { name = "argon2-cffi" },
     { name = "fastapi" },
+    { name = "langchain-core" },
     { name = "personalai-contracts" },
     { name = "personalai-core" },
     { name = "personalai-modality-files" },
@@ -1758,6 +1759,7 @@ dependencies = [
 requires-dist = [
     { name = "argon2-cffi", specifier = ">=23.1" },
     { name = "fastapi", specifier = ">=0.111" },
+    { name = "langchain-core", specifier = ">=1.4,<2" },
     { name = "personalai-contracts", editable = "contracts" },
     { name = "personalai-core", editable = "core" },
     { name = "personalai-modality-files", editable = "modalities/files" },

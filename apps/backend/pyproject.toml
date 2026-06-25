@@ -20,6 +20,11 @@ dependencies = [
     "python-multipart>=0.0.9",
     "argon2-cffi>=23.1",
     "python-dotenv>=1.0",
+    # langchain-core: the RAG retriever/embeddings adapter interfaces (#420 PR2, ADR-0012). Already
+    # present transitively via LangGraph at 1.4.6 -> promoted to a pinned DIRECT dep. CVE-2025-68664
+    # ("LangGrinch") is patched in our >=1.2.5 line; we never call load()/loads() on untrusted data.
+    # We deliberately do NOT add langchain / -community / -postgres / -ollama (see SUPPLY-CHAIN.md).
+    "langchain-core>=1.4,<2",
 ]
 
 [build-system]

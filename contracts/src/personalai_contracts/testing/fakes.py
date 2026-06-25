@@ -147,6 +147,46 @@ class InMemoryVectorRepository:
         scored.sort(key=lambda m: m.score, reverse=True)
         return scored[:top_k]
 
+    async def hybrid_query(
+        self,
+        vector: Sequence[float],
+        text: str,
+        top_k: int = 5,
+        *,
+        scope: Scope = GLOBAL_SCOPE,
+    ) -> Sequence[VectorMatch]:
+        # In-memory analogue of the Postgres dense+lexical RRF (k=60, #420): a dense arm by
+        # dot-product and a lexical arm by case-insensitive token overlap on metadata["text"],
+        # fused by Reciprocal Rank Fusion. Keeps the fakes a faithful VectorRepository and lets
+        # pure-Python tests exercise the fusion without a DB. Same scope/anti-bleed filter as query.
+        in_scope = [
+            rec for rec in self._records.values() if self._scopes.get(rec.id, GLOBAL_SCOPE) == scope
+        ]
+        dense = sorted(
+            in_scope,
+            key=lambda rec: sum(a * b for a, b in zip(vector, rec.vector, strict=False)),
+            reverse=True,
+        )[:top_k]
+        terms = {t for t in text.lower().split() if t}
+        lexical = sorted(
+            (
+                rec
+                for rec in in_scope
+                if terms & set(str(rec.metadata.get("text", "")).lower().split())
+            ),
+            key=lambda rec: len(terms & set(str(rec.metadata.get("text", "")).lower().split())),
+            reverse=True,
+        )[:top_k]
+        rrf: dict[str, float] = {}
+        for arm in (dense, lexical):
+            for rank, rec in enumerate(arm, start=1):
+                rrf[rec.id] = rrf.get(rec.id, 0.0) + 1.0 / (60 + rank)
+        ranked = sorted(rrf.items(), key=lambda kv: kv[1], reverse=True)[:top_k]
+        return [
+            VectorMatch(id=rid, score=score, metadata=self._records[rid].metadata)
+            for rid, score in ranked
+        ]
+
     async def delete(self, ids: Sequence[str]) -> None:
         for vid in ids:
             self._records.pop(vid, None)
