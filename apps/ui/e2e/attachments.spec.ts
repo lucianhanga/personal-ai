@@ -230,6 +230,58 @@ test("a small document folds inline; a large document is RAG-indexed (Searched i
   await expect(page.getByTestId("document-retrieval-badge").filter({ hasText: /searched in this chat/i })).toBeVisible();
 });
 
+// --- RAG trigger: the /chat request must carry documents_full + use_rag + conversation_id --------
+
+test("large doc send carries documents_full + use_rag + conversation_id in the /chat request", async ({
+  page,
+}) => {
+  await bootRoutes(page);
+  const bigText = "lorem ipsum ".repeat(3000); // over the inline gate -> `large`
+  await page.route("**/api/v1/files/extract", (r) =>
+    json(
+      r,
+      JSON.stringify({
+        ok: true,
+        data: { name: "report.pdf", mime: "application/pdf", text: bigText, truncated: false, model: null, ms: 30 },
+      }),
+    ),
+  );
+
+  // Capture the POST /chat request body — the ground truth of what the browser sends.
+  let chatBody: { use_rag?: boolean; conversation_id?: string; messages?: { role: string; documents_full?: unknown }[] } | null = null;
+  const convBody = JSON.stringify({ ok: true, data: { id: "c1", title: "chat", updated_at: "2026-06-07T00:00:00Z" } });
+  await page.route("**/api/v1/conversations", (r) =>
+    r.request().method() === "POST" ? json(r, convBody) : json(r, '{"ok":true,"data":{"conversations":[]}}'),
+  );
+  await page.route("**/api/v1/conversations/c1", (r) =>
+    json(r, '{"ok":true,"data":{"id":"c1","title":"chat","messages":[]}}'),
+  );
+  await page.route("**/api/v1/chat", (r) => {
+    chatBody = r.request().postDataJSON();
+    return r.fulfill({ status: 200, contentType: "text/event-stream", body: ANSWER_SSE });
+  });
+
+  await page.goto("/");
+  await expect(page.getByTestId("model-select")).toHaveValue("qwen3-vl:8b");
+
+  // Attach the large doc; the chip must classify as `large` (otherwise it never enters documents_full).
+  await dropFiles(page, [{ name: "report.pdf", type: "application/pdf" }]);
+  await expect(page.locator('[data-testid="document-attachment"][data-status="large"]')).toBeVisible();
+  // "Use my documents" (use_rag) must be on by default.
+  await expect(page.getByTestId("rag-toggle")).toBeChecked();
+
+  await page.getByTestId("composer").fill("summarize the document");
+  await page.getByTestId("send").click();
+  await expect(page.getByTestId("msg-assistant")).toContainText("Sure, here.");
+
+  // Assert the request that drives RAG ingest carried everything the backend gate (app.py:1642) needs.
+  expect(chatBody).not.toBeNull();
+  expect(chatBody!.use_rag).toBe(true);
+  expect(chatBody!.conversation_id).toBe("c1");
+  const lastUser = [...(chatBody!.messages ?? [])].reverse().find((m) => m.role === "user");
+  expect(lastUser?.documents_full).toEqual([{ name: "report.pdf", text: bigText }]);
+});
+
 // --- #446: scanned / image-only PDF -> "no text found" + explanation ----------------------------
 
 test("#446: a scanned/image-only PDF shows 'no text found' and an explanation, not a blank panel", async ({
