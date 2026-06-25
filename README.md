@@ -3,7 +3,7 @@
 [![CI](https://github.com/lucianhanga/personal-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/lucianhanga/personal-ai/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-0.8.3-blue.svg)](./CHANGELOG.md)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![Status: M8.3 egress gate + transparency panel done](https://img.shields.io/badge/status-M8.3%20done-brightgreen.svg)](./docs/architecture/adr/0013-egress-approval-gate.md)
+[![Status: M0-M9 shipped (latest 0.8.3)](https://img.shields.io/badge/status-M0--M9%20shipped-brightgreen.svg)](./CHANGELOG.md)
 [![Local-first](https://img.shields.io/badge/local--first-yes-brightgreen.svg)](#principles)
 [![Structured-output-first](https://img.shields.io/badge/structured--output--first-yes-brightgreen.svg)](#principles)
 [![Security-first](https://img.shields.io/badge/security--first-yes-brightgreen.svg)](./SECURITY.md)
@@ -17,8 +17,9 @@ PersonalAI is **extensible** (tools + MCP), **structured-output-first** (schemas
 **open-source-first** (verified provenance only), and **security-first** (zero-trust toward
 tools, files, prompts, model outputs, and MCP servers).
 
-**Current state:** the core product works end to end. Milestones **M0–M9** have shipped (latest:
-**M8.3** — the blocking egress gate + transparency panel); the MV3 browser extension (**M10**) is next.
+**Current state:** the core product works end to end. Milestones **M0–M9** have shipped — the latest
+release (**0.8.3**) landed the M8.1–M8.3 work (the blocking egress gate + transparency panel) plus
+the M9 multimodal trio (vision · STT · TTS). The MV3 browser extension (**M10**) is next.
 
 What it does today:
 
