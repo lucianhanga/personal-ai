@@ -9,9 +9,9 @@
 [![Security-first](https://img.shields.io/badge/security--first-yes-brightgreen.svg)](./SECURITY.md)
 [![Conventional Commits](https://img.shields.io/badge/commits-conventional-blueviolet.svg)](https://www.conventionalcommits.org/)
 
-> A **local-first**, omni-capable AI assistant — like ChatGPT/Claude, but it runs open-source
-> models on **your** hardware, works with **your** files and tools, and reaches external
-> providers **only** when you explicitly configure and approve it.
+**A local-first, omni-capable AI assistant** — like ChatGPT/Claude, but it runs open-source models
+on **your** hardware, works with **your** files and tools, and reaches external providers **only**
+when you explicitly configure and approve it.
 
 PersonalAI is **extensible** (tools + MCP), **structured-output-first** (schemas everywhere),
 **open-source-first** (verified provenance only), and **security-first** (zero-trust toward
