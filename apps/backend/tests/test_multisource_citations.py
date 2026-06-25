@@ -10,6 +10,7 @@ lives behind the DB skip; these run everywhere.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 
 from langchain_core.documents import Document
 
@@ -18,7 +19,12 @@ from personalai_backend.app import (
     _per_source_retrieval_items,
 )
 from personalai_backend.rag.retriever import VectorItemRetriever, _document_to_item
-from personalai_contracts.ports import SOURCE_KIND_MEMORY, SOURCE_KIND_VECTOR, RetrievalQuery
+from personalai_contracts.ports import (
+    SOURCE_KIND_MEMORY,
+    SOURCE_KIND_VECTOR,
+    RetrievalQuery,
+    RetrievedItem,
+)
 
 
 def _cites() -> list[dict[str, object]]:
@@ -73,12 +79,16 @@ def test_add_source_kind_breakdown_appends_per_kind_rows() -> None:
         "total_chars": 10,
     }
     _add_source_kind_breakdown(breakdown, _cites())
-    labels = [it["label"] for it in breakdown["items"]]  # type: ignore[union-attr]
+    items = breakdown["items"]
+    assert isinstance(items, list)
+    labels = [it["label"] for it in items]
     assert "Documents (vector)" in labels
     assert "Memory" in labels
     # The original item is preserved (additive), and totals grow.
     assert "Documents" in labels
-    assert breakdown["total_chars"] > 10
+    total_chars = breakdown["total_chars"]
+    assert isinstance(total_chars, int)
+    assert total_chars > 10
 
 
 def test_document_to_item_maps_citation_metadata() -> None:
@@ -118,7 +128,7 @@ class _FakeInner:
 def test_vector_item_retriever_adapts_documents_to_items() -> None:
     adapter = VectorItemRetriever(_FakeInner())  # type: ignore[arg-type]
 
-    async def _run():  # type: ignore[no-untyped-def]
+    async def _run() -> Sequence[RetrievedItem]:
         return await adapter.retrieve(RetrievalQuery(text="q", top_k=5))
 
     items = asyncio.run(_run())

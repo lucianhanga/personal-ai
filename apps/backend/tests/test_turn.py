@@ -179,6 +179,7 @@ def test_run_turn_multisource_forwards_unified_citations() -> None:
     assert "citations" in kinds
     assert kinds[-1] == "final"
     cite_ev = next(e for e in events if e.kind == "citations")
+    assert cite_ev.output is not None
     cites = cite_ev.output["citations"]
     seen = {c["source_kind"] for c in cites}
     assert seen == {SOURCE_KIND_VECTOR, SOURCE_KIND_MEMORY}

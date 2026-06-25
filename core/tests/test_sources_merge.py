@@ -62,7 +62,9 @@ def test_cross_source_rrf_ranks_by_rank_not_raw_score() -> None:
     # source ties. The merge is stable, so the first-seen rank-1 (vector's shared) leads.
     assert result.citations[0]["source_id"] == "doc-shared"
     # RRF score equals 1/(k+0) for a single rank-1 appearance (citation score is rounded to 6dp).
-    assert abs(float(result.citations[0]["score"]) - 1.0 / RRF_K) < 1e-5
+    score = result.citations[0]["score"]
+    assert isinstance(score, float)
+    assert abs(score - 1.0 / RRF_K) < 1e-5
 
 
 def test_dedup_records_merged_from_and_keeps_higher_provenance() -> None:
@@ -76,7 +78,9 @@ def test_dedup_records_merged_from_and_keeps_higher_provenance() -> None:
     assert len(result.citations) == 1  # deduped
     cite = result.citations[0]
     assert cite["source_kind"] == SOURCE_KIND_VECTOR  # higher-provenance representative kept
-    assert SOURCE_KIND_MEMORY in cite["merged_from"]  # the other source recorded
+    merged_from = cite["merged_from"]
+    assert isinstance(merged_from, list)
+    assert SOURCE_KIND_MEMORY in merged_from  # the other source recorded
 
 
 def test_token_budget_trims_to_fit() -> None:

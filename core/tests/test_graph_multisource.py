@@ -103,6 +103,7 @@ def test_multisource_emits_citations_with_source_kind() -> None:
     assert "citations" in types
     assert types.index("citations") < types.index("draft")
     cite_ev = next(e for e in events if e.type == "citations")
+    assert cite_ev.output is not None
     cites = cite_ev.output["citations"]
     kinds = {c["source_kind"] for c in cites}
     assert kinds == {SOURCE_KIND_VECTOR, SOURCE_KIND_MEMORY}  # both cheap sources fused
@@ -141,6 +142,7 @@ def test_multisource_with_only_empty_sources_grounds_on_nothing() -> None:
     types = [e.type for e in events]
     assert types[-1] == "final"
     cite_ev = next(e for e in events if e.type == "citations")
+    assert cite_ev.output is not None
     assert cite_ev.output["citations"] == []  # nothing retrieved
 
 
