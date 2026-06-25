@@ -258,6 +258,83 @@ def test_large_tool_output_is_truncated() -> None:
     assert len(_tool_payload(True, {"content": "small"}, None)) < 100  # short output untouched
 
 
+# --- Runaway-generation guard, Layer 3 streaming watchdog (#414) ----------------------------------
+
+from collections.abc import AsyncIterator  # noqa: E402 - grouped with the watchdog tests below
+
+from personalai_contracts.ports import GenerationChunk  # noqa: E402
+from personalai_core import RunawayConfig  # noqa: E402
+
+
+class _LoopingProvider(FakeModelProvider):
+    """A provider whose stream emits the same line forever (the incident). ``emitted`` counts the
+    deltas actually pulled, proving ``run_agent`` ABANDONS the stream instead of draining it."""
+
+    def __init__(self, line: str = 'Let\'s try: "a 10-word summary"\n', cap: int = 100_000) -> None:
+        super().__init__(name="loop")
+        self.emitted = 0
+        self._line = line
+        self._cap = cap  # a safety ceiling so a regression doesn't hang the suite forever
+
+    async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+        while self.emitted < self._cap:
+            self.emitted += 1
+            yield GenerationChunk(delta=self._line)
+        yield GenerationChunk(done=True, finish_reason="stop")
+
+
+def test_watchdog_aborts_looping_stream_without_draining_it() -> None:
+    provider = _LoopingProvider()
+
+    async def _run() -> list[AgentEvent]:
+        return [
+            ev
+            async for ev in run_agent(
+                messages=[ChatMessage(Role.USER, "summarize in 10 words")],
+                provider=provider,
+                model="m",
+                gateway=_gateway(),
+                tools=[RegisteredTool(CALC, _Calc())],
+            )
+        ]
+
+    events = asyncio.run(_run())
+    kinds = [e.type for e in events]
+    # The watchdog tripped: a distinct marker then the final (the partial still reaches the UI).
+    assert "repetition_stopped" in kinds
+    assert kinds[-1] == "final"
+    stop = next(e for e in events if e.type == "repetition_stopped")
+    assert stop.error and "repeated" in stop.error
+    # The kept partial answer is the looped text (non-empty), surfaced on the final.
+    assert events[-1].answer
+    # CRITICAL: the (effectively infinite) provider stream was ABANDONED, not drained — only a
+    # bounded prefix was pulled before the break closed it (saving tokens / stopping Ollama).
+    assert provider.emitted < 1000
+
+
+def test_watchdog_disabled_does_not_abort() -> None:
+    # With the guard disabled, the same looping stream is NOT aborted by the watchdog (it runs to
+    # the provider's own cap). Proves the guard is the thing stopping it, and is opt-out.
+    provider = _LoopingProvider(cap=200)
+
+    async def _run() -> list[AgentEvent]:
+        return [
+            ev
+            async for ev in run_agent(
+                messages=[ChatMessage(Role.USER, "go")],
+                provider=provider,
+                model="m",
+                gateway=_gateway(),
+                tools=[RegisteredTool(CALC, _Calc())],
+                runaway=RunawayConfig(enabled=False),
+            )
+        ]
+
+    events = asyncio.run(_run())
+    assert not any(e.type == "repetition_stopped" for e in events)
+    assert provider.emitted == 200  # drained the whole stream (no abort)
+
+
 # --- Egress-approval gate, engine-agnostic agent layer (#377) ------------------------------------
 
 from personalai_core.agent import (  # noqa: E402 - grouped with the egress-gate tests below

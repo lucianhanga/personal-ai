@@ -61,16 +61,25 @@ def _capabilities_from(caps: Sequence[str], context_length: int | None) -> Model
 
 
 def _options(
-    request: GenerationRequest, sampling: Mapping[str, Any] | None = None
+    request: GenerationRequest,
+    sampling: Mapping[str, Any] | None = None,
+    max_output_tokens: int | None = None,
 ) -> dict[str, Any]:
-    # Start from the configured sampling defaults (top_p/top_k/temperature tuned for the model),
-    # then let an explicit per-request temperature win. Without this Ollama uses the model's looser
-    # Modelfile defaults (e.g. Qwen3's temperature 1.0 / top_p 0.95), which drift off the context.
+    # Start from the configured sampling defaults (top_p/top_k/temperature + repeat penalties tuned
+    # for the model), then let an explicit per-request temperature win. Without this Ollama uses the
+    # model's looser Modelfile defaults (e.g. Qwen3's temperature 1.0 / top_p 0.95), which drift off
+    # the context.
     options: dict[str, Any] = dict(sampling or {})
     if request.temperature is not None:
         options["temperature"] = request.temperature
     if request.max_tokens is not None:
+        # An explicit per-request cap always wins (even when it is below the configured ceiling).
         options["num_predict"] = request.max_tokens
+    elif max_output_tokens is not None:
+        # Layer 2 (#414): a hard per-turn output ceiling. Agent turns don't pass ``max_tokens``, so
+        # without this a single generation runs unbounded until the wall-clock timeout. Apply the
+        # configured ceiling as the default ``num_predict`` for the unbounded case.
+        options["num_predict"] = max_output_tokens
     return options
 
 
@@ -96,8 +105,9 @@ def _chat_payload(
     num_ctx: int | None = None,
     keep_alive: str | None = None,
     sampling: Mapping[str, Any] | None = None,
+    max_output_tokens: int | None = None,
 ) -> dict[str, Any]:
-    options = _options(request, sampling)
+    options = _options(request, sampling, max_output_tokens)
     if num_ctx is not None:
         options["num_ctx"] = num_ctx
     payload: dict[str, Any] = {
@@ -165,6 +175,9 @@ class OllamaProvider:
         temperature: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
+        repeat_penalty: float | None = None,
+        repeat_last_n: int | None = None,
+        max_output_tokens: int | None = None,
         egress_guard: EgressGuard | None = None,
     ) -> None:
         self._base = base_url.rstrip("/")
@@ -176,8 +189,14 @@ class OllamaProvider:
         self._num_ctx = num_ctx
         # Keep the model resident this long after a request (e.g. "30m", "-1"); None = default.
         self._keep_alive = keep_alive
+        # Hard per-turn output ceiling (Layer 2, #414): the default ``num_predict`` applied when a
+        # request carries no explicit ``max_tokens``, so an unbounded agent generation cannot run
+        # forever. None leaves the turn uncapped (the model's default). See _options.
+        self._max_output_tokens = max_output_tokens
         # Default sampling sent unless a request overrides temperature (tuned for the model so it
-        # stays grounded instead of using the model's looser Modelfile defaults).
+        # stays grounded instead of using the model's looser Modelfile defaults). ``repeat_penalty``
+        # / ``repeat_last_n`` (Layer 1, #414) make the sampler less likely to fall into verbatim
+        # loops; kept conservative (<= ~1.2) so prose/code are not distorted.
         self._sampling: dict[str, Any] = {}
         if temperature is not None:
             self._sampling["temperature"] = temperature
@@ -185,6 +204,10 @@ class OllamaProvider:
             self._sampling["top_p"] = top_p
         if top_k is not None:
             self._sampling["top_k"] = top_k
+        if repeat_penalty is not None:
+            self._sampling["repeat_penalty"] = repeat_penalty
+        if repeat_last_n is not None:
+            self._sampling["repeat_last_n"] = repeat_last_n
         # Names of models Ollama proxies to the cloud (remote_host set); populated by list_models.
         # Used to warn before a request silently leaves the machine (stop-gap until M2).
         self._remote_models: set[str] = set()
@@ -239,6 +262,7 @@ class OllamaProvider:
                 num_ctx=self._num_ctx,
                 keep_alive=self._keep_alive,
                 sampling=self._sampling,
+                max_output_tokens=self._max_output_tokens,
             ),
         )
         message = data.get("message") or {}
@@ -263,6 +287,7 @@ class OllamaProvider:
                 num_ctx=self._num_ctx,
                 keep_alive=self._keep_alive,
                 sampling=self._sampling,
+                max_output_tokens=self._max_output_tokens,
             ),
         ) as response:
             response.raise_for_status()

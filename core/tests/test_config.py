@@ -24,6 +24,37 @@ def test_from_env_parses_agent_graph_flags() -> None:
     assert config.agent_accuracy_mode == "accurate"
 
 
+def test_runaway_guard_defaults_and_env_parsing() -> None:
+    # Runaway guard (#414): defaults are present and conservative; the guard is ON by default.
+    config = CoreConfig()
+    assert config.ollama_repeat_penalty == 1.1 and config.ollama_repeat_last_n == 64
+    assert config.openai_frequency_penalty == 0.3 and config.openai_presence_penalty == 0.0
+    assert config.max_output_tokens == 4096
+    assert config.runaway_guard_enabled is True
+
+    overridden = CoreConfig.from_env(
+        {
+            "PERSONALAI_OLLAMA_REPEAT_PENALTY": "1.2",
+            "PERSONALAI_OLLAMA_REPEAT_LAST_N": "128",
+            "PERSONALAI_OPENAI_FREQUENCY_PENALTY": "0.5",
+            "PERSONALAI_MAX_OUTPUT_TOKENS": "2048",
+            "PERSONALAI_RUNAWAY_GUARD_ENABLED": "false",
+            "PERSONALAI_RUNAWAY_LINE_REPEAT_THRESHOLD": "10",
+        }
+    )
+    assert overridden.ollama_repeat_penalty == 1.2 and overridden.ollama_repeat_last_n == 128
+    assert overridden.openai_frequency_penalty == 0.5
+    assert overridden.max_output_tokens == 2048
+    assert overridden.runaway_guard_enabled is False
+    assert overridden.runaway_line_repeat_threshold == 10
+
+
+def test_runaway_config_builds_from_fields() -> None:
+    rc = CoreConfig(runaway_guard_enabled=False, runaway_line_repeat_threshold=9).runaway_config()
+    assert rc.enabled is False and rc.line_repeat_threshold == 9
+    assert rc.min_line_chars == 12  # the default threshold carried through
+
+
 def test_from_env_overrides_and_parses_bool() -> None:
     config = CoreConfig.from_env(
         {

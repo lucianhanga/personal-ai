@@ -84,6 +84,45 @@ def test_generate_passes_tools_and_parses_tool_calls() -> None:
 
 
 @respx.mock
+def test_repetition_penalties_and_output_ceiling_in_request() -> None:
+    # Runaway guard Layers 1-2 (#414): frequency/presence penalties + the per-turn output ceiling
+    # land in the request body; an explicit smaller max_tokens still wins over the ceiling.
+    route = respx.post(f"{BASE}/chat/completions").mock(
+        return_value=httpx.Response(
+            200, json={"model": "gpt-x", "choices": [{"message": {"content": "ok"}}]}
+        )
+    )
+
+    async def _run(req: GenerationRequest) -> None:
+        provider = OpenAICompatProvider(
+            api_key="k",
+            base_url=BASE,
+            frequency_penalty=0.3,
+            presence_penalty=0.0,
+            max_output_tokens=4096,
+        )
+        try:
+            await provider.generate(req)
+        finally:
+            await provider.aclose()
+
+    asyncio.run(_run(GenerationRequest(messages=[ChatMessage(Role.USER, "hi")], model="gpt-x")))
+    sent = _json.loads(route.calls.last.request.content)
+    assert sent["frequency_penalty"] == 0.3 and sent["presence_penalty"] == 0.0
+    assert sent["max_tokens"] == 4096  # ceiling applied on the unbounded turn
+
+    asyncio.run(
+        _run(
+            GenerationRequest(
+                messages=[ChatMessage(Role.USER, "hi")], model="gpt-x", max_tokens=128
+            )
+        )
+    )
+    sent = _json.loads(route.calls.last.request.content)
+    assert sent["max_tokens"] == 128  # explicit smaller cap wins over the ceiling
+
+
+@respx.mock
 def test_generate_maps_response_sends_key_and_schema() -> None:
     route = respx.post(f"{BASE}/chat/completions").mock(
         return_value=httpx.Response(

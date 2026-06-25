@@ -28,6 +28,7 @@ from personalai_core.memory_extraction import extract_facts, recall, remember
 from personalai_core.registries import Registries
 from personalai_core.registry import Registry, RegistryError
 from personalai_core.retrieval import VectorRetriever
+from personalai_core.runaway import RepetitionWatchdog, RunawayConfig
 from personalai_core.structured import generate_structured
 
 __version__ = "0.0.0"
@@ -53,6 +54,8 @@ __all__ = [
     "Registries",
     "Registry",
     "RegistryError",
+    "RepetitionWatchdog",
+    "RunawayConfig",
     "ToolGateway",
     "VectorRetriever",
     "__version__",

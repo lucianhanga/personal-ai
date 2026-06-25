@@ -19,7 +19,7 @@ from personalai_contracts.ports import (
     ModelProvider,
     Role,
 )
-from personalai_core import run_agent, run_graph
+from personalai_core import RunawayConfig, run_agent, run_graph
 
 # The single-agent loop has no agent persona, so without a nudge the model answers from "head" even
 # when a tool would be exact — tools end up enabled but unused (#318). Encourage tool use here; the
@@ -48,6 +48,9 @@ class TurnEvent:
         "verification",
         "approval_request",
         "draft",
+        # The streaming repetition watchdog (#414) aborted a degenerate looping generation. ``text``
+        # carries a human-readable reason for the trace ("stopped: the model was repeating itself").
+        "repetition_stopped",
     ]
     text: str = ""
     phase: str = ""  # "call" | "result" for tool events
@@ -78,6 +81,7 @@ async def run_turn(
     checkpointer: Any | None = None,
     thread_id: str | None = None,
     resume: Any | None = None,
+    runaway: RunawayConfig | None = None,
 ) -> AsyncIterator[TurnEvent]:
     """Drive one turn, yielding ordered TurnEvents (ending with a single ``final``, or an
     ``approval_request`` when the durable human gate suspends the run).
@@ -104,6 +108,7 @@ async def run_turn(
                 resume=resume,
                 prompts=agent_prompts,
                 accuracy_mode=accuracy_mode,
+                runaway=runaway,
             )
             if graph_enabled
             else run_agent(
@@ -120,6 +125,7 @@ async def run_turn(
                 approved=approve_tools,
                 think=generation.think,
                 max_iterations=max_iterations,
+                runaway=runaway,
             )
         )
         async for ev in agent_events:
@@ -138,6 +144,15 @@ async def run_turn(
                 yield TurnEvent("draft", text=ev.answer or "", attempt=ev.attempt)
             elif ev.type == "approval_request":
                 yield TurnEvent("approval_request", output=ev.output or {})
+            elif ev.type == "repetition_stopped":
+                # The watchdog aborted a looping generation (#414). Surface a trace marker; the
+                # ``final`` that follows carries the kept partial answer (or the fallback text).
+                yield TurnEvent(
+                    "repetition_stopped",
+                    text="The model got stuck repeating itself and was stopped"
+                    + (f" ({ev.error})" if ev.error else "")
+                    + ". Try rephrasing (for example, drop an exact word count).",
+                )
             elif ev.type == "final":
                 # text carries the full answer so a resumed stream (no deltas) can re-deliver it.
                 yield TurnEvent("final", text=ev.answer or "", usage=ev.usage or {})

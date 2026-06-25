@@ -14,6 +14,7 @@ from pydantic import Field
 
 from personalai_contracts.schemas import TenantSettings
 from personalai_contracts.schemas.base import StrictModel
+from personalai_core.runaway import RunawayConfig
 
 _ENV_PREFIX = "PERSONALAI_"
 
@@ -28,6 +29,19 @@ _ENV_FIELDS = {
     "OLLAMA_TEMPERATURE": "ollama_temperature",
     "OLLAMA_TOP_P": "ollama_top_p",
     "OLLAMA_TOP_K": "ollama_top_k",
+    "OLLAMA_REPEAT_PENALTY": "ollama_repeat_penalty",
+    "OLLAMA_REPEAT_LAST_N": "ollama_repeat_last_n",
+    "OPENAI_FREQUENCY_PENALTY": "openai_frequency_penalty",
+    "OPENAI_PRESENCE_PENALTY": "openai_presence_penalty",
+    "MAX_OUTPUT_TOKENS": "max_output_tokens",
+    "RUNAWAY_GUARD_ENABLED": "runaway_guard_enabled",
+    "RUNAWAY_MIN_LINE_CHARS": "runaway_min_line_chars",
+    "RUNAWAY_LINE_REPEAT_THRESHOLD": "runaway_line_repeat_threshold",
+    "RUNAWAY_LINE_WINDOW": "runaway_line_window",
+    "RUNAWAY_NGRAM_SIZE": "runaway_ngram_size",
+    "RUNAWAY_NGRAM_REPEAT_THRESHOLD": "runaway_ngram_repeat_threshold",
+    "RUNAWAY_NGRAM_COVERAGE": "runaway_ngram_coverage",
+    "RUNAWAY_WORD_WINDOW": "runaway_word_window",
     "MCP_CONFIG": "mcp_config_path",
     "AGENT_MAX_ITERATIONS": "agent_max_iterations",
     "AGENT_TIMEOUT_SECONDS": "agent_timeout_seconds",
@@ -83,13 +97,28 @@ _INT_FIELDS = {
     "memory_top_k",
     "ollama_num_ctx",
     "ollama_top_k",
+    "ollama_repeat_last_n",
+    "max_output_tokens",
+    "runaway_min_line_chars",
+    "runaway_line_repeat_threshold",
+    "runaway_line_window",
+    "runaway_ngram_size",
+    "runaway_ngram_repeat_threshold",
+    "runaway_word_window",
     "agent_max_iterations",
     "agent_timeout_seconds",
     "session_idle_seconds",
     "session_absolute_seconds",
     "web_search_max_results",
 }
-_FLOAT_FIELDS = {"ollama_temperature", "ollama_top_p"}
+_FLOAT_FIELDS = {
+    "ollama_temperature",
+    "ollama_top_p",
+    "ollama_repeat_penalty",
+    "openai_frequency_penalty",
+    "openai_presence_penalty",
+    "runaway_ngram_coverage",
+}
 _BOOL_FIELDS = {
     "egress_enabled",
     "stm_summarize",
@@ -100,6 +129,7 @@ _BOOL_FIELDS = {
     "agent_human_gate",
     "transcribe_enabled",
     "tts_enabled",
+    "runaway_guard_enabled",
 }
 
 _CSV_FIELDS = {"allowed_origins", "allowed_egress_hosts"}
@@ -136,6 +166,45 @@ class CoreConfig(StrictModel):
     ollama_temperature: float = 0.7
     ollama_top_p: float = 0.8
     ollama_top_k: int = 20
+    # Repetition penalties (Layer 1 of the runaway-generation guard, #414): make the sampler less
+    # likely to fall into verbatim loops. Conservative defaults — do NOT raise repeat_penalty above
+    # ~1.2 by default (1.3-1.5 strongly suppresses but distorts prose, and breaks variable reuse in
+    # code). repeat_last_n is the look-back window the penalty applies over. These REDUCE but do not
+    # ELIMINATE loops, hence the hard output cap (max_output_tokens) and the streaming watchdog.
+    ollama_repeat_penalty: float = 1.1
+    ollama_repeat_last_n: int = 64
+    # OpenAI-compatible equivalent of the repeat penalties (range -2..2; 0.1-1.0 is the "reduce
+    # somewhat" band, >1 degrades quality). frequency_penalty scales with how often a token already
+    # appeared; presence_penalty is a flat penalty for any reuse (left at 0 by default).
+    openai_frequency_penalty: float = 0.3
+    openai_presence_penalty: float = 0.0
+    # Hard per-turn output ceiling (Layer 2 of the runaway guard, #414): the default num_predict /
+    # max_tokens applied to every generation that carries no explicit max_tokens, so a single agent
+    # turn cannot run unbounded until the wall-clock timeout. Generous for a normal answer, fatal to
+    # an unbounded loop. An explicit smaller per-request max_tokens still wins. A length-capped
+    # finish surfaces as finish_reason == "length" so the UI frames it as truncation, not a hang.
+    max_output_tokens: int = 4096
+    # Streaming repetition watchdog (Layer 3 — the PRIMARY fix, #414). A server-side detector over
+    # streamed deltas that ABORTS a generation degenerating into verbatim repetition (the incident:
+    # the same reasoning line repeated hundreds of times, under any token cap). Default ON. The
+    # thresholds are conservative so legitimate short lists / repeated code idioms do NOT trip; they
+    # are config-tunable so they can be loosened without a deploy.
+    runaway_guard_enabled: bool = True
+    # A line must be at least this many chars (after trimming) before repeats of it count — keeps
+    # legitimate blank lines / short list items from tripping the detector.
+    runaway_min_line_chars: int = 12
+    # Trip when the SAME normalized line repeats this many times within the recent line window.
+    runaway_line_repeat_threshold: int = 6
+    runaway_line_window: int = 80
+    # Trip when a word n-gram of this length repeats runaway_ngram_repeat_threshold times within the
+    # recent word window (catches near-identical loops that are not line-delimited).
+    runaway_ngram_size: int = 8
+    runaway_ngram_repeat_threshold: int = 24
+    # A repeating n-gram must also cover at least this fraction of the recent word window to trip —
+    # separates a tight verbatim loop from frequent-but-legitimate phrase reuse (numbered steps,
+    # boilerplate). See RunawayConfig.ngram_coverage.
+    runaway_ngram_coverage: float = 0.5
+    runaway_word_window: int = 400
     # Path to an mcp.json (mcpServers map) of MCP servers to connect at startup (M7); empty = none.
     mcp_config_path: str = ""
     # Max model<->tool iterations in the agent loop before it must answer (multi-step tool use).
@@ -252,6 +321,20 @@ class CoreConfig(StrictModel):
     web_search_max_results: int = Field(
         default=5, description="Default number of web_search results (the tool caps it at 10)."
     )
+
+    def runaway_config(self) -> RunawayConfig:
+        """Assemble the streaming repetition watchdog's thresholds (#414) from this config, so the
+        agent loop can build a :class:`RepetitionWatchdog` per turn without reaching into fields."""
+        return RunawayConfig(
+            enabled=self.runaway_guard_enabled,
+            min_line_chars=self.runaway_min_line_chars,
+            line_repeat_threshold=self.runaway_line_repeat_threshold,
+            line_window=self.runaway_line_window,
+            ngram_size=self.runaway_ngram_size,
+            ngram_repeat_threshold=self.runaway_ngram_repeat_threshold,
+            ngram_coverage=self.runaway_ngram_coverage,
+            word_window=self.runaway_word_window,
+        )
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> CoreConfig:
