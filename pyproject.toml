@@ -75,6 +75,11 @@ ignore_missing_imports = true
 module = "yaml.*"
 ignore_missing_imports = true
 
+# OCR fallback deps (#450) ship no type stubs / py.typed marker.
+[[tool.mypy.overrides]]
+module = ["rapidocr_onnxruntime.*", "pypdfium2.*"]
+ignore_missing_imports = true
+
 # ---------------------------------------------------------------------------
 # pytest + coverage.
 # ---------------------------------------------------------------------------

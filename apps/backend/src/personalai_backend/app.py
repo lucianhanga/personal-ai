@@ -2659,7 +2659,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             )
         t0 = time.perf_counter()
         try:
-            parsed = parse_document(content, file.filename or "document")
+            # Threaded: a scanned PDF falls back to CPU-bound OCR (#450), which would otherwise
+            # block the event loop for the whole document (~0.6s/page).
+            parsed = await asyncio.to_thread(parse_document, content, file.filename or "document")
         except UnsupportedFileTypeError as exc:
             return StructuredResult(
                 ok=False, error=ErrorInfo(code="E_UNSUPPORTED_FILE", message=str(exc))

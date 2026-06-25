@@ -7,6 +7,7 @@ Postgres pool are handled by the endpoint/lifespan.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 from personalai_contracts.ports import ModelProvider, VectorRecord, VectorRepository
@@ -82,7 +83,9 @@ async def ingest_file(
 
     ``scope`` defaults to the global corpus so the Settings -> Documents path is unchanged (#420).
     """
-    parsed = parse_document(content, filename)
+    # Off-load to a thread: a scanned PDF triggers CPU-bound OCR (#450), which must not block the
+    # event loop. A text-layer parse returns near-instantly, so the thread hop is negligible.
+    parsed = await asyncio.to_thread(parse_document, content, filename)
     chunk_count = await _chunk_embed_store(
         text=parsed.text,
         name=filename,

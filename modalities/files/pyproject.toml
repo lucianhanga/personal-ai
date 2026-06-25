@@ -6,7 +6,15 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [{ name = "Lucian Hanga" }]
-dependencies = ["personalai-contracts", "pypdf>=4.0", "python-docx>=1.1"]
+dependencies = [
+    "personalai-contracts",
+    "pypdf>=4.0",
+    "python-docx>=1.1",
+    # OCR fallback for scanned / image-only PDFs (#450), fully on-device / offline:
+    # RapidOCR = PaddleOCR models via ONNX Runtime (Apache-2.0); pypdfium2 = PDF rasterizer (BSD).
+    "rapidocr-onnxruntime>=1.2",
+    "pypdfium2>=4.0",
+]
 
 [build-system]
 requires = ["hatchling"]
