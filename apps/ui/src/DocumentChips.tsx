@@ -9,8 +9,16 @@ const MUTED = "#6b7280";
 
 // `small` = extracted text fits the inline token gate (folds inline into the message); `large` = over
 // the gate (NOT folded — sent as `documents_full` and ingested into the conversation RAG index at
-// send for retrieval-with-citations, Tier-2 ingest-at-send #436/#420).
-export type DocumentStatus = "extracting" | "small" | "large" | "error";
+// send for retrieval-with-citations, Tier-2 ingest-at-send #436/#420). `empty` = the parse returned
+// no selectable text (a scanned / image-only PDF — pypdf does NOT OCR; #446): NOT an extraction
+// failure, so it is shown as an explained empty-state (mirrors AudioChips' "no speech") and is NOT
+// folded into the message / not RAG-ingested.
+export type DocumentStatus = "extracting" | "small" | "large" | "empty" | "error";
+
+// The explanation shown in the panel of an `empty` doc (#446). The panel still opens so the user can
+// read WHY the chip is blank rather than seeing nothing.
+export const EMPTY_DOC_EXPLANATION =
+  "This PDF appears to be scanned or image-only — no selectable text layer.";
 
 export interface DocumentAttachment {
   id: string;
@@ -88,10 +96,14 @@ function CheckIcon(): React.ReactElement {
   );
 }
 
-/** The floating panel: full extracted text (scrollable, bounded) + a Copy button. Only rendered for
- * `done` chips. Dismissed by the parent on Escape/click-away; this owns only the Copy state. */
+/** The floating panel: full extracted text (scrollable, bounded) + a Copy button. Rendered for chips
+ * that have text (`small`/`large`/sent), and for `empty` chips where it explains WHY the doc is blank
+ * (a scanned / image-only PDF, #446) instead of leaving the panel empty. Dismissed by the parent on
+ * Escape/click-away; this owns only the Copy state. */
 function TextPanel({ chip }: { chip: DocumentAttachment }): React.ReactElement {
   const [copied, setCopied] = useState(false);
+  // An `empty` doc has no extractable text (#446): show the explanation, no Copy (nothing to copy).
+  const isEmpty = chip.status === "empty";
 
   async function copy(): Promise<void> {
     try {
@@ -150,31 +162,35 @@ function TextPanel({ chip }: { chip: DocumentAttachment }): React.ReactElement {
         >
           {chip.name}
         </span>
-        <button
-          data-testid={`copy-document-${chip.id}`}
-          onClick={() => void copy()}
-          aria-label="Copy document text"
-          title={copied ? "Copied" : "Copy"}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: "1.7em",
-            height: "1.7em",
-            background: "none",
-            border: "1px solid rgba(127,127,127,0.3)",
-            borderRadius: 5,
-            color: copied ? GREEN : MUTED,
-            cursor: "pointer",
-            padding: 0,
-            flexShrink: 0,
-            transition: "color 0.15s",
-          }}
-        >
-          {copied ? <CheckIcon /> : <CopyIcon />}
-        </button>
+        {/* Empty docs have nothing to copy — hide the Copy control (#446). */}
+        {!isEmpty && (
+          <button
+            data-testid={`copy-document-${chip.id}`}
+            onClick={() => void copy()}
+            aria-label="Copy document text"
+            title={copied ? "Copied" : "Copy"}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: "1.7em",
+              height: "1.7em",
+              background: "none",
+              border: "1px solid rgba(127,127,127,0.3)",
+              borderRadius: 5,
+              color: copied ? GREEN : MUTED,
+              cursor: "pointer",
+              padding: 0,
+              flexShrink: 0,
+              transition: "color 0.15s",
+            }}
+          >
+            {copied ? <CheckIcon /> : <CopyIcon />}
+          </button>
+        )}
       </div>
       <div
+        data-testid={isEmpty ? "document-empty-explanation" : undefined}
         style={{
           maxHeight: "14em",
           overflow: "auto",
@@ -182,11 +198,13 @@ function TextPanel({ chip }: { chip: DocumentAttachment }): React.ReactElement {
           lineHeight: 1.5,
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
-          color: "#222",
+          // The explanation is informational (muted/italic), not the document's own text.
+          color: isEmpty ? MUTED : "#222",
+          fontStyle: isEmpty ? "italic" : "normal",
           padding: "0.55rem 0.6rem",
         }}
       >
-        {chip.text}
+        {isEmpty ? EMPTY_DOC_EXPLANATION : chip.text}
       </div>
     </div>
   );
@@ -217,6 +235,10 @@ function statusCue(chip: DocumentAttachment): { color: string; node: React.React
       return { color: MUTED, node: <span>{snippet(chip.text) || "text"}</span> };
     case "large":
       return { color: AMBER, node: <span>{snippet(chip.text) || "text"}</span> };
+    case "empty":
+      // Scanned / image-only PDF — no selectable text (#446). NOT an error (muted, not red); the
+      // panel explains it. Mirrors AudioChips' "no speech".
+      return { color: MUTED, node: <span>no text found</span> };
     case "error":
       return { color: RED, node: <span>{chip.error ?? "extraction failed"}</span> };
   }
@@ -300,8 +322,10 @@ export function DocumentChips({
       <style>{"@keyframes doc-pulse{0%,100%{opacity:1}50%{opacity:0.25}}"}</style>
       {chips.map((chip) => {
         const cue = statusCue(chip);
-        // Both small + large have extracted text → the panel (read/copy) opens for either.
-        const canOpen = chip.status === "small" || chip.status === "large";
+        // small + large have extracted text → the panel (read/copy) opens for either; `empty` opens
+        // too, to show the scanned/image-only explanation rather than a blank panel (#446).
+        const canOpen =
+          chip.status === "small" || chip.status === "large" || chip.status === "empty";
         const open = canOpen && openId === chip.id;
         return (
           <span
@@ -329,7 +353,17 @@ export function DocumentChips({
             }}
           >
             <span style={{ display: "inline-flex", lineHeight: 1 }}>
-              <DocIcon color={chip.status === "small" ? GREEN : chip.status === "large" ? AMBER : ACCENT} />
+              <DocIcon
+                color={
+                  chip.status === "small"
+                    ? GREEN
+                    : chip.status === "large"
+                      ? AMBER
+                      : chip.status === "empty"
+                        ? MUTED
+                        : ACCENT
+                }
+              />
             </span>
             <span
               style={{
@@ -354,7 +388,7 @@ export function DocumentChips({
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
-                fontStyle: chip.status === "small" ? "italic" : "normal",
+                fontStyle: chip.status === "small" || chip.status === "empty" ? "italic" : "normal",
               }}
             >
               {cue.node}

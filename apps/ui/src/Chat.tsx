@@ -957,7 +957,17 @@ export function Chat({
       void extractDocument(token, file, controller.signal)
         .then((doc) => {
           docAbortRef.current.delete(id);
-          const status = docTokenEstimate(doc.text) <= DOC_INLINE_TOKEN_GATE ? "small" : "large";
+          // A scanned / image-only PDF extracts to empty/whitespace (pypdf does NOT OCR; #446). That
+          // is NOT an extraction error: mark it `empty` (not small/large) so the chip explains it and
+          // it is excluded from the folded message + the RAG ingest (smallDocs/largeDocs/doneDocs all
+          // match only small/large, so an empty doc never folds, never ships as documents_full, and
+          // never blocks submit).
+          const status: DocumentAttachment["status"] =
+            doc.text.trim() === ""
+              ? "empty"
+              : docTokenEstimate(doc.text) <= DOC_INLINE_TOKEN_GATE
+                ? "small"
+                : "large";
           setDocumentAttachments((cur) =>
             cur.map((c) => (c.id === id ? { ...c, status, text: doc.text, ms: doc.ms } : c)),
           );

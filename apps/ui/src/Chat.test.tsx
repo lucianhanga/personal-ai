@@ -776,6 +776,87 @@ test("a large document is sent in documents_full for RAG ingest, not folded inli
   expect(last?.documents).toEqual([{ name: "report.pdf", text: big }]);
 });
 
+test("a dropped document yields a `document_extracted` activity persisted in the send body (#424)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "extractDocument").mockResolvedValue({
+    name: "notes.txt",
+    mime: "text/plain",
+    text: "the quick brown fox",
+    truncated: false,
+    model: null,
+    ms: 42,
+  });
+  const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
+    onDelta("ok");
+  });
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+  dropDoc(new File(["x"], "notes.txt", { type: "text/plain" }));
+  await waitFor(() =>
+    expect(screen.getByTestId("document-attachment")).toHaveAttribute("data-status", "small"),
+  );
+  // A live pre-turn resource node for the document parse (no model -> document_extracted).
+  await waitFor(() => expect(screen.getByTestId("timeline-preturn")).toBeInTheDocument());
+  expect(screen.getByTestId("timeline-resource")).toHaveTextContent("Extracted document — notes.txt");
+
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "summarize" } });
+  fireEvent.click(screen.getByTestId("send"));
+  await waitFor(() => {
+    const lastUser = stream.mock.calls[0][0].messages.at(-1);
+    expect(lastUser?.activities).toHaveLength(1);
+    const act = lastUser!.activities![0];
+    expect(act.action).toBe("document_extracted");
+    expect(act.ref).toBe("notes.txt");
+    expect(act.model).toBeNull(); // a local CPU parse has no model
+    expect(act.ms).toBe(42);
+  });
+});
+
+test("a dropped audio file yields an `audio_transcribed` activity persisted in the send body (#424)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
+  vi.spyOn(api, "transcribeAudio").mockResolvedValue({
+    text: "the meeting transcript",
+    model: "whisper-1",
+    ms: 1200,
+  });
+  const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
+    onDelta("ok");
+  });
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("composer-dropzone")).toBeInTheDocument());
+  fireEvent.drop(screen.getByTestId("composer-dropzone"), {
+    dataTransfer: { files: [new File(["x"], "call.mp3", { type: "audio/mpeg" })], types: ["Files"] },
+  });
+  await waitFor(() =>
+    expect(screen.getByTestId("audio-attachment")).toHaveAttribute("data-status", "done"),
+  );
+  await waitFor(() => expect(screen.getByTestId("timeline-preturn")).toBeInTheDocument());
+  expect(screen.getByTestId("timeline-resource")).toHaveTextContent("Transcribed audio — call.mp3");
+
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "what was said?" } });
+  fireEvent.click(screen.getByTestId("send"));
+  await waitFor(() => {
+    const lastUser = stream.mock.calls[0][0].messages.at(-1);
+    expect(lastUser?.activities).toHaveLength(1);
+    const act = lastUser!.activities![0];
+    expect(act.action).toBe("audio_transcribed");
+    expect(act.ref).toBe("call.mp3");
+    expect(act.model).toBe("whisper-1");
+    expect(act.ms).toBe(1200);
+  });
+  // The folded content carries the transcript block (Option (b), #406).
+  const lastContent = stream.mock.calls[0][0].messages.at(-1)?.content;
+  expect(lastContent).toContain("[Audio: call.mp3]");
+  expect(lastContent).toContain("the meeting transcript");
+});
+
 test("an unsupported / failed extraction yields an error chip (#416)", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
@@ -790,6 +871,57 @@ test("an unsupported / failed extraction yields an error chip (#416)", async () 
     expect(screen.getByTestId("document-attachment")).toHaveAttribute("data-status", "error"),
   );
   expect(screen.getByTestId("document-attachment")).toHaveTextContent(/unsupported/i);
+});
+
+test("a scanned/image-only PDF (empty extracted text) becomes an `empty` chip, not folded or RAG'd (#446)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  // pypdf returns no text layer for a scanned PDF -> whitespace-only extraction. NOT an error.
+  vi.spyOn(api, "extractDocument").mockResolvedValue({
+    name: "scanned.pdf",
+    mime: "application/pdf",
+    text: "   \n  \t  ",
+    truncated: false,
+  });
+  const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
+    onDelta("ok");
+  });
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+
+  dropDoc(new File(["x"], "scanned.pdf", { type: "application/pdf" }));
+
+  // The chip lands in the `empty` state with the "no text found" cue (mirrors AudioChips' "no speech").
+  await waitFor(() =>
+    expect(screen.getByTestId("document-attachment")).toHaveAttribute("data-status", "empty"),
+  );
+  expect(screen.getByTestId("document-attachment")).toHaveTextContent(/no text found/i);
+  // An empty doc is neither folded inline nor RAG-ingested -> no retrieval badge.
+  expect(screen.queryByTestId("document-retrieval-badge")).toBeNull();
+
+  // The panel opens and EXPLAINS the scanned/image-only case rather than showing a blank panel.
+  fireEvent.focus(screen.getByTestId("document-attachment"));
+  expect(await screen.findByTestId("document-empty-explanation")).toHaveTextContent(
+    /scanned or image-only/i,
+  );
+  fireEvent.keyDown(document, { key: "Escape" });
+
+  // With ONLY an empty doc attached (no typed text), Send stays blocked — nothing to send.
+  expect(screen.getByTestId("send")).toBeDisabled();
+
+  // With typed text, the message sends but the empty doc is excluded from the model-facing content,
+  // from `documents` (the display chip), and from `documents_full` (RAG ingest).
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "summarize this" } });
+  fireEvent.click(screen.getByTestId("send"));
+  await waitFor(() => expect(stream).toHaveBeenCalled());
+  const last = stream.mock.calls[0][0].messages.at(-1);
+  expect(last?.content).toBe("summarize this"); // no "[Document: scanned.pdf]" fold
+  expect(last?.content).not.toContain("[Document:");
+  expect(last?.documents).toBeUndefined();
+  expect(last?.documents_full).toBeUndefined();
 });
 
 test("the send button is blocked while a document is still extracting (#416)", async () => {
@@ -1496,4 +1628,148 @@ test("Copy in chat A rehydrates the composer so it can be re-sent (cross-chat bu
   expect(screen.getByTestId("document-attachments")).toHaveTextContent("deck.pdf");
   // Secondary path: the plain text is also placed on the clipboard.
   expect(writeText).toHaveBeenCalledWith("Summarize the deck");
+});
+
+test("Copy onto a NON-empty composer asks to replace; Replace applies, Cancel keeps the draft (#441)", async () => {
+  vi.spyOn(api, "fetchProviders").mockResolvedValue({ default: "ollama", providers: ["ollama"] });
+  vi.spyOn(api, "fetchFiles").mockResolvedValue([]);
+  vi.spyOn(api, "fetchMemories").mockResolvedValue([]);
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchConversations").mockResolvedValue([CONV]);
+  vi.spyOn(api, "fetchConversation").mockResolvedValue({
+    id: "c1",
+    title: "Old chat",
+    messages: [
+      { id: 42, role: "user", content: "folded", displayContent: "Summarize the deck" },
+      { role: "assistant", content: "done" },
+    ],
+  });
+  Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+  // Type a half-finished draft FIRST, so a Copy must not silently destroy it.
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "my own half-typed text" } });
+
+  fireEvent.click(await screen.findByText("Old chat"));
+  await screen.findByTestId("msg-user");
+  fireEvent.click(screen.getByTestId("question-copy-0"));
+
+  // The composer is NOT overwritten; an inline replace-confirm appears instead.
+  expect((screen.getByTestId("composer") as HTMLTextAreaElement).value).toBe("my own half-typed text");
+  const confirm = await screen.findByTestId("copy-replace-confirm");
+  expect(confirm).toHaveTextContent(/replace/i);
+
+  // Cancel keeps the draft and dismisses the prompt.
+  fireEvent.click(screen.getByTestId("copy-replace-cancel"));
+  expect(screen.queryByTestId("copy-replace-confirm")).toBeNull();
+  expect((screen.getByTestId("composer") as HTMLTextAreaElement).value).toBe("my own half-typed text");
+
+  // Copy again, then Replace: the draft is overwritten with the copied question.
+  fireEvent.click(screen.getByTestId("question-copy-0"));
+  fireEvent.click(await screen.findByTestId("copy-replace-yes"));
+  await waitFor(() =>
+    expect((screen.getByTestId("composer") as HTMLTextAreaElement).value).toBe("Summarize the deck"),
+  );
+  expect(screen.queryByTestId("copy-replace-confirm")).toBeNull();
+});
+
+test("Edit truncates from the turn, reloads, and re-runs the edited question (#441)", async () => {
+  vi.spyOn(api, "fetchProviders").mockResolvedValue({ default: "ollama", providers: ["ollama"] });
+  vi.spyOn(api, "fetchFiles").mockResolvedValue([]);
+  vi.spyOn(api, "fetchMemories").mockResolvedValue([]);
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchConversations").mockResolvedValue([CONV]);
+  // First load: the original two-turn history. After truncate, the conversation is reloaded with
+  // just the (kept) earlier turn — here the edited question's turn is the first, so truncating it
+  // leaves an empty history that the resubmit then rebuilds.
+  const fetchConversation = vi
+    .spyOn(api, "fetchConversation")
+    .mockResolvedValueOnce({
+      id: "c1",
+      title: "Old chat",
+      messages: [
+        { id: 42, role: "user", content: "old question" },
+        { id: 43, role: "assistant", content: "old answer" },
+      ],
+    })
+    .mockResolvedValue({ id: "c1", title: "Old chat", messages: [] });
+  const truncate = vi
+    .spyOn(api, "truncateConversation")
+    .mockResolvedValue({ deletedCount: 2 });
+  const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
+    onDelta("new answer");
+  });
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+  fireEvent.click(await screen.findByText("Old chat"));
+  await screen.findByTestId("msg-user");
+
+  // Edit the question, change the text, and resubmit.
+  fireEvent.click(screen.getByTestId("question-edit-0"));
+  fireEvent.change(screen.getByTestId("question-edit-input"), {
+    target: { value: "edited question" },
+  });
+  fireEvent.click(screen.getByTestId("edit-resubmit"));
+
+  // The truncate targets the question's stable id (42), then the edited text re-runs via streamChat.
+  await waitFor(() => expect(truncate).toHaveBeenCalledWith("demo", "c1", 42));
+  await waitFor(() => expect(stream).toHaveBeenCalled());
+  const last = stream.mock.calls[0][0].messages.at(-1);
+  expect(last?.content).toBe("edited question");
+  expect(fetchConversation).toHaveBeenCalledTimes(2); // initial open + post-truncate reload
+  await waitFor(() => expect(screen.getByTestId("msg-assistant")).toHaveTextContent("new answer"));
+});
+
+test("Delete truncates from the turn and does NOT re-run (#441)", async () => {
+  vi.spyOn(api, "fetchProviders").mockResolvedValue({ default: "ollama", providers: ["ollama"] });
+  vi.spyOn(api, "fetchFiles").mockResolvedValue([]);
+  vi.spyOn(api, "fetchMemories").mockResolvedValue([]);
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchConversations").mockResolvedValue([CONV]);
+  vi.spyOn(api, "fetchConversation")
+    .mockResolvedValueOnce({
+      id: "c1",
+      title: "Old chat",
+      messages: [
+        { id: 42, role: "user", content: "keep me" },
+        { id: 43, role: "assistant", content: "keep answer" },
+        { id: 44, role: "user", content: "delete me" },
+        { id: 45, role: "assistant", content: "delete answer" },
+      ],
+    })
+    .mockResolvedValue({
+      id: "c1",
+      title: "Old chat",
+      messages: [
+        { id: 42, role: "user", content: "keep me" },
+        { id: 43, role: "assistant", content: "keep answer" },
+      ],
+    });
+  const truncate = vi.spyOn(api, "truncateConversation").mockResolvedValue({ deletedCount: 2 });
+  const stream = vi.spyOn(api, "streamChat");
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+  fireEvent.click(await screen.findByText("Old chat"));
+  await waitFor(() => expect(screen.getAllByTestId("msg-user")).toHaveLength(2));
+
+  // Delete the SECOND question (id 44, array index 2): confirm, then it truncates from that turn.
+  // The question control testids are keyed by the message's array index, not the question ordinal.
+  fireEvent.click(screen.getByTestId("question-delete-2"));
+  fireEvent.click(screen.getByTestId("delete-confirm-yes"));
+
+  await waitFor(() => expect(truncate).toHaveBeenCalledWith("demo", "c1", 44));
+  // Delete never re-runs the model.
+  expect(stream).not.toHaveBeenCalled();
+  // The truncated turn is gone; only the kept turn remains.
+  await waitFor(() => expect(screen.getAllByTestId("msg-user")).toHaveLength(1));
+  expect(screen.getByTestId("msg-user")).toHaveTextContent("keep me");
 });
