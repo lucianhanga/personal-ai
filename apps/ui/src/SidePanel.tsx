@@ -1,7 +1,7 @@
 import type { Dispatch, SetStateAction } from "react";
 
 import type { ChatMessage, ContextBreakdown, TraceItem, UsageInfo } from "./api";
-import { ActivityTimeline } from "./ActivityTimeline";
+import { ActivityTimeline, type LiveActivity } from "./ActivityTimeline";
 import { ContextMeter } from "./ContextMeter";
 
 interface SidePanelProps {
@@ -14,6 +14,8 @@ interface SidePanelProps {
   onAllowHost?: (host: string) => void;
   collapsed: boolean;
   setCollapsed: Dispatch<SetStateAction<boolean>>;
+  // Pre-turn resource activities being processed in the composer (#424); threaded to the timeline.
+  liveActivities?: LiveActivity[];
 }
 
 /** Right column: the collapsible Activity pane (per-turn timeline + live context meter). */
@@ -27,6 +29,7 @@ export function SidePanel({
   onAllowHost,
   collapsed,
   setCollapsed,
+  liveActivities = [],
 }: SidePanelProps): React.ReactElement {
   if (collapsed) {
     return (
@@ -80,6 +83,7 @@ export function SidePanel({
         liveUsage={usage}
         busy={busy}
         onAllowHost={onAllowHost}
+        liveActivities={liveActivities}
       />
     </aside>
   );

@@ -8,7 +8,9 @@ import {
   type TraceItem,
   type UsageInfo,
 } from "./api";
+import type { ResourceActivity } from "./api";
 import { approxTokens, ContextComposition } from "./ContextComposition";
+import { ResourceIO, type ResourceState } from "./ResourceIO";
 import { ToolIO } from "./ToolIO";
 
 // Color code shared with the in-transcript trace (MessageDetails) and the Agents config — no emoji.
@@ -21,6 +23,7 @@ const COLOR = {
   err: "#b00020", // red
   context: "#4a90d9", // accent blue
   live: "#b06f00", // amber (in-flight)
+  resource: "#0d7d7d", // teal — eager resource-processing (#424); distinct from tool/context/reasoning
 } as const;
 // Muted text a user must READ uses #6b7280 (AA); #888/#999 stay decorative (matches the codebase).
 const READABLE = "#6b7280";
@@ -66,17 +69,29 @@ function clockFromTs(iso: string | undefined): string {
   return Number.isNaN(d.getTime()) ? "" : `${d.toISOString().slice(11, 19)}Z`;
 }
 
+// Per-step UTC time from a resource activity's `ts` (UTC SECONDS, not ISO; #424). "" when invalid.
+function clockFromSeconds(ts: number | undefined): string {
+  if (ts == null || Number.isNaN(ts)) return "";
+  const d = new Date(ts * 1000);
+  return Number.isNaN(d.getTime()) ? "" : `${d.toISOString().slice(11, 19)}Z`;
+}
+
 // Which filter chips exist; "all" shows everything.
-type Filter = "all" | "tools" | "reasoning" | "context";
+type Filter = "all" | "tools" | "reasoning" | "context" | "resources";
 const FILTERS: { id: Filter; label: string }[] = [
   { id: "all", label: "All" },
   { id: "tools", label: "Tools" },
   { id: "reasoning", label: "Reasoning" },
   { id: "context", label: "Context" },
+  { id: "resources", label: "Resources" },
 ];
 
 // A node's category, used for filtering and for the spine dot color.
-type NodeKind = "context" | "tool" | "reasoning";
+type NodeKind = "context" | "tool" | "reasoning" | "resource";
+
+// A pre-turn (live) resource activity: a ResourceActivity plus its in-flight lifecycle state (#424).
+// Derived in Chat.tsx from the image/audio/doc chip state machines and threaded down to the timeline.
+export type LiveActivity = ResourceActivity & { state: ResourceState };
 
 interface TurnNode {
   key: string;
@@ -90,6 +105,7 @@ interface Turn {
   question: string;
   nodes: TurnNode[];
   toolCalls: number;
+  resourceCount: number; // #424 — number of resource activities on the user turn (for the meta line)
   tokens: number | null;
   elapsedMs: number | null;
   createdAt: string | undefined;
@@ -101,7 +117,42 @@ function visibleNodes(nodes: TurnNode[], filter: Filter): TurnNode[] {
   if (filter === "all") return nodes;
   if (filter === "tools") return nodes.filter((n) => n.kind === "tool");
   if (filter === "reasoning") return nodes.filter((n) => n.kind === "reasoning");
+  if (filter === "resources") return nodes.filter((n) => n.kind === "resource");
   return nodes.filter((n) => n.kind === "context"); // context
+}
+
+// Map a resource activity's `status` to the three node lifecycle states (persisted items are always
+// terminal: "ok" -> done, "error" -> error). The live pre-turn cluster supplies "in-progress".
+function activityState(status: string | null | undefined): ResourceState {
+  return status === "error" ? "error" : "done";
+}
+
+// Build a resource node from a (persisted or live) activity. `idx` seeds the React key, `ts` the line.
+function resourceNode(
+  idx: number,
+  k: number,
+  activity: ResourceActivity,
+  state: ResourceState,
+  time: string,
+): TurnNode {
+  return {
+    key: `tl-${idx}-res-${activity.ref}-${activity.ts}-${k}`,
+    kind: "resource",
+    dot: state === "error" ? COLOR.err : state === "in-progress" ? COLOR.live : COLOR.resource,
+    render: () => (
+      <div>
+        {time && <div style={{ color: "#999", fontSize: "0.66rem", marginBottom: 1 }}>{time}</div>}
+        <ResourceIO
+          action={activity.action}
+          refName={activity.ref}
+          state={state}
+          model={activity.model}
+          ms={activity.ms}
+          error={activity.error}
+        />
+      </div>
+    ),
+  };
 }
 
 /**
@@ -117,6 +168,7 @@ export function ActivityTimeline({
   liveUsage,
   busy,
   onAllowHost,
+  liveActivities = [],
 }: {
   messages: ChatMessage[];
   trace: Record<number, TraceItem[]>;
@@ -124,6 +176,10 @@ export function ActivityTimeline({
   liveUsage: UsageInfo | null;
   busy: boolean;
   onAllowHost?: (host: string) => void;
+  // Pre-turn resource activities being processed in the composer right now (#424). Each carries a
+  // live lifecycle `state`; the timeline renders them in a top "Preparing your message" cluster that
+  // vanishes on submit (the committed turn's persisted activities then become the source of truth).
+  liveActivities?: LiveActivity[];
 }): React.ReactElement {
   const [filter, setFilter] = useState<Filter>("all");
   // Per-turn open/closed overrides (keyed by message index); falls back to the default-open rule.
@@ -198,8 +254,17 @@ export function ActivityTimeline({
     items: TraceItem[],
     context: ContextBreakdown | null,
     time: string,
+    activities: ResourceActivity[],
   ): TurnNode[] {
     const nodes: TurnNode[] = [];
+    // 0. Resource activities (#424) are question-time inputs — they happened BEFORE the assistant
+    //    run, so they render first in the turn, ordered by their own `ts`, before the context node.
+    [...activities]
+      .sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0))
+      .forEach((activity, k) => {
+        const stepTime = clockFromSeconds(activity.ts) || time;
+        nodes.push(resourceNode(idx, k, activity, activityState(activity.status), stepTime));
+      });
     // 1. Context assembled — first event in the turn's chronology.
     if (context && context.items.length > 0) {
       nodes.push({
@@ -279,9 +344,12 @@ export function ActivityTimeline({
   messages.forEach((m, i) => {
     if (m.role !== "assistant") return;
     let question = "";
+    let userActivities: ResourceActivity[] = [];
     for (let j = i - 1; j >= 0; j--) {
       if (messages[j].role === "user") {
         question = messages[j].content;
+        // The same preceding-user lookup also yields its persisted resource activities (#424).
+        userActivities = messages[j].activities ?? [];
         break;
       }
     }
@@ -293,8 +361,9 @@ export function ActivityTimeline({
     // the live usage event so the header can still show tokens/time once the stream reports them.
     const usage = m.meta?.usage ?? (i === lastAssistantIndex ? liveUsage : null);
     const isLive = i === lastAssistantIndex && busy && !m.meta?.usage;
-    const nodes = buildNodes(i, items, context ?? null, clockUTC(m.created_at));
+    const nodes = buildNodes(i, items, context ?? null, clockUTC(m.created_at), userActivities);
     const toolCalls = items.filter((t) => t.kind === "tool_call").length;
+    const resourceCount = userActivities.length;
     const status = isLive
       ? COLOR.live
       : items.some((t) => t.kind === "verification" && t.verdict !== "pass") ||
@@ -306,6 +375,7 @@ export function ActivityTimeline({
       question: question || "(no question)",
       nodes,
       toolCalls,
+      resourceCount,
       tokens: usage?.total_tokens ?? null,
       elapsedMs: usage?.elapsed_ms ?? null,
       createdAt: m.created_at,
@@ -317,6 +387,102 @@ export function ActivityTimeline({
   // Newest turn group on top.
   const reversed = [...turns].reverse();
   const newestIndex = turns.length ? turns[turns.length - 1].index : -1;
+
+  // The live pre-turn cluster (#424): shown only while activities are being processed in the composer
+  // and not yet submitted. It hides under the Tools/Reasoning/Context filters (resource-only).
+  const showPreturn =
+    liveActivities.length > 0 && (filter === "all" || filter === "resources");
+  const preturnSorted = [...liveActivities].sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
+  const preturnStatus = preturnSorted.some((a) => a.state === "in-progress")
+    ? "live"
+    : preturnSorted.some((a) => a.state === "error")
+      ? "error"
+      : "done";
+
+  // The pre-turn "Preparing your message" cluster, reusing the committed turn-group shell. Default
+  // open (matches the live-turn rule); cluster-level role="status" announces the working->done flip.
+  const preturnCluster = showPreturn ? (
+    <div
+      data-testid="timeline-preturn"
+      role="status"
+      style={{
+        border: "1px solid rgba(127,127,127,0.18)",
+        borderRadius: 6,
+        background: "rgba(13,125,125,0.04)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "0.5rem",
+          padding: "0.4rem 0.5rem",
+        }}
+      >
+        <span aria-hidden style={{ color: READABLE, fontSize: "0.72rem", flex: "0 0 auto" }}>▾</span>
+        {preturnStatus === "live" ? (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", flex: "0 0 auto" }}>
+            <span
+              aria-hidden
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: COLOR.live,
+                animation: "tlpulse 1.2s ease-in-out infinite",
+              }}
+            />
+            <span style={{ color: COLOR.live, fontSize: "0.7rem", fontWeight: 600 }}>live</span>
+          </span>
+        ) : (
+          <span
+            aria-hidden
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: preturnStatus === "error" ? COLOR.err : COLOR.ok,
+              flex: "0 0 auto",
+            }}
+          />
+        )}
+        <span style={{ flex: "1 1 auto", minWidth: 0, color: "#1f2937" }}>Preparing your message</span>
+      </div>
+      <div
+        data-testid="timeline-preturn-body"
+        style={{
+          margin: "0.3rem 0.5rem 0.5rem 0.9rem",
+          paddingLeft: "0.7rem",
+          borderLeft: "2px solid rgba(127,127,127,0.25)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "0.4rem",
+        }}
+      >
+        {preturnSorted.map((activity, k) => {
+          const node = resourceNode(-1, k, activity, activity.state, clockFromSeconds(activity.ts));
+          return (
+            <div key={node.key} data-testid="timeline-node" style={{ position: "relative" }}>
+              <span
+                aria-hidden
+                style={{
+                  position: "absolute",
+                  left: "-0.95rem",
+                  top: "0.35rem",
+                  width: 7,
+                  height: 7,
+                  borderRadius: "50%",
+                  background: node.dot,
+                  boxShadow: "0 0 0 2px #fff",
+                }}
+              />
+              {node.render()}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  ) : null;
 
   return (
     <div data-testid="activity-timeline">
@@ -351,12 +517,14 @@ export function ActivityTimeline({
         })}
       </div>
 
-      {reversed.length === 0 ? (
+      {reversed.length === 0 && !preturnCluster ? (
         <p data-testid="timeline-empty" style={{ color: "#888", fontSize: "0.8rem", margin: 0 }}>
           Activity from each question will appear here, newest first.
         </p>
       ) : (
         <div style={{ maxHeight: "60vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+          {/* The live pre-turn cluster pins to the very top, above the newest committed turn (#424). */}
+          {preturnCluster}
           {reversed.map((turn) => {
             const nodes = visibleNodes(turn.nodes, filter);
             // A turn with nothing under the active filter is hidden entirely.
@@ -366,6 +534,9 @@ export function ActivityTimeline({
             const defaultOpen = isNewest || turn.isLive;
             const open = overrides[turn.index] ?? defaultOpen;
             const meta = [
+              turn.resourceCount
+                ? `${turn.resourceCount} resource${turn.resourceCount > 1 ? "s" : ""}`
+                : null,
               turn.toolCalls ? `${turn.toolCalls} tool call${turn.toolCalls > 1 ? "s" : ""}` : null,
               turn.tokens != null ? `~${compactTok(turn.tokens)} tok` : null,
               turn.elapsedMs != null ? fmtMs(turn.elapsedMs) : null,

@@ -139,6 +139,11 @@ class ChatMessageIn(BaseModel):
     # eagerly on upload. Request-only metadata (NOT sent to the model — the model gets the image
     # itself); persisted in the user turn's meta so the description shows on reload.
     image_descriptions: list[str] = []
+    # Pre-turn resource-processing activity items (#424): the composer buffers an activity per
+    # eagerly-processed attachment (image describe / doc extract / audio transcribe) and submits
+    # them here. Request-only metadata (NOT sent to the model); sanitized + persisted in the turn's
+    # meta so the Activity timeline re-renders them on reload. See ``_sanitize_activities``.
+    activities: list[dict[str, Any]] = []
 
 
 class ChatRequest(BaseModel):
@@ -349,6 +354,84 @@ def _current_datetime_messages() -> list[ChatMessage]:
 _CONTEXT_TEXT_CAP = 16_000
 # Cap a generated image description (#419) so a runaway caption can't bloat the message/meta.
 _IMAGE_DESCRIPTION_CAP = 4_000
+
+# Resource-processing activities (#424) are client-supplied at submit and land verbatim in stored
+# history that is read back into the Activity timeline. They are observability metadata, not user
+# content, so the persist boundary clamps/drops silently and NEVER blocks the turn. Bounds mirror
+# the context/description caps above; total bounded footprint per turn is a few KB of jsonb.
+_MAX_ACTIVITIES_PER_TURN = 24
+_ACTIVITY_TEXT_CAP = 200  # a short label, not a transcript
+_ACTIVITY_REF_CAP = 256  # resource name/id
+_ACTIVITY_MODEL_CAP = 128
+_ACTIVITY_MS_MAX = 86_400_000  # 24h in ms
+_ACTIVITY_USAGE_MAX = 10_000_000
+# The architect's closed action enum (#424). Widen this in lockstep if the taxonomy adds actions,
+# or new actions are silently dropped here.
+_ACTIVITY_ACTIONS = frozenset({"image_described", "document_extracted", "audio_transcribed"})
+
+
+def _clamp_int(value: Any, lo: int, hi: int, default: int = 0) -> int:
+    """Coerce ``value`` to an int clamped to ``[lo, hi]``; non-numeric falls back to ``default``."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, n))
+
+
+def _sanitize_activities(raw: Any) -> list[dict[str, Any]]:
+    """Validate client-supplied resource-processing activities (#424) at the persist boundary.
+
+    This is the security-critical piece: ``meta["activities"]`` is client-supplied and read back
+    into the timeline, so the store must not become a dumping ground for arbitrary/oversized trace
+    content. Each item is rebuilt from scratch from an allowlist — unknown keys never pass through.
+    Overflow is clamped or dropped silently; this NEVER raises and NEVER blocks the turn.
+    """
+    if not isinstance(raw, list):
+        return []
+    now = int(datetime.now(UTC).timestamp())
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if len(out) >= _MAX_ACTIVITIES_PER_TURN:
+            break  # drop the overflow silently
+        if not isinstance(item, dict):
+            continue
+        action = item.get("action")
+        if action not in _ACTIVITY_ACTIONS:
+            continue  # enum-check: unknown actions are dropped
+        text = str(item.get("text", "")).strip()[:_ACTIVITY_TEXT_CAP]
+        ref = str(item.get("ref", "")).strip()[:_ACTIVITY_REF_CAP]
+        if not text or not ref:
+            continue  # required fields missing -> drop
+        clean: dict[str, Any] = {
+            "kind": "resource",  # forced; ignore any client value
+            "action": action,
+            "text": text,
+            "ref": ref,
+            # ts: clamp to a sane window (reject far-future); garbage -> server now.
+            "ts": _clamp_int(item.get("ts"), 0, now + 60, default=now),
+        }
+        model = item.get("model")
+        if model is not None:
+            clean["model"] = str(model)[:_ACTIVITY_MODEL_CAP]
+        if "ms" in item and item.get("ms") is not None:
+            clean["ms"] = _clamp_int(item.get("ms"), 0, _ACTIVITY_MS_MAX, default=0)
+        status_val = item.get("status")
+        if status_val == "error":
+            clean["status"] = "error"
+            err = item.get("error")
+            if err is not None:
+                clean["error"] = str(err).strip()[:_ACTIVITY_TEXT_CAP]
+        usage = item.get("usage")
+        if isinstance(usage, dict):
+            kept: dict[str, int] = {}
+            for key in ("prompt_tokens", "completion_tokens"):
+                if usage.get(key) is not None:
+                    kept[key] = _clamp_int(usage.get(key), 0, _ACTIVITY_USAGE_MAX, default=0)
+            if kept:
+                clean["usage"] = kept
+        out.append(clean)
+    return out
 
 
 def _context_breakdown(groups: Sequence[tuple[str, Sequence[ChatMessage]]]) -> dict[str, Any]:
@@ -1129,11 +1212,18 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             last_images = list(last_user_msg.images) if last_user_msg else []
             # Parallel vision descriptions (#419), persisted so the hover panel works on reload.
             last_descriptions = list(last_user_msg.image_descriptions) if last_user_msg else []
+            # Pre-turn resource-processing activities (#424) from THIS turn's user message (same
+            # #396 reasoning — do not scan back). Sanitized at the boundary; never blocks the turn.
+            last_activities = (
+                _sanitize_activities(last_user_msg.activities) if last_user_msg else []
+            )
             turn_meta: dict[str, Any] = {}
             if last_images:
                 turn_meta["images"] = last_images
             if last_descriptions:
                 turn_meta["image_descriptions"] = last_descriptions
+            if last_activities:
+                turn_meta["activities"] = last_activities
             await storage.conversations.add_message(
                 conversation_id=persist_id,
                 role="user",
@@ -1704,6 +1794,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 detail=f"audio exceeds {config.max_upload_bytes} bytes",
             )
         transcriber = _build_transcriber(config)
+        t0 = time.perf_counter()
         try:
             result = await transcriber.transcribe(
                 audio,
@@ -1716,7 +1807,19 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             )
         finally:
             await transcriber.aclose()
-        return StructuredResult(ok=True, data={"text": result.text, "language": result.language})
+        ms = round((time.perf_counter() - t0) * 1000)
+        # Surface model + wall-clock so the UI can assemble a resource activity (#424). Local
+        # Whisper reports no tokens, so usage is None; model is the configured Whisper id (or None).
+        return StructuredResult(
+            ok=True,
+            data={
+                "text": result.text,
+                "language": result.language,
+                "model": config.transcribe_model,
+                "ms": ms,
+                "usage": None,
+            },
+        )
 
     @app.post(
         "/api/v1/images/describe",
@@ -1762,12 +1865,26 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             model=model,
             think=False,
         )
+        t0 = time.perf_counter()
         try:
             result = await provider.generate(request)
         except Exception as exc:  # noqa: BLE001 - structured error (provider/egress failure)
             return StructuredResult(ok=False, error=ErrorInfo(code="E_DESCRIBE", message=str(exc)))
+        ms = round((time.perf_counter() - t0) * 1000)
         description = (result.text or "").strip()[:_IMAGE_DESCRIPTION_CAP]
-        return StructuredResult(ok=True, data={"description": description})
+        # Surface the facts the UI assembles an activity item from (#424): the model the provider
+        # actually used (not the requested id), the eager-call wall-clock, and reported token usage.
+        # Additive to the open ``data`` dict — existing callers reading ``data["description"]`` are
+        # unaffected.
+        return StructuredResult(
+            ok=True,
+            data={
+                "description": description,
+                "model": result.model,
+                "ms": ms,
+                "usage": dict(result.usage) or None,
+            },
+        )
 
     @app.post(
         "/api/v1/files/extract",
@@ -1785,12 +1902,14 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail=f"file exceeds {config.max_upload_bytes} bytes",
             )
+        t0 = time.perf_counter()
         try:
             parsed = parse_document(content, file.filename or "document")
         except UnsupportedFileTypeError as exc:
             return StructuredResult(
                 ok=False, error=ErrorInfo(code="E_UNSUPPORTED_FILE", message=str(exc))
             )
+        ms = round((time.perf_counter() - t0) * 1000)
         # Cap the returned text so a huge document can't return an unbounded payload (the UI's token
         # gate decides small-vs-large from this text).
         extract_cap = 128_000
@@ -1798,6 +1917,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         truncated = len(text) > extract_cap
         if truncated:
             text = text[:extract_cap]
+        # Document extraction is a local CPU parse — no model (#424). ``model``/``usage`` are
+        # honestly null; ``ms`` is the parse wall-clock so the activity still shows a duration.
         return StructuredResult(
             ok=True,
             data={
@@ -1805,6 +1926,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 "mime": parsed.mime,
                 "text": text,
                 "truncated": truncated,
+                "model": None,
+                "ms": ms,
+                "usage": None,
             },
         )
 
@@ -1893,6 +2017,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 "images": (m.meta or {}).get("images", []),
                 # Parallel vision descriptions (#419) so the hover panel works on reload.
                 "image_descriptions": (m.meta or {}).get("image_descriptions", []),
+                # Pre-turn resource-processing activities (#424), surfaced top-level so the Activity
+                # timeline re-renders them on reload. Empty for old turns / assistant turns.
+                "activities": (m.meta or {}).get("activities", []),
                 # Surfaced so the UI's activity timeline can show real relative times per turn.
                 "created_at": m.created_at.isoformat(),
             }

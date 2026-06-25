@@ -22,7 +22,15 @@ export interface ModelInfo {
 // tool_result; M8 (ADR-0011) adds multi-agent + verification kinds (plan/critique/verification). The
 // UI renders unknown kinds generically, so adding kinds server-side never breaks an older client.
 export interface TraceItem {
-  kind: "reasoning" | "tool_call" | "tool_result" | "plan" | "critique" | "verification" | "draft";
+  kind:
+    | "reasoning"
+    | "tool_call"
+    | "tool_result"
+    | "plan"
+    | "critique"
+    | "verification"
+    | "draft"
+    | "resource"; // #424 — eager resource-processing (image/doc/audio), a strict superset of the above
   text?: string;
   role?: string | null; // which agent produced it (researcher/critic/verifier) — M8
   verdict?: string | null; // verification outcome (e.g. "pass"/"fail"/"needs-revision") — M8
@@ -33,6 +41,31 @@ export interface TraceItem {
   error?: string | null;
   ts?: string; // wall-clock UTC ISO when this step happened (per-step time in the activity timeline)
   attempt?: number; // which researcher pass produced a `draft` answer (#393)
+  // Resource-activity fields (#424; kind === "resource"). The renderer keys off `action` + `status`.
+  action?: ResourceAction;
+  ref?: string; // resource name/id (filename) — ties the item to its attachment
+  model?: string | null; // model id; null/absent for non-model work (document parse)
+  ms?: number | null; // wall-clock duration of the eager call
+  status?: string | null; // "ok" (default) | "error"
+}
+
+// The architect's closed resource-action enum (#424). Extend only by adding a member here AND in the
+// backend `_ACTIVITY_ACTIONS` allowlist, or new actions are silently dropped at the persist boundary.
+export type ResourceAction = "image_described" | "document_extracted" | "audio_transcribed";
+
+/** A pre-turn resource-processing activity (#424): image describe / document extract / audio
+ * transcribe. Buffered client-side as the user prepares a message, then persisted on the user turn's
+ * `meta["activities"]`. A strict superset of {kind,text,ts} so one renderer covers trace + resource. */
+export interface ResourceActivity {
+  kind: "resource";
+  action: ResourceAction;
+  text: string; // human label, e.g. "Described image — cat.jpg"
+  ref: string; // resource name/id (filename)
+  ts: number; // UTC seconds (the persist boundary clamps far-future/garbage)
+  model?: string | null; // model id (image/audio); null for document parse
+  ms?: number | null; // eager-call wall-clock in ms
+  status?: "ok" | "error"; // defaults to "ok"
+  error?: string | null; // message when status === "error"
 }
 
 /** A durable human-gate approval request (M8.1c): the run is suspended until POST .../resume.
@@ -88,6 +121,10 @@ export interface ChatMessage {
   // Parallel to `images`: an eager vision description per image (#419), shown on hover + persisted.
   // Request-only metadata (not sent to the model — vision models get the image itself).
   image_descriptions?: string[];
+  // Pre-turn resource-processing activities (#424): buffered as the user prepares the message, then
+  // persisted on the user turn and surfaced top-level on reload so the Activity timeline re-renders
+  // them. Request-only metadata (sanitized server-side; not sent to the model). Empty for old turns.
+  activities?: ResourceActivity[];
   // Persisted per-assistant-message detail (tool calls + reasoning), shown collapsed in the UI.
   meta?: MessageMeta | null;
   // ISO timestamp set when the message was persisted (GET /conversations/{id}); absent for the
@@ -390,12 +427,20 @@ export async function fetchTtsEnabled(token: string): Promise<boolean> {
 /** Transcribe a recorded audio blob (mic) or an uploaded audio file to text via the backend
  * transcriber (M9.2). When `filename` is given (file upload), it is sent as the form filename so the
  * backend sees the real name + content-type; the mic caller omits it and keeps "recording.webm". */
+// Result of an eager resource-processing call (#424): the facts the UI assembles a resource activity
+// from. `model`/`ms` are surfaced by the endpoints additively (model null for the document parse).
+export interface TranscribeResult {
+  text: string;
+  model: string | null;
+  ms: number | null;
+}
+
 export async function transcribeAudio(
   token: string,
   audio: Blob,
   filename = "recording.webm",
   signal?: AbortSignal,
-): Promise<string> {
+): Promise<TranscribeResult> {
   const form = new FormData();
   form.append("file", audio, filename);
   const res = await fetch(`${API_BASE}/api/v1/audio/transcribe`, {
@@ -409,20 +454,31 @@ export async function transcribeAudio(
   const body = (await res.json()) as {
     ok?: boolean;
     error?: { message?: string };
-    data?: { text?: string };
+    data?: { text?: string; model?: string | null; ms?: number | null };
   };
   if (body.ok === false) throw new Error(body.error?.message ?? "transcribe failed");
-  return body.data?.text ?? "";
+  return {
+    text: body.data?.text ?? "",
+    model: body.data?.model ?? null,
+    ms: body.data?.ms ?? null,
+  };
+}
+
+// Result of the eager image-describe call (#424).
+export interface DescribeResult {
+  description: string;
+  model: string | null;
+  ms: number | null;
 }
 
 /** Describe an attached image with the vision model (#419) — eager caption shown on hover + stored.
  * `image` is the (already-downsized) image blob. Throws on transport/HTTP error or a structured
- * error (e.g. `E_NO_VISION_MODEL`). */
+ * error (e.g. `E_NO_VISION_MODEL`). Returns the description plus the model + wall-clock (#424). */
 export async function describeImage(
   token: string,
   image: Blob,
   signal?: AbortSignal,
-): Promise<string> {
+): Promise<DescribeResult> {
   const form = new FormData();
   form.append("file", image, "image.jpg");
   const res = await fetch(`${API_BASE}/api/v1/images/describe`, {
@@ -436,10 +492,14 @@ export async function describeImage(
   const body = (await res.json()) as {
     ok?: boolean;
     error?: { message?: string };
-    data?: { description?: string };
+    data?: { description?: string; model?: string | null; ms?: number | null };
   };
   if (body.ok === false) throw new Error(body.error?.message ?? "describe failed");
-  return body.data?.description ?? "";
+  return {
+    description: body.data?.description ?? "",
+    model: body.data?.model ?? null,
+    ms: body.data?.ms ?? null,
+  };
 }
 
 export interface ExtractedDocument {
@@ -447,6 +507,10 @@ export interface ExtractedDocument {
   mime: string;
   text: string;
   truncated: boolean;
+  // #424: document extraction is a local CPU parse — `model` is always null; `ms` is the parse
+  // wall-clock so the resource activity can still show a duration. Optional for back-compat.
+  model?: string | null;
+  ms?: number | null;
 }
 
 /** Extract text from an uploaded document (PDF/DOCX/txt/md) for a per-question attachment (#416).

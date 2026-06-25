@@ -17,6 +17,8 @@ export interface DocumentAttachment {
   status: DocumentStatus;
   text: string;
   error?: string;
+  // #424: extract-call wall-clock (document parse has no model, so only ms is captured).
+  ms?: number | null;
 }
 
 /** First ~40 chars of the extracted text as a one-line snippet for the chip face. */
