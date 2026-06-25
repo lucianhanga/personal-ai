@@ -18,7 +18,10 @@ export type DocumentStatus = "extracting" | "small" | "large" | "empty" | "error
 // The explanation shown in the panel of an `empty` doc (#446). The panel still opens so the user can
 // read WHY the chip is blank rather than seeing nothing.
 export const EMPTY_DOC_EXPLANATION =
-  "This PDF appears to be scanned or image-only — no selectable text layer.";
+  "This PDF appears to be scanned or image-only — it has no embedded text layer, so nothing " +
+  "could be extracted. Viewers like Preview can still let you select text because they run OCR " +
+  "on the page images as you view them; that text isn't stored in the file. Automatic OCR isn't " +
+  "supported here yet.";
 
 export interface DocumentAttachment {
   id: string;
