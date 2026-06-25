@@ -15,6 +15,10 @@ export interface ImageAttachment {
   description: string;
   status: ImageStatus;
   error?: string;
+  // #424: resource-activity facts captured from the describe response, used to build the activity.
+  name?: string; // original filename (the activity `ref`)
+  model?: string | null; // the vision model the provider actually used
+  ms?: number | null; // describe-call wall-clock
 }
 
 /** Classical "two overlapping rounded rectangles" copy glyph (monochrome SVG, not emoji). */

@@ -10,6 +10,7 @@ import respx
 from fastapi.testclient import TestClient
 
 from personalai_backend import create_app
+from personalai_backend.app import _sanitize_activities
 from personalai_backend.composition import bootstrap
 from personalai_contracts.ports import (
     EmbeddingResult,
@@ -770,3 +771,190 @@ def test_extract_file_oversized_is_413() -> None:
 def test_extract_file_requires_token(client: TestClient) -> None:
     res = client.post("/api/v1/files/extract", files={"file": ("notes.txt", b"hi", "text/plain")})
     assert res.status_code == 401
+
+
+# --- eager endpoints surface model/ms/usage for resource activities (#424) -----------------------
+
+
+def test_describe_image_returns_model_ms_usage() -> None:
+    # #424: the describe endpoint surfaces the model the provider used, an eager-call wall-clock,
+    # and token usage so the UI can assemble a resource activity. Additive to the description.
+    client = _app_with_provider("fake", FakeModelProvider(name="fake", capabilities=_VISION))
+    res = client.post(
+        "/api/v1/images/describe",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        files={"file": _PNG},
+    )
+    assert res.status_code == 200
+    data = res.json()["data"]
+    assert data["description"].startswith("echo:")  # existing caller contract is preserved
+    assert isinstance(data["model"], str) and data["model"]  # the model actually used
+    assert isinstance(data["ms"], int) and data["ms"] >= 0  # wall-clock in ms
+    assert "usage" in data  # present (None when the provider reported no tokens)
+
+
+def test_extract_file_returns_null_model_and_ms(client: TestClient) -> None:
+    # #424: document extraction is a local CPU parse — no model. ``model``/``usage`` are honestly
+    # null; ``ms`` is the parse wall-clock so the activity still shows a duration.
+    res = client.post(
+        "/api/v1/files/extract",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        files={"file": ("notes.txt", b"hello document world", "text/plain")},
+    )
+    assert res.status_code == 200
+    data = res.json()["data"]
+    assert data["text"] == "hello document world"  # existing caller contract is preserved
+    assert data["model"] is None
+    assert data["usage"] is None
+    assert isinstance(data["ms"], int) and data["ms"] >= 0
+
+
+@respx.mock
+def test_transcribe_returns_model_ms_usage() -> None:
+    # #424: audio transcription surfaces the configured Whisper model id + wall-clock; STT reports
+    # no tokens so usage is None.
+    route = respx.post("http://whisper.test/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(200, json={"text": "hi", "language": "en"})
+    )
+    config = CoreConfig(
+        auth_token=TOKEN,
+        transcribe_enabled=True,
+        transcribe_provider="openai_compat",
+        transcribe_base_url="http://whisper.test/v1",
+        transcribe_model="whisper-1",
+        egress_allow_any=True,
+        egress_enabled=True,
+    )
+    client = TestClient(create_app(bootstrap(config=config)))
+    res = client.post(
+        "/api/v1/audio/transcribe",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        files={"file": ("rec.webm", b"\x00\x01", "audio/webm")},
+    )
+    assert res.status_code == 200
+    data = res.json()["data"]
+    assert data["text"] == "hi"  # existing caller contract is preserved
+    assert data["model"] == "whisper-1"
+    assert data["usage"] is None
+    assert isinstance(data["ms"], int) and data["ms"] >= 0
+    assert route.called
+
+
+# --- _sanitize_activities: the security-critical persist boundary (#424) --------------------------
+
+
+def _activity(**over: object) -> dict[str, object]:
+    base = {
+        "kind": "resource",
+        "action": "image_described",
+        "text": "Described image — cat.jpg",
+        "ref": "cat.jpg",
+        "ts": 1_700_000_000,
+        "model": "qwen2.5-vl:7b",
+        "ms": 2300,
+    }
+    base.update(over)
+    return base
+
+
+def test_sanitize_activities_keeps_a_valid_item() -> None:
+    out = _sanitize_activities([_activity()])
+    assert len(out) == 1
+    item = out[0]
+    assert item["kind"] == "resource"
+    assert item["action"] == "image_described"
+    assert item["text"] == "Described image — cat.jpg"
+    assert item["ref"] == "cat.jpg"
+    assert item["model"] == "qwen2.5-vl:7b"
+    assert item["ms"] == 2300
+    assert item["ts"] == 1_700_000_000
+
+
+def test_sanitize_activities_non_list_is_empty() -> None:
+    assert _sanitize_activities(None) == []
+    assert _sanitize_activities("not a list") == []
+    assert _sanitize_activities({"action": "image_described"}) == []
+
+
+def test_sanitize_activities_forces_kind_resource() -> None:
+    out = _sanitize_activities([_activity(kind="evil")])
+    assert out[0]["kind"] == "resource"  # client value ignored
+
+
+def test_sanitize_activities_drops_unknown_action() -> None:
+    assert _sanitize_activities([_activity(action="shell_exec")]) == []
+    assert _sanitize_activities([_activity(action=None)]) == []
+
+
+def test_sanitize_activities_requires_text_and_ref() -> None:
+    assert _sanitize_activities([_activity(text="")]) == []
+    assert _sanitize_activities([_activity(text="   ")]) == []
+    assert _sanitize_activities([_activity(ref="")]) == []
+
+
+def test_sanitize_activities_drops_unknown_keys() -> None:
+    out = _sanitize_activities([_activity(injected="<script>", secret="leak")])
+    assert "injected" not in out[0]
+    assert "secret" not in out[0]
+
+
+def test_sanitize_activities_caps_string_lengths() -> None:
+    out = _sanitize_activities([_activity(text="x" * 5000, ref="r" * 5000, model="m" * 5000)])
+    item = out[0]
+    assert len(item["text"]) == 200
+    assert len(item["ref"]) == 256
+    assert len(item["model"]) == 128
+
+
+def test_sanitize_activities_clamps_ms() -> None:
+    assert _sanitize_activities([_activity(ms=-5)])[0]["ms"] == 0
+    assert _sanitize_activities([_activity(ms=10**12)])[0]["ms"] == 86_400_000
+    assert _sanitize_activities([_activity(ms="not-a-number")])[0]["ms"] == 0
+
+
+def test_sanitize_activities_clamps_far_future_ts_to_now() -> None:
+    import time as _time
+
+    now = int(_time.time())
+    out = _sanitize_activities([_activity(ts=now + 10_000)])
+    assert out[0]["ts"] <= now + 60  # far-future clamped
+    assert _sanitize_activities([_activity(ts="garbage")])[0]["ts"] >= now - 5  # garbage -> now
+    assert _sanitize_activities([_activity(ts=-100)])[0]["ts"] == 0  # negative clamped to 0
+
+
+def test_sanitize_activities_bounds_count_to_24() -> None:
+    out = _sanitize_activities([_activity(ref=f"f{i}.jpg") for i in range(100)])
+    assert len(out) == 24  # overflow dropped silently, never raises
+
+
+def test_sanitize_activities_keeps_only_int_usage_fields() -> None:
+    out = _sanitize_activities(
+        [_activity(usage={"prompt_tokens": 12, "completion_tokens": 8, "evil": "x"})]
+    )
+    assert out[0]["usage"] == {"prompt_tokens": 12, "completion_tokens": 8}
+    # clamps oversized token counts
+    big = _sanitize_activities([_activity(usage={"prompt_tokens": 10**9})])
+    assert big[0]["usage"]["prompt_tokens"] == 10_000_000
+    # non-dict usage is dropped entirely
+    assert "usage" not in _sanitize_activities([_activity(usage="lots")])[0]
+
+
+def test_sanitize_activities_preserves_error_status() -> None:
+    out = _sanitize_activities([_activity(status="error", error="vision model unavailable")])
+    assert out[0]["status"] == "error"
+    assert out[0]["error"] == "vision model unavailable"
+    # a non-error status is not propagated (defaults to ok implicitly)
+    assert "status" not in _sanitize_activities([_activity(status="ok")])[0]
+
+
+def test_sanitize_activities_mixed_valid_and_invalid() -> None:
+    out = _sanitize_activities(
+        [
+            _activity(ref="good.jpg"),
+            "not a dict",
+            _activity(action="bogus"),
+            _activity(action="document_extracted", text="Extracted — spec.pdf", ref="spec.pdf"),
+        ]
+    )
+    refs = [i["ref"] for i in out]
+    assert refs == ["good.jpg", "spec.pdf"]

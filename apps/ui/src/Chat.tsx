@@ -29,11 +29,14 @@ import {
   type ConversationSummary,
   type DocumentInfo,
   type ModelInfo,
+  type ResourceAction,
+  type ResourceActivity,
   type TenantSettings,
   type TraceItem,
   type TurnUsage,
   type UsageInfo,
 } from "./api";
+import { type LiveActivity } from "./ActivityTimeline";
 import { AudioChips, type AudioAttachment } from "./AudioChips";
 import { ChatsPanel } from "./ChatsPanel";
 import { DocumentChips, type DocumentAttachment } from "./DocumentChips";
@@ -166,6 +169,43 @@ export function describeImageError(e: unknown): string {
   if (msg.includes("413")) return "That image is too large.";
   if (msg.includes("vision")) return "The default model isn't a vision model.";
   return "Couldn't describe the image.";
+}
+
+// Resource-activity helpers (#424): a stable per-chip UTC-seconds `ts` derived from the chip id (its
+// `*_<base36 Date.now()>_*` prefix), so the SAME ts is used live (pre-turn cluster) and on submit
+// (persisted) — keeping the timeline positionally stable across the live->persisted transition.
+export function activityTsFromId(id: string): number {
+  const parts = id.split("_");
+  const ms = parts.length > 1 ? parseInt(parts[1], 36) : NaN;
+  return Number.isFinite(ms) ? Math.round(ms / 1000) : Math.round(Date.now() / 1000);
+}
+
+// action -> the human label verb (mirrors ResourceIO.resourceLabel; kept local to avoid importing a
+// presentation helper into the composer). The activity `text` is "{verb} — {ref}".
+const ACTIVITY_VERB: Record<ResourceAction, string> = {
+  image_described: "Described image",
+  document_extracted: "Extracted document",
+  audio_transcribed: "Transcribed audio",
+};
+
+function makeActivity(
+  id: string,
+  action: ResourceAction,
+  ref: string,
+  model: string | null | undefined,
+  ms: number | null | undefined,
+  error?: string,
+): ResourceActivity {
+  return {
+    kind: "resource",
+    action,
+    text: `${ACTIVITY_VERB[action]} — ${ref}`,
+    ref,
+    ts: activityTsFromId(id),
+    model: model ?? null,
+    ms: ms ?? null,
+    ...(error ? { status: "error", error } : {}),
+  };
 }
 
 // Cap on attached images per turn, and the longest-edge a kept image is downscaled to (#419) — large
@@ -737,7 +777,7 @@ export function Chat({
           4000,
         );
         try {
-          const text = await transcribeAudio(token, new Blob(chunks, { type: "audio/webm" }));
+          const { text } = await transcribeAudio(token, new Blob(chunks, { type: "audio/webm" }));
           if (text) {
             setMicNotice(null);
             setInput((cur) => (cur ? `${cur} ${text}` : text));
@@ -783,12 +823,25 @@ export function Chat({
             r.readAsDataURL(f);
           });
         }
-        setImageAttachments((cur) => [...cur, { id, src, description: "", status: "describing" }]);
+        setImageAttachments((cur) => [
+          ...cur,
+          { id, src, description: "", status: "describing", name: f.name },
+        ]);
         try {
-          const description = await describeImage(token, dataUrlToBlob(src), controller.signal);
+          const result = await describeImage(token, dataUrlToBlob(src), controller.signal);
           imageAbortRef.current.delete(id);
           setImageAttachments((cur) =>
-            cur.map((c) => (c.id === id ? { ...c, status: "done", description } : c)),
+            cur.map((c) =>
+              c.id === id
+                ? {
+                    ...c,
+                    status: "done",
+                    description: result.description,
+                    model: result.model,
+                    ms: result.ms,
+                  }
+                : c,
+            ),
           );
         } catch (e: unknown) {
           imageAbortRef.current.delete(id);
@@ -830,14 +883,14 @@ export function Chat({
         { id, name: file.name, status: "transcribing", transcript: "" },
       ]);
       void transcribeAudio(token, file, file.name, controller.signal)
-        .then((text) => {
+        .then(({ text, model, ms }) => {
           audioAbortRef.current.delete(id);
           setAudioAttachments((cur) =>
             cur.map((c) =>
               c.id === id
                 ? text
-                  ? { ...c, status: "done", transcript: text }
-                  : { ...c, status: "empty", transcript: "" }
+                  ? { ...c, status: "done", transcript: text, model, ms }
+                  : { ...c, status: "empty", transcript: "", model, ms }
                 : c,
             ),
           );
@@ -883,7 +936,7 @@ export function Chat({
           docAbortRef.current.delete(id);
           const status = docTokenEstimate(doc.text) <= DOC_INLINE_TOKEN_GATE ? "small" : "large";
           setDocumentAttachments((cur) =>
-            cur.map((c) => (c.id === id ? { ...c, status, text: doc.text } : c)),
+            cur.map((c) => (c.id === id ? { ...c, status, text: doc.text, ms: doc.ms } : c)),
           );
         })
         .catch((e: unknown) => {
@@ -908,6 +961,24 @@ export function Chat({
   // Only SMALL docs fold into the message; large ones are informational (Tier-2 RAG, #420).
   const smallDocs = documentAttachments.filter((d) => d.status === "small");
   const docExtracting = documentAttachments.some((d) => d.status === "extracting");
+
+  // Live pre-turn resource activities (#424): mirror each chip's state machine into the Activity
+  // panel's "Preparing your message" cluster. A removed chip drops out automatically (it's gone from
+  // the source array). The SAME items (minus the live `state`) are submitted on send below.
+  const liveActivities: LiveActivity[] = [
+    ...imageAttachments.map((im): LiveActivity => ({
+      ...makeActivity(im.id, "image_described", im.name ?? "image", im.model, im.ms, im.error),
+      state: im.status === "describing" ? "in-progress" : im.status === "error" ? "error" : "done",
+    })),
+    ...audioAttachments.map((a): LiveActivity => ({
+      ...makeActivity(a.id, "audio_transcribed", a.name, a.model, a.ms, a.error),
+      state: a.status === "transcribing" ? "in-progress" : a.status === "error" ? "error" : "done",
+    })),
+    ...documentAttachments.map((d): LiveActivity => ({
+      ...makeActivity(d.id, "document_extracted", d.name, null, d.ms, d.error),
+      state: d.status === "extracting" ? "in-progress" : d.status === "error" ? "error" : "done",
+    })),
+  ];
 
   async function send(): Promise<void> {
     cancelAutoSend();
@@ -945,11 +1016,20 @@ export function Chat({
     setAudioAttachments([]);
     setDocumentAttachments([]);
 
+    // Snapshot the buffered resource activities for THIS turn (#424): every terminal live activity
+    // becomes a persisted activity (strip the live-only `state`; the backend sanitizes them). The
+    // pre-turn cluster is fed from the chip arrays, which we clear above, so it vanishes on submit and
+    // the same items re-render under the committed turn from the persisted `meta["activities"]`.
+    const turnActivities: ResourceActivity[] = liveActivities
+      .filter((a) => a.state !== "in-progress")
+      .map(({ state: _state, ...activity }) => activity);
+
     const startKey = activeId ?? NEW_CHAT;
     const userMsg: ChatMessage = {
       role: "user",
       content,
       ...(images.length ? { images, image_descriptions: descriptions } : {}),
+      ...(turnActivities.length ? { activities: turnActivities } : {}),
     };
     const history: ChatMessage[] = [...(chats[startKey]?.messages ?? []), userMsg];
     const assistantIndex = history.length;
@@ -1755,6 +1835,7 @@ export function Chat({
             onAllowHost={(host) => void onAllowHost(host)}
             collapsed={sidebarCollapsed}
             setCollapsed={setSidebarCollapsed}
+            liveActivities={liveActivities}
           />
         </div>
       )}

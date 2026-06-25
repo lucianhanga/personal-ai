@@ -11,6 +11,11 @@ afterEach(() => {
 
 const DRAFT_KEY = "personalai_composer_draft";
 
+// #424: transcribe/describe now return {text|description, model, ms}. Helpers keep the existing
+// string-centric tests terse while satisfying the enriched return types.
+const tr = (text: string): api.TranscribeResult => ({ text, model: "whisper-1", ms: 100 });
+const dsc = (description: string): api.DescribeResult => ({ description, model: "vision:7b", ms: 100 });
+
 const MODELS = {
   defaultModel: "qwen3.6:35b-a3b",
   models: [
@@ -111,7 +116,7 @@ test("records voice and inserts the transcript into the composer (M9.2)", async 
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
-  vi.spyOn(api, "transcribeAudio").mockResolvedValue("hello from my voice");
+  vi.spyOn(api, "transcribeAudio").mockResolvedValue(tr("hello from my voice"));
 
   // Mock the browser media APIs (not in jsdom).
   const track = { stop: vi.fn() };
@@ -156,7 +161,7 @@ test("editing the transcript cancels the auto-send", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
-  vi.spyOn(api, "transcribeAudio").mockResolvedValue("draft text");
+  vi.spyOn(api, "transcribeAudio").mockResolvedValue(tr("draft text"));
   const track = { stop: vi.fn() };
   vi.stubGlobal("navigator", {
     ...navigator,
@@ -209,7 +214,7 @@ test("auto-sends the transcript after the grace period if untouched (M9.2c)", as
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
-  vi.spyOn(api, "transcribeAudio").mockResolvedValue("auto sent text");
+  vi.spyOn(api, "transcribeAudio").mockResolvedValue(tr("auto sent text"));
   const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
     onDelta("ok");
   });
@@ -272,7 +277,7 @@ test("shows a no-speech notice when the transcript is empty (M9.2f)", async () =
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
-  vi.spyOn(api, "transcribeAudio").mockResolvedValue(""); // VAD strips silence -> empty
+  vi.spyOn(api, "transcribeAudio").mockResolvedValue(tr("")); // VAD strips silence -> empty
   const track = { stop: vi.fn() };
   vi.stubGlobal("navigator", {
     ...navigator,
@@ -340,10 +345,10 @@ test("dropping an audio file creates a transcribing chip that becomes done with 
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
   // Defer resolution so the transcribing state is observable, then resolve.
-  let resolve!: (text: string) => void;
+  let resolve!: (result: api.TranscribeResult) => void;
   const transcribe = vi
     .spyOn(api, "transcribeAudio")
-    .mockReturnValue(new Promise<string>((r) => (resolve = r)));
+    .mockReturnValue(new Promise<api.TranscribeResult>((r) => (resolve = r)));
 
   render(<Chat token="demo" />);
   await waitFor(() => expect(screen.getByTestId("composer-dropzone")).toBeInTheDocument());
@@ -362,7 +367,7 @@ test("dropping an audio file creates a transcribing chip that becomes done with 
   expect(transcribe).toHaveBeenCalledWith("demo", file, "meeting.mp3", expect.any(AbortSignal));
 
   await act(async () => {
-    resolve("the full transcript of the meeting recording goes on for a while");
+    resolve(tr("the full transcript of the meeting recording goes on for a while"));
   });
 
   // The chip becomes done with a one-line snippet of the transcript; no auto-send banner.
@@ -377,7 +382,7 @@ test("an empty audio transcript yields a no-speech chip (#406)", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
-  vi.spyOn(api, "transcribeAudio").mockResolvedValue("");
+  vi.spyOn(api, "transcribeAudio").mockResolvedValue(tr(""));
 
   render(<Chat token="demo" />);
   await waitFor(() => expect(screen.getByTestId("composer-dropzone")).toBeInTheDocument());
@@ -395,7 +400,7 @@ test("a done audio chip opens a transcript panel on focus with a Copy button (#4
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
-  vi.spyOn(api, "transcribeAudio").mockResolvedValue("hello transcript world");
+  vi.spyOn(api, "transcribeAudio").mockResolvedValue(tr("hello transcript world"));
 
   render(<Chat token="demo" />);
   await waitFor(() => expect(screen.getByTestId("composer-dropzone")).toBeInTheDocument());
@@ -421,7 +426,7 @@ test("the transcript panel STAYS open when the mouse leaves the chip (#410)", as
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
-  vi.spyOn(api, "transcribeAudio").mockResolvedValue("reach the copy button");
+  vi.spyOn(api, "transcribeAudio").mockResolvedValue(tr("reach the copy button"));
 
   render(<Chat token="demo" />);
   await waitFor(() => expect(screen.getByTestId("composer-dropzone")).toBeInTheDocument());
@@ -453,7 +458,7 @@ test("removing an audio chip drops it from the row (#406)", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
-  vi.spyOn(api, "transcribeAudio").mockResolvedValue("some words");
+  vi.spyOn(api, "transcribeAudio").mockResolvedValue(tr("some words"));
 
   render(<Chat token="demo" />);
   await waitFor(() => expect(screen.getByTestId("composer-dropzone")).toBeInTheDocument());
@@ -472,7 +477,7 @@ test("sending folds the audio transcript into the message content as a labeled b
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
-  vi.spyOn(api, "transcribeAudio").mockResolvedValue("the spoken words");
+  vi.spyOn(api, "transcribeAudio").mockResolvedValue(tr("the spoken words"));
   const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
     onDelta("ok");
   });
@@ -517,7 +522,7 @@ test("the old file-picker and Summarize affordances are gone (#406)", async () =
 test("attaches an image, describes it eagerly, and sends it (vision) (#419)", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
-  const describe = vi.spyOn(api, "describeImage").mockResolvedValue("a tabby cat on a sofa");
+  const describe = vi.spyOn(api, "describeImage").mockResolvedValue(dsc("a tabby cat on a sofa"));
   const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
     onDelta("I see a cat.");
   });
@@ -555,6 +560,49 @@ test("attaches an image, describes it eagerly, and sends it (vision) (#419)", as
   expect(screen.queryByTestId("image-attachments")).toBeNull();
 });
 
+test("an uploaded image yields a live activity that persists in the send body (#424)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "describeImage").mockResolvedValue(dsc("a tabby cat on a sofa"));
+  const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
+    onDelta("I see a cat.");
+  });
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+
+  const file = new File(["x"], "cat.png", { type: "image/png" });
+  fireEvent.drop(screen.getByTestId("composer-dropzone"), {
+    dataTransfer: { files: [file], types: ["Files"] },
+  });
+
+  // While the chip is `done` pre-submit, the Activity panel shows a live "Preparing your message"
+  // cluster with a resource node for the image (the live -> persisted mirror, #424).
+  await waitFor(() => expect(screen.getByTestId("timeline-preturn")).toBeInTheDocument());
+  const liveNode = screen.getByTestId("timeline-resource");
+  expect(liveNode).toHaveTextContent("Described image — cat.png");
+
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "what is this?" } });
+  fireEvent.click(screen.getByTestId("send"));
+
+  // The submitted user turn carries the sanitized-shape activity in its `activities` field.
+  await waitFor(() => {
+    const sent = stream.mock.calls[0][0].messages;
+    const lastUser = sent[sent.length - 1];
+    expect(lastUser.activities).toHaveLength(1);
+    const act = lastUser.activities![0];
+    expect(act.kind).toBe("resource");
+    expect(act.action).toBe("image_described");
+    expect(act.ref).toBe("cat.png");
+    expect(act.model).toBe("vision:7b");
+    expect(act.ms).toBe(100);
+  });
+  // On submit the pre-turn cluster vanishes (the committed turn becomes the source of truth).
+  await waitFor(() => expect(screen.queryByTestId("timeline-preturn")).toBeNull());
+});
+
 test("non-vision model folds the image description into the message content (#419)", async () => {
   // A non-vision default model can't see the image, so its description is folded as text.
   mockProviders();
@@ -576,7 +624,7 @@ test("non-vision model folds the image description into the message content (#41
       },
     ],
   });
-  vi.spyOn(api, "describeImage").mockResolvedValue("a tabby cat on a sofa");
+  vi.spyOn(api, "describeImage").mockResolvedValue(dsc("a tabby cat on a sofa"));
   const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
     onDelta("ok");
   });
@@ -606,7 +654,7 @@ test("removing an image chip aborts its in-flight description (#419)", async () 
   let abortSignal: AbortSignal | undefined;
   vi.spyOn(api, "describeImage").mockImplementation((_t, _b, signal) => {
     abortSignal = signal;
-    return new Promise<string>(() => {});
+    return new Promise<api.DescribeResult>(() => {});
   });
   render(<Chat token="demo" />);
   await waitFor(() => expect(screen.getByTestId("composer-dropzone")).toBeInTheDocument());

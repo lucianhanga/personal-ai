@@ -15,6 +15,9 @@ export interface AudioAttachment {
   status: AudioStatus;
   transcript: string;
   error?: string;
+  // #424: resource-activity facts captured from the transcribe response.
+  model?: string | null; // the Whisper model id (may be null)
+  ms?: number | null; // transcribe-call wall-clock
 }
 
 /** First ~40 chars of the transcript as a one-line snippet for the chip face. */

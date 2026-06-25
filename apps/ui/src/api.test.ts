@@ -112,8 +112,8 @@ test("transcribeAudio posts the provided filename in the form (#389)", async () 
   vi.stubGlobal("fetch", fetchMock);
 
   const blob = new Blob(["x"], { type: "audio/mp3" });
-  const text = await transcribeAudio("t", blob, "meeting.mp3");
-  expect(text).toBe("hello");
+  const result = await transcribeAudio("t", blob, "meeting.mp3");
+  expect(result.text).toBe("hello"); // #424: now returns {text, model, ms}
 
   const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
   const form = init.body as FormData;
@@ -163,7 +163,7 @@ test("describeImage posts the image, forwards the signal, returns the descriptio
   vi.stubGlobal("fetch", fetchMock);
   const controller = new AbortController();
   const desc = await describeImage("t", new Blob(["x"], { type: "image/jpeg" }), controller.signal);
-  expect(desc).toBe("a tabby cat");
+  expect(desc.description).toBe("a tabby cat"); // #424: now returns {description, model, ms}
   const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
   expect(String(url)).toContain("/api/v1/images/describe");
   expect((init.body as FormData).get("file")).toBeInstanceOf(File);

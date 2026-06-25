@@ -197,6 +197,101 @@ def test_user_message_images_round_trip() -> None:
 
 
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_user_message_activities_round_trip() -> None:
+    # #424: pre-turn resource-processing activities persist on the user turn and surface top-level
+    # on reload so the Activity timeline re-renders them. The persist boundary sanitizes them.
+    activity = {
+        "kind": "resource",
+        "action": "image_described",
+        "text": "Described image — cat.jpg",
+        "ref": "cat.jpg",
+        "ts": 1_700_000_000,
+        "model": "qwen2.5-vl:7b",
+        "ms": 2300,
+    }
+    with _client() as client:
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/v1/chat",
+            headers=AUTH,
+            json={
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "what breed?",
+                        # An injected unknown key must be stripped by _sanitize_activities.
+                        "activities": [{**activity, "evil": "<script>"}],
+                    }
+                ],
+                "conversation_id": cid,
+            },
+        ) as resp:
+            "".join(resp.iter_text())
+        msgs = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        user = next(m for m in msgs if m["role"] == "user")
+        assert user["activities"] == [activity]  # sanitized; the injected key is gone
+        # Assistant turn carries no activities (the key lives only on the user turn).
+        assistant = next(m for m in msgs if m["role"] == "assistant")
+        assert assistant["activities"] == []
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_legacy_turn_without_activities_round_trips_empty() -> None:
+    # #424: old turns (no activities sent) reload with an empty activities list (back-compatible).
+    with _client() as client:
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/v1/chat",
+            headers=AUTH,
+            json={
+                "messages": [{"role": "user", "content": "no resources here"}],
+                "conversation_id": cid,
+            },
+        ) as resp:
+            "".join(resp.iter_text())
+        msgs = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        user = next(m for m in msgs if m["role"] == "user")
+        assert user["activities"] == []
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_activities_do_not_leak_to_a_later_resource_less_turn() -> None:
+    # #424 (mirrors the #396 image rule): a later question without activities must NOT inherit an
+    # earlier turn's activities.
+    activity = {
+        "kind": "resource",
+        "action": "image_described",
+        "text": "Described image — cat.jpg",
+        "ref": "cat.jpg",
+        "ts": 1_700_000_000,
+        "model": "m",
+        "ms": 10,
+    }
+    with _client() as client:
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/v1/chat",
+            headers=AUTH,
+            json={
+                "messages": [
+                    {"role": "user", "content": "first", "activities": [activity]},
+                    {"role": "assistant", "content": "ok"},
+                    {"role": "user", "content": "second"},
+                ],
+                "conversation_id": cid,
+            },
+        ) as resp:
+            "".join(resp.iter_text())
+        msgs = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        user = next(m for m in msgs if m["role"] == "user")
+        assert user["content"] == "second"
+        assert user["activities"] == []  # not the earlier turn's activity
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_image_does_not_leak_to_a_later_image_less_turn() -> None:
     # An image-less question must NOT inherit an earlier question's image (#396 regression): the
     # persisted turn carries THIS turn's images, not the most recent image-bearing one's.

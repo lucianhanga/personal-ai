@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 
-import { ActivityTimeline } from "./ActivityTimeline";
-import type { ChatMessage, ContextBreakdown, TraceItem } from "./api";
+import { ActivityTimeline, type LiveActivity } from "./ActivityTimeline";
+import type { ChatMessage, ContextBreakdown, ResourceActivity, TraceItem } from "./api";
 
 const CONTEXT: ContextBreakdown = {
   items: [{ label: "grounding", count: 1, chars: 400 }],
@@ -50,6 +50,7 @@ function renderTimeline(overrides: Partial<React.ComponentProps<typeof ActivityT
       contexts={overrides.contexts ?? { 1: CONTEXT }}
       liveUsage={overrides.liveUsage ?? null}
       busy={overrides.busy ?? false}
+      liveActivities={overrides.liveActivities ?? []}
     />,
   );
 }
@@ -248,4 +249,148 @@ test("shows each step's own per-step ts, falling back to the turn clock when abs
   expect(screen.getByTestId("timeline-plan")).toHaveTextContent("03:04:05Z");
   // The ts-less reasoning step falls back to the turn's created_at clock.
   expect(screen.getByTestId("timeline-reasoning")).toHaveTextContent("00:00:00Z");
+});
+
+// --- resource-processing activities (#424) -------------------------------------------------------
+
+const ACT_IMAGE: ResourceActivity = {
+  kind: "resource",
+  action: "image_described",
+  text: "Described image — cat.jpg",
+  ref: "cat.jpg",
+  ts: 1_577_836_801, // 2020-01-01T00:00:01Z
+  model: "qwen2.5-vl:7b",
+  ms: 2300,
+};
+const ACT_DOC: ResourceActivity = {
+  kind: "resource",
+  action: "document_extracted",
+  text: "Extracted document — spec.pdf",
+  ref: "spec.pdf",
+  ts: 1_577_836_803, // 2020-01-01T00:00:03Z
+  model: null,
+  ms: 12,
+};
+
+// A turn whose user message carries persisted resource activities (#424).
+function turnWithActivities(activities: ResourceActivity[]): ChatMessage[] {
+  return [
+    { role: "user", content: "what breed?", activities },
+    {
+      role: "assistant",
+      content: "a maine coon",
+      created_at: "2020-01-01T00:00:10Z",
+      meta: {
+        trace: [{ kind: "reasoning", text: "thinking" }] as TraceItem[],
+        context: CONTEXT,
+        usage: { prompt_tokens: 20, completion_tokens: 8, total_tokens: 28, elapsed_ms: 1200 },
+      },
+    },
+  ];
+}
+
+test("(history) persisted resource activity renders as a done resource node with model + ms", () => {
+  renderTimeline({ messages: turnWithActivities([ACT_IMAGE]), contexts: {} });
+  const node = screen.getByTestId("timeline-resource");
+  expect(node).toHaveAttribute("data-status", "done");
+  expect(node).toHaveTextContent("Described image — cat.jpg");
+  // Tier-1 status pill carries the WORD (not color-only).
+  expect(screen.getByTestId("resourceio-status")).toHaveTextContent("done");
+  // Expand Tier-2 -> model + duration.
+  fireEvent.click(screen.getByTestId("resourceio-summary"));
+  const detail = screen.getByTestId("resourceio-detail");
+  expect(detail).toHaveTextContent("qwen2.5-vl:7b");
+  expect(detail).toHaveTextContent("2.3 s"); // fmtMs(2300)
+});
+
+test("(history) resource nodes render before the context node, ordered by ts (#424)", () => {
+  // Two resources out of ts order in the array; the timeline sorts them ascending and puts both
+  // before the "Context assembled" node.
+  renderTimeline({ messages: turnWithActivities([ACT_DOC, ACT_IMAGE]), contexts: {} });
+  const nodes = screen.getAllByTestId("timeline-node");
+  // node[0] = image (ts ...01), node[1] = doc (ts ...03), node[2] = context, node[3] = reasoning.
+  expect(nodes[0]).toHaveTextContent("Described image — cat.jpg");
+  expect(nodes[1]).toHaveTextContent("Extracted document — spec.pdf");
+  expect(nodes[2]).toHaveTextContent("Context assembled");
+});
+
+test("(history) the turn meta line gains an 'N resources' segment", () => {
+  renderTimeline({ messages: turnWithActivities([ACT_IMAGE, ACT_DOC]), contexts: {} });
+  expect(screen.getByTestId("timeline-turn-header").parentElement).toHaveTextContent("2 resources");
+});
+
+test("(filter) the Resources chip shows only resource nodes and hides turns with none", () => {
+  // Two turns: an older plain one (no activities) and the newest one (with activities, open by
+  // default so its resource nodes render).
+  const messages: ChatMessage[] = [
+    { role: "user", content: "plain question" },
+    {
+      role: "assistant",
+      content: "plain answer",
+      created_at: "2020-01-01T00:00:00Z",
+      meta: { trace: [{ kind: "reasoning", text: "x" }] as TraceItem[] },
+    },
+    ...turnWithActivities([ACT_IMAGE]),
+  ];
+  renderTimeline({ messages, contexts: {} });
+  const resourcesChip = screen.getAllByTestId("timeline-filter").find((b) => b.textContent === "Resources")!;
+  fireEvent.click(resourcesChip);
+  // Only the resource node remains; the resource-less turn is hidden entirely.
+  expect(screen.getAllByTestId("timeline-resource")).toHaveLength(1);
+  expect(screen.queryByTestId("timeline-reasoning")).toBeNull();
+});
+
+test("(legacy) a turn without activities renders exactly as today — nothing new", () => {
+  renderTimeline(); // the default two-turn fixture has no activities
+  expect(screen.queryByTestId("timeline-resource")).toBeNull();
+  expect(screen.queryByTestId("timeline-preturn")).toBeNull();
+  // No "N resources" segment leaks into the meta line.
+  expect(screen.getAllByTestId("timeline-turn-header")[0].parentElement).not.toHaveTextContent(
+    "resource",
+  );
+});
+
+test("(live) the pre-turn cluster shows in-progress + done activities, role=status", () => {
+  const live: LiveActivity[] = [
+    { ...ACT_IMAGE, state: "in-progress", model: null, ms: null },
+    { ...ACT_DOC, state: "done" },
+  ];
+  renderTimeline({ messages: [], liveActivities: live });
+  const cluster = screen.getByTestId("timeline-preturn");
+  expect(cluster).toHaveAttribute("role", "status");
+  expect(cluster).toHaveTextContent("Preparing your message");
+  // The in-progress image keeps the cluster "live".
+  expect(cluster).toHaveTextContent("live");
+  const nodes = screen.getAllByTestId("timeline-resource");
+  expect(nodes[0]).toHaveAttribute("data-status", "in-progress"); // image (ts ...01) first
+  expect(nodes[1]).toHaveAttribute("data-status", "done"); // doc (ts ...03)
+});
+
+test("(live) the cluster settles to a non-live dot once all activities are done", () => {
+  const live: LiveActivity[] = [{ ...ACT_IMAGE, state: "done" }];
+  renderTimeline({ messages: [], liveActivities: live });
+  const cluster = screen.getByTestId("timeline-preturn");
+  expect(cluster).not.toHaveTextContent("live");
+  expect(screen.getByTestId("resourceio-status")).toHaveTextContent("done");
+});
+
+test("(error) a failed describe persists as a red error node with its message", () => {
+  const errored: ResourceActivity = {
+    ...ACT_IMAGE,
+    status: "error",
+    error: "vision model unavailable",
+  };
+  renderTimeline({ messages: turnWithActivities([errored]), contexts: {} });
+  const node = screen.getByTestId("timeline-resource");
+  expect(node).toHaveAttribute("data-status", "error");
+  expect(screen.getByTestId("resourceio-status")).toHaveTextContent("error");
+  fireEvent.click(screen.getByTestId("resourceio-summary"));
+  expect(screen.getByTestId("resourceio-error")).toHaveTextContent("vision model unavailable");
+});
+
+test("(removed-before-submit) an empty liveActivities array renders no cluster", () => {
+  renderTimeline({ messages: [], liveActivities: [] });
+  expect(screen.queryByTestId("timeline-preturn")).toBeNull();
+  // With no turns and no cluster, the empty-state copy shows.
+  expect(screen.getByTestId("timeline-empty")).toBeInTheDocument();
 });
