@@ -214,8 +214,9 @@ function makeActivity(
 // enough to stay understandable, small enough to bound vision tokens, payload, and DB storage.
 const MAX_IMAGES = 6;
 // A document whose extracted text is at/under this token estimate folds inline; over it, the chip is
-// gated `large` and NOT folded (Tier-2 ephemeral RAG is a later phase, #420). ~6k tokens ≈ 4-5 pages.
-const DOC_INLINE_TOKEN_GATE = 6000;
+// gated `large` and ingested into conversation-scoped RAG at send (Tier-2, #436/#420) instead of
+// folding. Kept low so all but the smallest docs are retrieved (not dumped) into context.
+const DOC_INLINE_TOKEN_GATE = 800;
 const DOC_MIMES = new Set(["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain", "text/markdown"]);
 const DOC_EXTS = /\.(pdf|docx|txt|md|markdown)$/i;
 function isDocumentFile(f: File): boolean {
