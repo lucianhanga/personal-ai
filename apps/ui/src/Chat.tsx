@@ -960,6 +960,9 @@ export function Chat({
 
   // Only SMALL docs fold into the message; large ones are informational (Tier-2 RAG, #420).
   const smallDocs = documentAttachments.filter((d) => d.status === "small");
+  // Both small AND large docs have extracted text -> both get a transcript chip (#426); only the
+  // model-facing fold differs (small folds inline, large doesn't). Errors/extracting are excluded.
+  const doneDocs = documentAttachments.filter((d) => d.status === "small" || d.status === "large");
   const docExtracting = documentAttachments.some((d) => d.status === "extracting");
 
   // Live pre-turn resource activities (#424): mirror each chip's state machine into the Activity
@@ -999,6 +1002,12 @@ export function Chat({
     // Fold each SMALL document's text inline (#416); large docs are not folded (Tier-2 RAG, #420).
     const docBlocks = smallDocs.map((d) => `[Document: ${d.name}]\n${d.text}`).join("\n\n");
     const content = [typed, audioBlocks, imageBlocks, docBlocks].filter(Boolean).join("\n\n");
+    // Display-vs-model split (#426): the bubble renders the original typed prompt + attachment chips,
+    // NOT the folded `content` (which still goes to the model above). Build the structured display
+    // arrays from THIS turn's done attachments. Documents include both small (folded) AND large
+    // (not folded) — the chip lets the user read/copy either; only the fold differs.
+    const documents = doneDocs.map((d) => ({ name: d.name, text: d.text }));
+    const audio = doneAudio.map((a) => ({ name: a.name, transcript: a.transcript }));
     // Allow sending with only an image or only a transcript (no typed text). Block while a chip is
     // still transcribing/describing (the Send button is also disabled).
     if (
@@ -1028,7 +1037,13 @@ export function Chat({
     const userMsg: ChatMessage = {
       role: "user",
       content,
+      // Display-vs-model split (#426): always carry the original typed prompt so the bubble renders
+      // it (not the folded `content`) and the transcript takes the structural path. Empty for an
+      // attachments-only turn -> the bubble shows just the chip strip, no empty line.
+      displayContent: typed,
       ...(images.length ? { images, image_descriptions: descriptions } : {}),
+      ...(documents.length ? { documents } : {}),
+      ...(audio.length ? { audio } : {}),
       ...(turnActivities.length ? { activities: turnActivities } : {}),
     };
     const history: ChatMessage[] = [...(chats[startKey]?.messages ?? []), userMsg];

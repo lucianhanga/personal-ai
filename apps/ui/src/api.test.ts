@@ -4,6 +4,7 @@ import {
   type ApprovalRequest,
   describeImage,
   extractDocument,
+  fetchConversation,
   resumeChat,
   streamChat,
   transcribeAudio,
@@ -55,6 +56,69 @@ test("streamChat parses deltas, surfaces errors, skips malformed, flushes the fi
 test("streamChat throws on a non-ok response", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 500 })));
   await expect(streamChat({ messages: [], token: "t" }, () => {})).rejects.toThrow(/chat request/);
+});
+
+test("streamChat snake-cases the displayContent field for the backend (#426)", async () => {
+  // The backend's ChatMessageIn expects `display_content`; the UI type is camelCase `displayContent`.
+  // documents/audio are already single words and pass through unchanged.
+  const fetchMock = vi.fn(async () => sseResponse(['data: {"delta":"ok"}']));
+  vi.stubGlobal("fetch", fetchMock);
+  await streamChat(
+    {
+      messages: [
+        {
+          role: "user",
+          content: "folded model content",
+          displayContent: "typed prompt",
+          documents: [{ name: "a.txt", text: "full text" }],
+          audio: [{ name: "c.m4a", transcript: "spoken" }],
+        },
+      ],
+      token: "t",
+    },
+    () => {},
+  );
+  const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+  const body = JSON.parse(call[1].body as string);
+  const msg = body.messages[0];
+  expect(msg.display_content).toBe("typed prompt");
+  expect(msg.displayContent).toBeUndefined(); // camelCase key is removed on the wire
+  expect(msg.content).toBe("folded model content"); // model still gets the folded content
+  expect(msg.documents).toEqual([{ name: "a.txt", text: "full text" }]);
+  expect(msg.audio).toEqual([{ name: "c.m4a", transcript: "spoken" }]);
+});
+
+test("fetchConversation maps display_content back to displayContent; old turns stay undefined (#426)", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            id: "c1",
+            title: "t",
+            messages: [
+              {
+                role: "user",
+                content: "folded",
+                display_content: "typed prompt",
+                documents: [{ name: "a.txt", text: "full" }],
+                audio: [],
+              },
+              { role: "user", content: "legacy verbatim", display_content: null },
+            ],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    ),
+  );
+  const conv = await fetchConversation("t", "c1");
+  expect(conv.messages[0].displayContent).toBe("typed prompt");
+  expect(conv.messages[0].documents).toEqual([{ name: "a.txt", text: "full" }]);
+  // Old turn: display_content null -> displayContent undefined so the bubble falls back to content.
+  expect(conv.messages[1].displayContent).toBeUndefined();
+  expect(conv.messages[1].content).toBe("legacy verbatim");
 });
 
 test("streamChat surfaces the durable human-gate approval_request", async () => {

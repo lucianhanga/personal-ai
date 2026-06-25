@@ -144,6 +144,16 @@ class ChatMessageIn(BaseModel):
     # them here. Request-only metadata (NOT sent to the model); sanitized + persisted in the turn's
     # meta so the Activity timeline re-renders them on reload. See ``_sanitize_activities``.
     activities: list[dict[str, Any]] = []
+    # Sent-message attachment presentation (#426). The display-vs-model split: ``content`` stays the
+    # folded model-facing string; these carry the structured display data so the transcript renders
+    # the original prompt + attachment chips without parsing fold markers back out of ``content``.
+    # All request-only (NOT re-sent to the model) and sanitized at the persist boundary.
+    #   - ``display_content``: the user's original typed prompt (pre-fold), shown as the bubble.
+    #   - ``documents``: one ``{name, text}`` per sent document chip (small or large).
+    #   - ``audio``: one ``{name, transcript}`` per sent audio chip.
+    display_content: str | None = None
+    documents: list[dict[str, Any]] = []
+    audio: list[dict[str, Any]] = []
 
 
 class ChatRequest(BaseModel):
@@ -369,6 +379,16 @@ _ACTIVITY_USAGE_MAX = 10_000_000
 # or new actions are silently dropped here.
 _ACTIVITY_ACTIONS = frozenset({"image_described", "document_extracted", "audio_transcribed"})
 
+# Sent-message attachment display data (#426): like activities above, these are client-supplied at
+# submit, land verbatim in stored history, and are read back into the transcript. They DO carry user
+# content (extracted document text / audio transcripts), so the caps are larger than the activity
+# label caps but still bounded so a turn can't dump unbounded text into stored history. The persist
+# boundary clamps/drops silently and NEVER blocks the turn.
+_MAX_ATTACHMENTS_PER_TURN = 32  # bounds the chip strip; mirrors the composer's practical limits
+_ATTACHMENT_NAME_CAP = 256  # a filename, not a path dump
+_ATTACHMENT_TEXT_CAP = 200_000  # extracted text / transcript; bounded but generous for a doc/audio
+_DISPLAY_CONTENT_CAP = 100_000  # the original typed prompt; bounded so it can't bloat the turn
+
 
 def _clamp_int(value: Any, lo: int, hi: int, default: int = 0) -> int:
     """Coerce ``value`` to an int clamped to ``[lo, hi]``; non-numeric falls back to ``default``."""
@@ -431,6 +451,45 @@ def _sanitize_activities(raw: Any) -> list[dict[str, Any]]:
             if kept:
                 clean["usage"] = kept
         out.append(clean)
+    return out
+
+
+def _sanitize_display_content(raw: Any) -> str | None:
+    """Validate the client-supplied original typed prompt (#426) at the persist boundary.
+
+    ``display_content`` is read back as the transcript bubble body, so it is bounded just like other
+    client text that lands in stored history. Returns ``None`` for missing/blank input so old turns
+    (and attachments-only turns) don't persist an empty string. NEVER raises.
+    """
+    if raw is None:
+        return None
+    text = str(raw)[:_DISPLAY_CONTENT_CAP]
+    # Keep a non-empty typed prompt verbatim (incl. its own whitespace); blank -> None.
+    return text if text.strip() else None
+
+
+def _sanitize_attachments(raw: Any, text_key: str) -> list[dict[str, str]]:
+    """Validate client-supplied sent-message attachment display data (#426) at the persist boundary.
+
+    Shared by ``documents`` (``text_key="text"``) and ``audio`` (``text_key="transcript"``). Like
+    ``_sanitize_activities`` this is the security-relevant bit: each item is rebuilt from an
+    allowlist (only ``name`` + the text field survive — unknown keys never pass through), the count
+    is bounded, and ``name``/text are length-capped. Items missing a name are dropped. Clamps/drops
+    silently and NEVER raises and NEVER blocks the turn.
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, str]] = []
+    for item in raw:
+        if len(out) >= _MAX_ATTACHMENTS_PER_TURN:
+            break  # drop the overflow silently
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()[:_ATTACHMENT_NAME_CAP]
+        if not name:
+            continue  # a chip with no name can't be rendered -> drop
+        text = str(item.get(text_key, ""))[:_ATTACHMENT_TEXT_CAP]
+        out.append({"name": name, text_key: text})
     return out
 
 
@@ -1217,6 +1276,19 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             last_activities = (
                 _sanitize_activities(last_user_msg.activities) if last_user_msg else []
             )
+            # Sent-message attachment display data (#426): the display-vs-model split. ``content``
+            # persisted below stays the folded model-facing string; these carry the original typed
+            # prompt + structured per-attachment text so the transcript renders chips on reload
+            # without parsing fold markers. Sanitized at the boundary; never block the turn.
+            last_display = (
+                _sanitize_display_content(last_user_msg.display_content) if last_user_msg else None
+            )
+            last_documents = (
+                _sanitize_attachments(last_user_msg.documents, "text") if last_user_msg else []
+            )
+            last_audio = (
+                _sanitize_attachments(last_user_msg.audio, "transcript") if last_user_msg else []
+            )
             turn_meta: dict[str, Any] = {}
             if last_images:
                 turn_meta["images"] = last_images
@@ -1224,6 +1296,12 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 turn_meta["image_descriptions"] = last_descriptions
             if last_activities:
                 turn_meta["activities"] = last_activities
+            if last_display is not None:
+                turn_meta["display_content"] = last_display
+            if last_documents:
+                turn_meta["documents"] = last_documents
+            if last_audio:
+                turn_meta["audio"] = last_audio
             await storage.conversations.add_message(
                 conversation_id=persist_id,
                 role="user",
@@ -2020,6 +2098,12 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 # Pre-turn resource-processing activities (#424), surfaced top-level so the Activity
                 # timeline re-renders them on reload. Empty for old turns / assistant turns.
                 "activities": (m.meta or {}).get("activities", []),
+                # Sent-message attachment display data (#426), surfaced top-level so the transcript
+                # renders the original prompt + chips on reload. ``display_content`` is None for old
+                # turns (the UI falls back to ``content``); documents/audio are empty for old turns.
+                "display_content": (m.meta or {}).get("display_content"),
+                "documents": (m.meta or {}).get("documents", []),
+                "audio": (m.meta or {}).get("audio", []),
                 # Surfaced so the UI's activity timeline can show real relative times per turn.
                 "created_at": m.created_at.isoformat(),
             }

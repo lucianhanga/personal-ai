@@ -1,11 +1,31 @@
 import { useState } from "react";
 
 import type { ChatMessage, Citation, ContextBreakdown, TraceItem, TurnUsage } from "./api";
+import { TranscriptAudio } from "./AudioChips";
 import { approxTokens, ContextComposition } from "./ContextComposition";
+import { TranscriptDocuments } from "./DocumentChips";
 import { TranscriptImages } from "./ImageChips";
 import { Markdown } from "./Markdown";
 import { MessageDetails } from "./MessageDetails";
 import { ReadAloudButton } from "./ReadAloudButton";
+
+/**
+ * The text shown in a user bubble (#426): the original typed prompt (`displayContent`) for new turns,
+ * falling back to the folded `content` for old turns that predate the display-vs-model split. A new
+ * attachments-only turn has an empty `displayContent` -> render no bubble text (just the chip strip).
+ */
+const bubbleText = (m: ChatMessage): string => (m.displayContent != null ? m.displayContent : m.content);
+
+/**
+ * Whether a user turn carries the structural attachment data (#426). New turns take the structural
+ * path (prompt-only bubble + chips); old folded turns (no `displayContent`/`images`/`documents`/
+ * `audio`) render `content` verbatim, exactly as before — no retro-parsing of fold markers.
+ */
+const hasStructured = (m: ChatMessage): boolean =>
+  m.displayContent != null ||
+  (m.images?.length ?? 0) > 0 ||
+  (m.documents?.length ?? 0) > 0 ||
+  (m.audio?.length ?? 0) > 0;
 
 /** First line of a question, clipped to ~80 chars with a trailing ellipsis, for the collapsed preview. */
 const previewQuestion = (text: string): string => {
@@ -185,17 +205,37 @@ export function MessageList({
                   verticalAlign: "bottom",
                 }}
               >
-                {previewQuestion(m.content)}
+                {/* The collapsed preview shows the original prompt (#426); old turns clip `content`. */}
+                {previewQuestion(bubbleText(m))}
               </span>
             ) : (
-              m.content
+              // Expanded: the original typed prompt (#426). An attachments-only turn has empty text
+              // (`displayContent === ""`) -> render no bubble line, just the "You:" label + the strip.
+              bubbleText(m)
             )}
-            {!collapsed[i] && m.images && m.images.length > 0 && (
-              // Hover a described image for its vision description + Copy (#419), reconstructed from
-              // the persisted images + image_descriptions.
-              <div style={{ marginTop: "0.25rem" }}>
-                <TranscriptImages images={m.images} descriptions={m.image_descriptions} />
-              </div>
+            {/* Attachment strip (#426), only when expanded: images, then documents, then audio — each
+                row only if present. New turns take the structural path; old folded turns have no
+                structural arrays so nothing renders here and their `content` stays verbatim above. */}
+            {!collapsed[i] && hasStructured(m) && (
+              <>
+                {m.images && m.images.length > 0 && (
+                  // Hover a described image for its vision description + Copy (#419), reconstructed
+                  // from the persisted images + image_descriptions.
+                  <div style={{ marginTop: "0.25rem" }}>
+                    <TranscriptImages images={m.images} descriptions={m.image_descriptions} />
+                  </div>
+                )}
+                {m.documents && m.documents.length > 0 && (
+                  <div style={{ marginTop: "0.25rem" }}>
+                    <TranscriptDocuments documents={m.documents} />
+                  </div>
+                )}
+                {m.audio && m.audio.length > 0 && (
+                  <div style={{ marginTop: "0.25rem" }}>
+                    <TranscriptAudio audio={m.audio} />
+                  </div>
+                )}
+              </>
             )}
           </div>
         ),

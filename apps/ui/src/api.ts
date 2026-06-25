@@ -125,6 +125,17 @@ export interface ChatMessage {
   // persisted on the user turn and surfaced top-level on reload so the Activity timeline re-renders
   // them. Request-only metadata (sanitized server-side; not sent to the model). Empty for old turns.
   activities?: ResourceActivity[];
+  // Sent-message attachment presentation (#426): the display-vs-model split. `content` stays the
+  // folded model-facing string; these carry the structured display data so the transcript renders
+  // the user's original prompt + attachment chips instead of the folded text. Request-only (mapped
+  // to snake_case for the backend, sanitized + persisted in the user turn's meta). Absent/empty for
+  // old turns, which fall back to rendering `content` verbatim.
+  //   - displayContent: the user's original typed prompt (pre-fold), shown as the bubble body.
+  //   - documents: one {name, text} per sent document chip; reveals the extracted text on hover.
+  //   - audio: one {name, transcript} per sent audio chip; reveals the transcript on hover.
+  displayContent?: string;
+  documents?: { name: string; text: string }[];
+  audio?: { name: string; transcript: string }[];
   // Persisted per-assistant-message detail (tool calls + reasoning), shown collapsed in the UI.
   meta?: MessageMeta | null;
   // ISO timestamp set when the message was persisted (GET /conversations/{id}); absent for the
@@ -928,10 +939,21 @@ export async function fetchConversation(
   const res = await fetch(`${API_BASE}/api/v1/conversations/${id}`, { headers: authHeaders(token), credentials: CREDS });
   if (!res.ok) throw new Error(`conversation request failed: ${res.status}`);
   const body = (await res.json()) as {
-    data?: { id: string; title: string; messages: ChatMessage[] };
+    // The backend surfaces sent-message display data snake-cased (#426); normalize to the camelCase
+    // `displayContent` the UI type uses (`documents`/`audio` are already single words). Old turns
+    // have `display_content: null` -> stays undefined so the bubble falls back to `content`.
+    data?: {
+      id: string;
+      title: string;
+      messages: (ChatMessage & { display_content?: string | null })[];
+    };
   };
   if (!body.data) throw new Error("conversation request failed");
-  return body.data;
+  const messages: ChatMessage[] = body.data.messages.map((m) => {
+    const { display_content, ...rest } = m;
+    return display_content != null ? { ...rest, displayContent: display_content } : rest;
+  });
+  return { id: body.data.id, title: body.data.title, messages };
 }
 
 /** Delete a conversation. */
@@ -985,12 +1007,19 @@ export async function streamChat(
   onVerification?: (step: { text: string; verdict?: string; ts?: string }) => void,
   onDraft?: (step: { text: string; attempt?: number; ts?: string }) => void,
 ): Promise<void> {
+  // Snake-case the sent-message display field (#426) for the backend's ChatMessageIn. `documents`/
+  // `audio` are already single words; only `displayContent` -> `display_content` needs mapping.
+  const wireMessages = params.messages.map((m) => {
+    if (m.displayContent == null) return m;
+    const { displayContent, ...rest } = m;
+    return { ...rest, display_content: displayContent };
+  });
   const res = await fetch(`${API_BASE}/api/v1/chat`, {
     method: "POST",
     credentials: CREDS,
     headers: { "Content-Type": "application/json", ...authHeaders(params.token) },
     body: JSON.stringify({
-      messages: params.messages,
+      messages: wireMessages,
       model: params.model,
       provider: params.provider,
       use_rag: params.useRag ?? false,
