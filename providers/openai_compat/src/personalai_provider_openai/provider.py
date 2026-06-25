@@ -48,16 +48,31 @@ def _messages(request: GenerationRequest) -> list[dict[str, Any]]:
     return [_message(m) for m in request.messages]
 
 
-def _chat_payload(request: GenerationRequest, *, stream: bool) -> dict[str, Any]:
+def _chat_payload(
+    request: GenerationRequest,
+    *,
+    stream: bool,
+    sampling: Mapping[str, Any] | None = None,
+    max_output_tokens: int | None = None,
+) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": request.model,
         "messages": _messages(request),
         "stream": stream,
     }
+    # Repetition penalties (Layer 1, #414): the OpenAI-compatible equivalent of Ollama's
+    # repeat_penalty. ``frequency_penalty``/``presence_penalty`` (range -2..2) lower the probability
+    # of verbatim loops; kept in the conservative 0.1-1.0 band so quality is not degraded.
+    payload.update(sampling or {})
     if request.temperature is not None:
         payload["temperature"] = request.temperature
     if request.max_tokens is not None:
+        # An explicit per-request cap always wins over the configured ceiling.
         payload["max_tokens"] = request.max_tokens
+    elif max_output_tokens is not None:
+        # Layer 2 (#414): a hard per-turn output ceiling when no explicit ``max_tokens`` is given,
+        # so an unbounded agent generation cannot run forever (mirrors Ollama's num_predict cap).
+        payload["max_tokens"] = max_output_tokens
     if request.json_schema is not None:
         payload["response_format"] = {
             "type": "json_schema",
@@ -137,6 +152,9 @@ class OpenAICompatProvider:
         *,
         client: httpx.AsyncClient | None = None,
         egress_guard: EgressGuard | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        max_output_tokens: int | None = None,
     ) -> None:
         self._base = base_url.rstrip("/")
         self._host = urlparse(self._base).hostname or ""
@@ -144,6 +162,14 @@ class OpenAICompatProvider:
         self._client = client or httpx.AsyncClient(timeout=httpx.Timeout(120.0))
         self._owns_client = client is None
         self._egress_guard = egress_guard
+        # Repetition penalties (Layer 1, #414) + the per-turn output ceiling (Layer 2): sent on
+        # every request so an unbounded/looping generation is discouraged and capped (like Ollama).
+        self._sampling: dict[str, Any] = {}
+        if frequency_penalty is not None:
+            self._sampling["frequency_penalty"] = frequency_penalty
+        if presence_penalty is not None:
+            self._sampling["presence_penalty"] = presence_penalty
+        self._max_output_tokens = max_output_tokens
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -175,7 +201,12 @@ class OpenAICompatProvider:
         response = await self._client.post(
             f"{self._base}/chat/completions",
             headers=self._headers(),
-            json=_chat_payload(request, stream=False),
+            json=_chat_payload(
+                request,
+                stream=False,
+                sampling=self._sampling,
+                max_output_tokens=self._max_output_tokens,
+            ),
         )
         response.raise_for_status()
         data: dict[str, Any] = response.json()
@@ -197,7 +228,12 @@ class OpenAICompatProvider:
 
     async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
         self._check_egress()
-        body = _chat_payload(request, stream=True)
+        body = _chat_payload(
+            request,
+            stream=True,
+            sampling=self._sampling,
+            max_output_tokens=self._max_output_tokens,
+        )
         body["stream_options"] = {"include_usage": True}  # ask for token usage in the final chunk
         usage: dict[str, int] = {}
         # Reassemble tool calls streamed as deltas (keyed by index; name + argument fragments).

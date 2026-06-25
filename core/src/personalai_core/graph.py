@@ -49,6 +49,7 @@ from personalai_core.agent import (
     run_agent,
 )
 from personalai_core.gateway import RegisteredTool, ToolGateway
+from personalai_core.runaway import RunawayConfig
 from personalai_core.structured import generate_structured
 
 # Resume payload keys for the egress gate (#377). The backend builds the resume payload from the
@@ -245,6 +246,7 @@ def _build_graph(
     checkpointer: BaseCheckpointSaver[Any] | None,
     prompts: Mapping[str, str] | None = None,
     accuracy_mode: str = "standard",
+    runaway: RunawayConfig | None = None,
 ) -> Any:
     """Compile the graph. With a ``checkpointer`` a human_gate (interrupt) is inserted before
     finalize, enabling durable interrupt/resume. ``prompts`` overrides per-agent system prompts
@@ -337,6 +339,7 @@ def _build_graph(
                 approved=approved,
                 think=think,
                 max_iterations=max_iterations,
+                runaway=runaway,
                 resume_from=ResumeFrame(
                     convo=deserialize_convo(frame_data["convo"]),
                     blocked_call=BlockedCall(
@@ -377,6 +380,7 @@ def _build_graph(
                 approved=approved,
                 think=think,
                 max_iterations=max_iterations,
+                runaway=runaway,
             )
 
         # Drive forward. A block on a CHECKPOINTED run returns ``egress_pending`` + routes to the
@@ -619,6 +623,7 @@ async def run_graph(
     resume: Any | None = None,
     prompts: Mapping[str, str] | None = None,
     accuracy_mode: str = "standard",
+    runaway: RunawayConfig | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Drive the LangGraph agent graph, yielding ordered :class:`AgentEvent`s.
 
@@ -641,6 +646,7 @@ async def run_graph(
         checkpointer=checkpointer,
         prompts=prompts,
         accuracy_mode=accuracy_mode,
+        runaway=runaway,
     )
     if checkpointer is None:
         async for ev in graph.astream({"context": context}, stream_mode="custom"):

@@ -26,6 +26,7 @@ from personalai_contracts.ports import (
 )
 from personalai_contracts.schemas.tools import Permission
 from personalai_core.gateway import RegisteredTool, ToolGateway
+from personalai_core.runaway import RepetitionWatchdog, RunawayConfig
 
 # Cap how much of each tool result is fed back into the prompt. Tools like web search/extract can
 # return tens of KB each; across several calls that overflows the context window and the model ends
@@ -148,6 +149,10 @@ class AgentEvent:
         "approval_request",
         "egress_blocked",
         "draft",
+        # The streaming repetition watchdog (#414) tripped: the generation degenerated into verbatim
+        # repetition and was aborted. Carries the partial answer + a human-readable ``error`` reason
+        # so the trace/SSE can frame it as "stopped: the model was repeating itself".
+        "repetition_stopped",
     ]
     tool: str | None = None
     args: Mapping[str, Any] | None = None
@@ -175,8 +180,18 @@ async def run_agent(
     max_iterations: int = 4,
     think: bool | None = None,
     resume_from: ResumeFrame | None = None,
+    runaway: RunawayConfig | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Drive the model<->gateway tool-calling loop, yielding events as they happen.
+
+    Runaway-generation guard (#414, Layer 3): each streamed answer/reasoning delta is fed to a
+    :class:`RepetitionWatchdog`. When a generation degenerates into verbatim repetition (the
+    incident: the same reasoning line hundreds of times) the loop STOPS consuming the provider
+    stream — ``break`` closes the httpx stream so Ollama stops generating, saving tokens — keeps the
+    partial output, and ends the turn by emitting a ``repetition_stopped`` event followed by the
+    ``final`` (so the partial still reaches the UI / is persisted). Prompt-independent and on by
+    default; ``runaway`` (None = the conservative defaults) tunes/disables it. Because the graph's
+    researcher node also drives this loop, integrating here covers single- AND multi-agent.
 
     Egress-approval gate (#377): when a ``gateway.invoke`` returns an egress-blocked result, the
     loop yields a single ``egress_blocked`` event (carrying the tool, args, and the parsed
@@ -199,6 +214,10 @@ async def run_agent(
 
     text = ""
     usage: Mapping[str, int] = {}
+    # The repetition watchdog spans the WHOLE turn (all streaming turns + the force-answer turn), so
+    # a loop split across iterations still trips. ``stopped`` is set once it aborts a generation.
+    watchdog = RepetitionWatchdog(runaway)
+    stopped = False
 
     if resume_from is not None:
         # Re-enter mid-conversation: issue EXACTLY ONE gateway.invoke (the retried call), append its
@@ -233,13 +252,28 @@ async def run_agent(
         ):
             if chunk.thinking:
                 yield AgentEvent(type="reasoning", thinking=chunk.thinking)
+                # The incident's loop was inside the reasoning trace, so guard it too.
+                if watchdog.feed(chunk.thinking):
+                    stopped = True
+                    break
             if chunk.delta:
                 text += chunk.delta
                 yield AgentEvent(type="answer", answer=chunk.delta)
+                if watchdog.feed(chunk.delta):
+                    stopped = True
+                    break
             if chunk.tool_calls:
                 tool_calls = list(chunk.tool_calls)
             if chunk.usage:
                 usage = chunk.usage
+
+        if stopped:
+            # Breaking the loop closed the provider stream (Ollama stops generating). Keep the
+            # partial answer and end the turn with a distinct marker so the trace shows it was
+            # auto-stopped, then the final so the partial still reaches the UI / is persisted.
+            yield AgentEvent(type="repetition_stopped", answer=text, error=watchdog.reason)
+            yield AgentEvent(type="final", answer=text, usage=dict(usage))
+            return
 
         if not tool_calls:
             yield AgentEvent(type="final", answer=text, usage=dict(usage))
@@ -299,11 +333,19 @@ async def run_agent(
     async for chunk in provider.stream(GenerationRequest(messages=convo, model=model, think=think)):
         if chunk.thinking:
             yield AgentEvent(type="reasoning", thinking=chunk.thinking)
+            if watchdog.feed(chunk.thinking):
+                stopped = True
+                break
         if chunk.delta:
             final_text += chunk.delta
             yield AgentEvent(type="answer", answer=chunk.delta)
+            if watchdog.feed(chunk.delta):
+                stopped = True
+                break
         if chunk.usage:
             usage = chunk.usage
+    if stopped:
+        yield AgentEvent(type="repetition_stopped", answer=final_text, error=watchdog.reason)
     yield AgentEvent(
         type="final",
         answer=final_text

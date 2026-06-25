@@ -498,6 +498,13 @@ class _TurnSse:
             }
             self.trace.append(item)
             return f"event: draft\ndata: {json.dumps(item)}\n\n".encode()
+        if ev.kind == "repetition_stopped":
+            # The streaming watchdog aborted a degenerate looping generation (#414): record a trace
+            # marker and surface it on its own SSE event so the reasoning pane frames the turn as
+            # auto-stopped (mirrors the E_TIMEOUT path). The kept partial answer rides the `final`.
+            item = {"kind": "repetition_stopped", "text": ev.text, "ts": self._now()}
+            self.trace.append(item)
+            return f"event: repetition_stopped\ndata: {json.dumps(item)}\n\n".encode()
         if ev.kind == "approval_request":
             # The run is durably checkpointed; surface the (whitelisted) request with the run_id.
             self.suspended = True
@@ -1169,6 +1176,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                             context=_agent_context(req.conversation_id),
                             checkpointer=checkpointer,
                             thread_id=run_id,
+                            runaway=config.runaway_config(),
                         ):
                             frame_bytes = sse.map(ev)
                             if frame_bytes is not None:
@@ -1382,6 +1390,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     checkpointer=checkpointer,
                     thread_id=run_id,
                     resume=resume_value,
+                    runaway=eg_config.runaway_config(),
                 ):
                     frame_bytes = sse.map(ev)
                     if frame_bytes is not None:
@@ -1536,6 +1545,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     context=_agent_context(None),
                     checkpointer=None,  # no durable gate for automated runs
                     thread_id=None,
+                    runaway=config.runaway_config(),
                 ):
                     if ev.kind == "reasoning":
                         _add_text("reasoning", ev.text)
@@ -1565,6 +1575,10 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                         # Draft answer -> reasoning trace only; the final answer comes from `answer`
                         # events emitted by finalize (#393), so don't fold drafts into `answer`.
                         trace.append({"kind": "draft", "text": ev.text, "attempt": ev.attempt})
+                    elif ev.kind == "repetition_stopped":
+                        # The watchdog aborted a looping generation (#414): record the marker in the
+                        # trace; the partial answer rides the following `final`'s `answer` events.
+                        trace.append({"kind": "repetition_stopped", "text": ev.text})
                     else:  # final
                         if ev.usage:
                             usage = ev.usage

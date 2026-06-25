@@ -185,6 +185,94 @@ def test_configured_sampling_defaults_are_sent_and_temperature_can_be_overridden
 
 
 @respx.mock
+def test_configured_repeat_penalties_are_sent() -> None:
+    # Runaway guard Layer 1 (#414): repeat_penalty / repeat_last_n from config land in options.
+    route = respx.post(f"{BASE}/api/chat").mock(
+        return_value=httpx.Response(200, json={"message": {"content": "ok"}})
+    )
+
+    async def _run() -> None:
+        provider = OllamaProvider(base_url=BASE, repeat_penalty=1.1, repeat_last_n=64)
+        try:
+            await provider.generate(
+                GenerationRequest(messages=[ChatMessage(Role.USER, "hi")], model="qwen3:8b")
+            )
+        finally:
+            await provider.aclose()
+
+    asyncio.run(_run())
+    opts = _json.loads(route.calls.last.request.content)["options"]
+    assert opts["repeat_penalty"] == 1.1 and opts["repeat_last_n"] == 64
+
+
+@respx.mock
+def test_max_output_tokens_ceiling_applies_only_when_no_explicit_max_tokens() -> None:
+    # Runaway guard Layer 2 (#414): the configured ceiling becomes num_predict on an unbounded turn,
+    # but an explicit (smaller) per-request max_tokens still wins.
+    route = respx.post(f"{BASE}/api/chat").mock(
+        return_value=httpx.Response(200, json={"message": {"content": "ok"}})
+    )
+
+    async def _run(req: GenerationRequest) -> None:
+        provider = OllamaProvider(base_url=BASE, max_output_tokens=4096)
+        try:
+            await provider.generate(req)
+        finally:
+            await provider.aclose()
+
+    # No explicit max_tokens (the agent-turn case) -> the ceiling is applied as num_predict.
+    asyncio.run(_run(GenerationRequest(messages=[ChatMessage(Role.USER, "hi")], model="qwen3:8b")))
+    opts = _json.loads(route.calls.last.request.content)["options"]
+    assert opts["num_predict"] == 4096
+
+    # An explicit smaller max_tokens wins over the ceiling.
+    asyncio.run(
+        _run(
+            GenerationRequest(
+                messages=[ChatMessage(Role.USER, "hi")], model="qwen3:8b", max_tokens=128
+            )
+        )
+    )
+    opts = _json.loads(route.calls.last.request.content)["options"]
+    assert opts["num_predict"] == 128
+
+
+@respx.mock
+def test_length_done_reason_propagates_as_finish_reason() -> None:
+    # Runaway guard Layer 2 (#414): a length-capped finish must surface, not be swallowed, so the UI
+    # can frame the answer as truncated.
+    body = b'{"message":{"content":"partial"},"done":true,"done_reason":"length"}\n'
+    respx.post(f"{BASE}/api/chat").mock(return_value=httpx.Response(200, content=body))
+
+    async def _collect() -> list[str | None]:
+        provider = OllamaProvider(base_url=BASE)
+        try:
+            return [
+                c.finish_reason
+                async for c in provider.stream(
+                    GenerationRequest(messages=[ChatMessage(Role.USER, "hi")], model="qwen3:8b")
+                )
+            ]
+        finally:
+            await provider.aclose()
+
+    assert "length" in asyncio.run(_collect())
+
+    # The non-streaming path surfaces it too.
+    respx.post(f"{BASE}/api/chat").mock(
+        return_value=httpx.Response(
+            200, json={"message": {"content": "partial"}, "done_reason": "length"}
+        )
+    )
+    result = run(
+        lambda p: p.generate(
+            GenerationRequest(messages=[ChatMessage(Role.USER, "hi")], model="qwen3:8b")
+        )
+    )
+    assert result.finish_reason == "length"
+
+
+@respx.mock
 def test_generate_sets_keep_alive_when_configured() -> None:
     route = respx.post(f"{BASE}/api/chat").mock(
         return_value=httpx.Response(200, json={"message": {"content": "ok"}})

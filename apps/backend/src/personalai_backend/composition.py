@@ -92,6 +92,11 @@ def register_adapters(registries: Registries, config: CoreConfig) -> None:
             temperature=config.ollama_temperature,
             top_p=config.ollama_top_p,
             top_k=config.ollama_top_k,
+            # Runaway-generation guard, Layers 1-2 (#414): repeat penalties + a hard per-turn output
+            # ceiling so an unbounded/looping generation is discouraged and capped.
+            repeat_penalty=config.ollama_repeat_penalty,
+            repeat_last_n=config.ollama_repeat_last_n,
+            max_output_tokens=config.max_output_tokens,
             egress_guard=_ollama_egress,
         ),
     )
@@ -110,6 +115,10 @@ def register_adapters(registries: Registries, config: CoreConfig) -> None:
                 api_key=config.openai_api_key,
                 base_url=config.openai_base_url,
                 egress_guard=_openai_egress,
+                # Runaway-generation guard, Layers 1-2 (#414): repetition penalties + per-turn cap.
+                frequency_penalty=config.openai_frequency_penalty,
+                presence_penalty=config.openai_presence_penalty,
+                max_output_tokens=config.max_output_tokens,
             ),
         )
 
