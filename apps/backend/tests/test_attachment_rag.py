@@ -15,14 +15,14 @@ from __future__ import annotations
 
 import asyncio
 
+from langchain_core.documents import Document
+
 from personalai_backend.app import (
     _INGEST_TEXT_CAP,
     _MAX_INGEST_DOCS_PER_TURN,
     _conversation_document_id,
     _ingest_docs_from_turn,
 )
-from langchain_core.documents import Document
-
 from personalai_backend.ingestion import ingest_text
 from personalai_backend.rag import HybridVectorStoreRetriever, ProviderEmbeddings
 from personalai_contracts.ports.storage import GLOBAL_SCOPE, Scope
@@ -43,7 +43,7 @@ def _retriever(
 
 
 def _ids(docs: list[Document]) -> set[str]:
-    return {d.metadata.get("document_id") for d in docs}
+    return {str(d.metadata.get("document_id")) for d in docs}
 
 
 def test_large_doc_retrievable_in_its_conversation_not_in_another() -> None:
