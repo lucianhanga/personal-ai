@@ -26,6 +26,7 @@ from personalai_contracts.schemas.registry import (
     default_registry,
 )
 from personalai_contracts.schemas.settings import TenantSettings
+from personalai_contracts.schemas.source_plan import SourcePlan
 from personalai_contracts.schemas.tools import (
     Integrity,
     Permission,
@@ -62,6 +63,8 @@ __all__ = [
     "default_registry",
     # settings
     "TenantSettings",
+    # source routing
+    "SourcePlan",
     "Verdict",
     # tools
     "Integrity",

@@ -176,6 +176,11 @@ export interface Citation {
   locator: string | null;
   score: number;
   name: string | null;
+  // #420 multi-source provenance (optional, additive): which source a citation came from
+  // ("vector" | "memory" | "graph" | "tool:..."), and the other source kinds a deduped citation
+  // also appeared in. Absent on single-source (standard, tools-off) turns predating multi-source.
+  source_kind?: string;
+  merged_from?: string[];
 }
 
 export interface ConversationSummary {

@@ -115,6 +115,77 @@ def _run_with(provider: _RecordingProvider, *, use_tools: bool) -> None:
     asyncio.run(_run())
 
 
+class _StaticSource:
+    """A multi-source RetrievalSource fake returning fixed Evidence (no LangChain, no DB)."""
+
+    def __init__(self, name: str, kind: str, items: list) -> None:  # type: ignore[type-arg]
+        self.name = name
+        self.kind = kind
+        self._items = items
+
+    async def select(self, query, ctx):  # type: ignore[no-untyped-def]
+        return None
+
+    async def retrieve(self, query, budget, ctx):  # type: ignore[no-untyped-def]
+        return self._items
+
+
+def test_run_turn_multisource_forwards_unified_citations() -> None:
+    # #420: with sources wired the graph emits a unified `citations` TurnEvent (source_kind aware)
+    # before the researcher's draft, and the turn still ends in a single final.
+    from personalai_contracts.ports import (
+        SOURCE_KIND_MEMORY,
+        SOURCE_KIND_VECTOR,
+        Citation,
+        Evidence,
+    )
+
+    gen = GenerationRequest(messages=[ChatMessage(Role.USER, "q")], model="fake")
+    vector = _StaticSource(
+        "vector",
+        SOURCE_KIND_VECTOR,
+        [
+            Evidence(
+                "doc fact", 0.9, Citation("doc-1", "chunk 0"), SOURCE_KIND_VECTOR, {"name": "d1"}
+            )
+        ],
+    )
+    memory = _StaticSource(
+        "memory",
+        SOURCE_KIND_MEMORY,
+        [Evidence("user fact", 0.5, Citation("memory:1"), SOURCE_KIND_MEMORY, {"name": "Memory"})],
+    )
+
+    async def _run() -> list[TurnEvent]:
+        return [
+            ev
+            async for ev in run_turn(
+                generation=gen,
+                provider=FakeModelProvider(name="fake"),
+                use_tools=True,
+                approve_tools=False,
+                tools=[],
+                grants=[],
+                gateway=None,
+                max_iterations=8,
+                graph_enabled=True,
+                sources=[vector, memory],
+                retrieval_query="q",
+            )
+        ]
+
+    events = asyncio.run(_run())
+    kinds = [e.kind for e in events]
+    assert "citations" in kinds
+    assert kinds[-1] == "final"
+    cite_ev = next(e for e in events if e.kind == "citations")
+    assert cite_ev.output is not None
+    cites = cite_ev.output["citations"]
+    seen = {c["source_kind"] for c in cites}
+    assert seen == {SOURCE_KIND_VECTOR, SOURCE_KIND_MEMORY}
+    assert all("merged_from" in c for c in cites)
+
+
 def test_single_agent_with_tools_gets_a_tool_use_nudge() -> None:
     # use_tools=True, graph disabled -> the single-agent loop gets the tool-use instruction (#318).
     provider = _RecordingProvider()

@@ -153,6 +153,10 @@ class AgentEvent:
         # repetition and was aborted. Carries the partial answer + a human-readable ``error`` reason
         # so the trace/SSE can frame it as "stopped: the model was repeating itself".
         "repetition_stopped",
+        # Unified multi-source citations from the merge node (#420): ``output`` carries
+        # ``{"citations": [...], "source_plan": {...}}`` so the backend can stream the cross-source
+        # provenance (source_kind/merged_from) over its existing event: citations frame.
+        "citations",
     ]
     tool: str | None = None
     args: Mapping[str, Any] | None = None

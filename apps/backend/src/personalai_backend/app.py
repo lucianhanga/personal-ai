@@ -43,11 +43,14 @@ from personalai_backend.mcp_manager import McpManager
 from personalai_backend.rag import (
     HybridVectorStoreRetriever,
     ProviderEmbeddings,
+    VectorItemRetriever,
     disable_langchain_tracing,
 )
 from personalai_backend.tenant_querier import TenantQuerier
 from personalai_backend.turn import run_turn
 from personalai_contracts.ports import (
+    SOURCE_KIND_MEMORY,
+    SOURCE_KIND_VECTOR,
     AgentContext,
     ChatMessage,
     GenerationRequest,
@@ -73,7 +76,10 @@ from personalai_core import (
     EGRESS_RESUME_FRAME,
     TOOL_USING_AGENTS,
     CoreConfig,
+    GraphSource,
+    MemorySource,
     RegistryError,
+    VectorSource,
     effective_config,
     read_pending_interrupt,
     recall,
@@ -570,7 +576,7 @@ def _retrieval_item(
     top_k: int,
     hits: int,
     scope: str,
-    citations: list[dict[str, Any]],
+    citations: Sequence[Mapping[str, Any]],
     ms: int,
 ) -> dict[str, Any]:
     """A ``retrieval`` prelude item (#437): one per turn when RAG actually ran. Carries the hybrid
@@ -598,6 +604,36 @@ def _retrieval_item(
         "scope": scope if scope in ("global", "conversation", "union") else "global",
         "citations": compact,
     }
+
+
+def _per_source_retrieval_items(
+    citations: Sequence[Mapping[str, Any]], *, query: str, top_k: int, scope: str
+) -> list[dict[str, Any]]:
+    """Derive one ``retrieval`` prelude item PER source kind from the merge node's unified citations
+    (#420 multi-source). The merge node fuses vector + memory[+...] into one [n]-ordered citation
+    list tagged with ``source_kind``; this groups them back by kind so the Activity timeline shows
+    per-source retrieval (e.g. 'vector: 4 passages', 'memory: 2 passages') — the same compact
+    winners-only ``{source,score}`` projection as the single-source ``_retrieval_item``. A source
+    kind with zero hits emits nothing here (the graph already accounts for it); empty when the merge
+    produced no citations (RAG+memory off / no hits)."""
+    by_kind: dict[str, list[Mapping[str, Any]]] = {}
+    for c in citations:
+        by_kind.setdefault(str(c.get("source_kind") or "vector"), []).append(c)
+    items: list[dict[str, Any]] = []
+    for kind, group in by_kind.items():
+        item = _retrieval_item(
+            query=query,
+            top_k=top_k,
+            hits=len(group),
+            scope=scope,
+            citations=group,
+            ms=0,
+        )
+        # Tag the prelude item with the source kind so the per-source disclosure is unambiguous.
+        item["source_kind"] = kind
+        item["text"] = f"Retrieved {len(group)} passages ({kind})"[:_PRELUDE_TEXT_CAP]
+        items.append(item)
+    return items
 
 
 def _emit_ner(prelude: list[dict[str, Any]], entities: Any = None) -> None:
@@ -662,6 +698,36 @@ def _context_breakdown(groups: Sequence[tuple[str, Sequence[ChatMessage]]]) -> d
     return {"items": items, "total_chars": total}
 
 
+# Human-readable labels for the per-source-kind context groups (#420). Tool kinds
+# ("tool:web_search") fall back to a generic "Source: <kind>" label.
+_SOURCE_KIND_LABELS = {
+    SOURCE_KIND_VECTOR: "Documents (vector)",
+    SOURCE_KIND_MEMORY: "Memory",
+    "graph": "Graph",
+}
+
+
+def _add_source_kind_breakdown(
+    breakdown: dict[str, Any], citations: Sequence[Mapping[str, Any]]
+) -> None:
+    """Fold per-source-kind groups into a context breakdown from the merge node's unified citations
+    (#420). One row per kind ('Documents (vector)', 'Memory', 'Graph', or 'Source: tool:...'),
+    carrying the count + the cited names — so the per-question context view shows the cross-source
+    composition the multi-source path assembled. Additive: leaves the existing ``items`` intact and
+    appends; never raises. ``chars`` per row is a coarse name-length sum (the grounded text itself
+    lives in the trace/citations, not duplicated here)."""
+    by_kind: dict[str, list[Mapping[str, Any]]] = {}
+    for c in citations:
+        by_kind.setdefault(str(c.get("source_kind") or "vector"), []).append(c)
+    items = breakdown.setdefault("items", [])
+    for kind, group in by_kind.items():
+        label = _SOURCE_KIND_LABELS.get(kind, f"Source: {kind}")
+        names = ", ".join(str(c.get("name") or c.get("source_id") or "") for c in group)
+        chars = len(names)
+        items.append({"label": label, "count": len(group), "chars": chars, "text": names})
+        breakdown["total_chars"] = breakdown.get("total_chars", 0) + chars
+
+
 # Grounding/anti-hallucination instruction (config.grounding_enabled). Balanced so it curbs
 # fabrication on factual questions without flattening creative/opinion requests.
 _GROUNDING = (
@@ -722,6 +788,10 @@ class _TurnSse:
         self.usage: Mapping[str, int] = {}
         self.trace: list[dict[str, Any]] = []
         self.suspended = False
+        # Unified multi-source citations from the merge node (#420), captured when the graph runs
+        # the gather/merge path so the route can stream them and persist them
+        # (source_kind/merged_from).
+        self.citations: list[dict[str, Any]] = []
 
     @staticmethod
     def _now() -> str:
@@ -806,6 +876,14 @@ class _TurnSse:
             item = {"kind": "repetition_stopped", "text": ev.text, "ts": self._now()}
             self.trace.append(item)
             return f"event: repetition_stopped\ndata: {json.dumps(item)}\n\n".encode()
+        if ev.kind == "citations":
+            # Unified multi-source citations from the merge node (#420): capture them (for the
+            # route's event: citations frame + persistence) and stream the frame now. Additive —
+            # carries source_kind/merged_from; the UI's [n] chips render unchanged plus a badge.
+            out = dict(ev.output or {})
+            cites = list(out.get("citations", []))
+            self.citations = cites
+            return f"event: citations\ndata: {json.dumps(cites)}\n\n".encode()
         if ev.kind == "approval_request":
             # The run is durably checkpointed; surface the (whitelisted) request with the run_id.
             self.suspended = True
@@ -1180,6 +1258,10 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             "instructions; if it does not contain the answer, say so. Cite sources as [n].\n\n"
             f"{context}",
         )
+        # The vector source's citation rows. #420 adds ``source_kind``/``merged_from`` ADDITIVELY
+        # so standard mode (tools off) stays a strict superset: same [n] ordering, same fields, plus
+        # the provenance badge the multi-source UI reads. The tools-on graph path produces the full
+        # cross-source merge (vector + memory + ...) via the merge node instead.
         citations = [
             {
                 "n": i + 1,
@@ -1187,6 +1269,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 "locator": doc.metadata["citation"]["locator"],
                 "score": doc.metadata["citation"]["score"],
                 "name": doc.metadata["citation"]["name"],
+                "source_kind": SOURCE_KIND_VECTOR,
+                "merged_from": [],
             }
             for i, doc in enumerate(docs)
         ]
@@ -1205,6 +1289,52 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 )
             )
         return [system], citations
+
+    def _build_sources(
+        req: ChatRequest, incognito: bool, *, conversation_id: str | None
+    ) -> list[Any]:
+        """Build the multi-source retrieval sources for the tools-on graph path (#420): the vector
+        source (the hybrid, union-scoped retriever — PR2 + PR4 anti-bleed preserved), the memory
+        source (``recall``, skipped for incognito / memory-off), and the deferred no-op graph(KAG)
+        stub. Vector + memory are the always-on cheap floor the planner cannot drop; the graph
+        stub proves the seam and returns nothing. Empty list when RAG + memory are both off / no
+        storage — then the graph runs with no sources (today's topology). The actual model+tool
+        privileges stay on our seams; LangChain stays inside the wrapped
+        ``HybridVectorStoreRetriever`` (ADR-0012)."""
+        storage: Storage | None = app.state.storage
+        config: CoreConfig = app.state.config
+        if storage is None:
+            return []
+        sources: list[Any] = []
+        if req.use_rag:
+            # The vector source wraps the SAME hybrid, union-scoped retriever the standard path uses
+            # (#420 PR2/PR4): union of the global corpus AND this conversation's tier-2 attachments,
+            # anti-bleed enforced in the storage layer. LangChain is the engine detail INSIDE it.
+            retriever = HybridVectorStoreRetriever(
+                vectors=storage.vectors,
+                embeddings=ProviderEmbeddings(
+                    _resolve_provider(config.embed_provider), config.embed_model
+                ),
+                top_k=req.rag_top_k,
+                union_conversation_id=conversation_id,
+            )
+            # Wrap the LangChain retriever in our non-LangChain adapter at the seam boundary, so the
+            # core VectorSource never imports langchain (ADR-0012). Scope/RLS/anti-bleed unchanged.
+            sources.append(VectorSource(VectorItemRetriever(retriever), top_k=req.rag_top_k))
+        if req.use_memory and not incognito:
+            sources.append(
+                MemorySource(
+                    embed_provider=_resolve_provider(config.embed_provider),
+                    embed_model=config.embed_model,
+                    store=storage.memories,
+                    top_k=config.memory_top_k,
+                )
+            )
+        # The deferred KAG/GraphRAG seam: registered so the merge/provenance/budget machinery
+        # already accounts for it, but a no-op that returns nothing (M11/#409). NOTHING renders for
+        # it today.
+        sources.append(GraphSource())
+        return sources
 
     async def _ingest_turn_attachments(
         docs: list[tuple[str, str]],
@@ -1522,13 +1652,35 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             if standalone and standalone != last_user
             else []
         )
-        context_messages, citations = await _retrieve_context(
-            req, query=standalone, conversation_id=persist_id, prelude=prelude
+        # Multi-source retrieval (#420): the tools-on graph path moves retrieval INTO the graph (the
+        # planner emits a SourcePlan; gather fans out vector+memory[+graph stub]; merge fuses them).
+        # In that path the backend does NOT pre-bake the vector/memory context here — the graph's
+        # merge node produces the grounded block + the unified citations (carried back via the
+        # `citations` event). Standard mode (tools off) keeps the pre-baked path below unchanged: a
+        # strict, safe superset of today. The vector source preserves the union scope + anti-bleed.
+        multi_source_active = graph_enabled and req.use_tools
+        sources = (
+            _build_sources(req, incognito, conversation_id=persist_id)
+            if multi_source_active
+            else []
         )
+        context_messages: list[ChatMessage]
+        citations: list[dict[str, object]]
+        if multi_source_active:
+            # Retrieval happens inside the graph; the pre-baked sections are empty here. The merge
+            # node emits per-source unified citations; the prelude is derived from them after the
+            # run.
+            context_messages, citations = [], []
+        else:
+            context_messages, citations = await _retrieve_context(
+                req, query=standalone, conversation_id=persist_id, prelude=prelude
+            )
         # NER hook (#437, Phase 6): the single no-op call site in the assembly phase. Emits NOTHING
         # today (entities is None); Phase 6 fills it without touching taxonomy/ordering/persistence.
         _emit_ner(prelude, entities=None)
-        memory_messages = await _memory_context(req, incognito, query=standalone)
+        memory_messages = (
+            [] if multi_source_active else await _memory_context(req, incognito, query=standalone)
+        )
         stm_messages = await _assemble_stm(req, provider, conv)
         # Reasoning amount: `reasoning` (off/brief/full) overrides `think`; "brief" also nudges the
         # model to keep its reasoning short (no hard length dial exists for local models).
@@ -1679,6 +1831,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                             checkpointer=checkpointer,
                             thread_id=run_id,
                             runaway=config.runaway_config(),
+                            sources=sources,
+                            evidence_budget=config.evidence_budget,
+                            retrieval_query=standalone or last_user or "",
                         ):
                             frame_bytes = sse.map(ev)
                             if frame_bytes is not None:
@@ -1725,6 +1880,27 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     return
                 answer = sse.answer
                 usage = sse.usage
+                # Multi-source path (#420): the graph's merge node emitted the unified citations
+                # mid-stream (captured in sse.citations). Derive the PER-SOURCE retrieval prelude
+                # items from them (one per source kind) and fold them into the prelude so the
+                # timeline shows per-source retrieval (vector / memory / ...) ahead of the agent
+                # steps — matching the single-source path's retrieval prelude. The standard path
+                # already appended its vector retrieval item inside _retrieve_context.
+                if multi_source_active and sse.citations:
+                    prelude.extend(
+                        _per_source_retrieval_items(
+                            sse.citations,
+                            query=standalone or last_user or "",
+                            top_k=req.rag_top_k,
+                            scope="union" if persist_id else "global",
+                        )
+                    )
+                    # Per-source-kind groups in the context breakdown (#420): the graph's retrieval
+                    # ran inside the merge node, so the up-front breakdown had no Documents/Memory
+                    # rows. Fold in one row per source kind (count + the cited names) so the
+                    # persisted per-question context view shows the cross-source composition on
+                    # reload.
+                    _add_source_kind_breakdown(context_breakdown, sse.citations)
                 # One ordered trace array (#437): the RAG prelude (indexing -> retrieval -> ner)
                 # prepended to the agent trace, so the persisted meta["trace"] reads — and reloads —
                 # exactly like the live stream replayed it (prelude frames first, then agent steps).

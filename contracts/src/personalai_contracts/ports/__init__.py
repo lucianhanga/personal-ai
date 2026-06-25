@@ -38,8 +38,13 @@ from personalai_contracts.ports.model_provider import (
     ToolSpec,
 )
 from personalai_contracts.ports.retriever import (
+    SOURCE_KIND_GRAPH,
+    SOURCE_KIND_MEMORY,
+    SOURCE_KIND_VECTOR,
     Citation,
+    Evidence,
     RetrievalQuery,
+    RetrievalSource,
     RetrievedItem,
     Retriever,
 )
@@ -98,8 +103,13 @@ __all__ = [
     "ToolCallRequest",
     "ToolSpec",
     # retriever
+    "SOURCE_KIND_GRAPH",
+    "SOURCE_KIND_MEMORY",
+    "SOURCE_KIND_VECTOR",
     "Citation",
+    "Evidence",
     "RetrievalQuery",
+    "RetrievalSource",
     "RetrievedItem",
     "Retriever",
     # storage
