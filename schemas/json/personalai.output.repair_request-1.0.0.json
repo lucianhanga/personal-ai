@@ -16,9 +16,7 @@
       "type": "array"
     },
     "invalid_payload": {
-      "additionalProperties": true,
-      "title": "Invalid Payload",
-      "type": "object"
+      "title": "Invalid Payload"
     },
     "schema_id": {
       "title": "Schema Id",
