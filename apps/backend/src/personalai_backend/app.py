@@ -14,6 +14,7 @@ This module makes no outbound network calls; egress remains disabled until expli
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import time
@@ -134,6 +135,10 @@ class ChatMessageIn(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str
     images: list[str] = []
+    # Parallel to ``images``: a vision-model description per attached image (#419), generated
+    # eagerly on upload. Request-only metadata (NOT sent to the model — the model gets the image
+    # itself); persisted in the user turn's meta so the description shows on reload.
+    image_descriptions: list[str] = []
 
 
 class ChatRequest(BaseModel):
@@ -342,6 +347,8 @@ def _current_datetime_messages() -> list[ChatMessage]:
 # documents) doesn't bloat the SSE payload or the persisted ``meta.context`` (#391). ``chars`` stays
 # accurate to the FULL text; only the ``text`` shown for token visualization is truncated.
 _CONTEXT_TEXT_CAP = 16_000
+# Cap a generated image description (#419) so a runaway caption can't bloat the message/meta.
+_IMAGE_DESCRIPTION_CAP = 4_000
 
 
 def _context_breakdown(groups: Sequence[tuple[str, Sequence[ChatMessage]]]) -> dict[str, Any]:
@@ -1118,15 +1125,20 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             # Take THIS turn's user images (the last user message), not "the most recent user
             # message that happens to have images" — otherwise an image-less question inherits an
             # earlier question's image on reload (#396).
-            last_images = next(
-                (list(m.images) for m in reversed(req.messages) if m.role == "user"),
-                [],
-            )
+            last_user_msg = next((m for m in reversed(req.messages) if m.role == "user"), None)
+            last_images = list(last_user_msg.images) if last_user_msg else []
+            # Parallel vision descriptions (#419), persisted so the hover panel works on reload.
+            last_descriptions = list(last_user_msg.image_descriptions) if last_user_msg else []
+            turn_meta: dict[str, Any] = {}
+            if last_images:
+                turn_meta["images"] = last_images
+            if last_descriptions:
+                turn_meta["image_descriptions"] = last_descriptions
             await storage.conversations.add_message(
                 conversation_id=persist_id,
                 role="user",
                 content=last_user,
-                meta={"images": last_images} if last_images else None,
+                meta=turn_meta or None,
             )
 
         async def event_stream() -> AsyncIterator[bytes]:
@@ -1706,6 +1718,57 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             await transcriber.aclose()
         return StructuredResult(ok=True, data={"text": result.text, "language": result.language})
 
+    @app.post(
+        "/api/v1/images/describe",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def describe_image(file: UploadFile = File(...)) -> StructuredResult:
+        # Eager vision description of an attached image (#419): caption it so the description can be
+        # shown on hover, persisted, and used as a fallback for non-vision models. The description
+        # AUGMENTS the image — vision models still receive the pixels; it does not replace them.
+        config: CoreConfig = app.state.config
+        data = await file.read(config.max_upload_bytes + 1)
+        if len(data) > config.max_upload_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"image exceeds {config.max_upload_bytes} bytes",
+            )
+        provider = _resolve_provider(config.model_provider)
+        model = config.default_model
+        try:
+            caps = await provider.capabilities(model)
+        except Exception as exc:  # noqa: BLE001 - structured error (provider/endpoint failure)
+            return StructuredResult(ok=False, error=ErrorInfo(code="E_DESCRIBE", message=str(exc)))
+        if not caps.vision:
+            return StructuredResult(
+                ok=False,
+                error=ErrorInfo(
+                    code="E_NO_VISION_MODEL",
+                    message=f"the default model '{model}' is not a vision model",
+                ),
+            )
+        mime = file.content_type or "image/jpeg"
+        data_url = f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+        request = GenerationRequest(
+            messages=[
+                ChatMessage(
+                    Role.USER,
+                    "Describe this image concisely but completely — the main objects, any visible "
+                    "text, the scene, and notable details. A few sentences.",
+                    images=(data_url,),
+                )
+            ],
+            model=model,
+            think=False,
+        )
+        try:
+            result = await provider.generate(request)
+        except Exception as exc:  # noqa: BLE001 - structured error (provider/egress failure)
+            return StructuredResult(ok=False, error=ErrorInfo(code="E_DESCRIBE", message=str(exc)))
+        description = (result.text or "").strip()[:_IMAGE_DESCRIPTION_CAP]
+        return StructuredResult(ok=True, data={"description": description})
+
     @app.get(
         "/api/v1/files", response_model=StructuredResult, dependencies=[Depends(require_context)]
     )
@@ -1789,6 +1852,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 # Attached images (data-URLs) persisted in the user turn's meta, surfaced top-level
                 # so they render on reload just like the live turn.
                 "images": (m.meta or {}).get("images", []),
+                # Parallel vision descriptions (#419) so the hover panel works on reload.
+                "image_descriptions": (m.meta or {}).get("image_descriptions", []),
                 # Surfaced so the UI's activity timeline can show real relative times per turn.
                 "created_at": m.created_at.isoformat(),
             }

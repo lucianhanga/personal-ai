@@ -18,6 +18,7 @@ import {
   resumeChat,
   saveSettings,
   streamChat,
+  describeImage,
   transcribeAudio,
   uploadFile,
   type ApprovalRequest,
@@ -34,6 +35,7 @@ import {
 } from "./api";
 import { AudioChips, type AudioAttachment } from "./AudioChips";
 import { ChatsPanel } from "./ChatsPanel";
+import { ImageChips, type ImageAttachment } from "./ImageChips";
 import { EgressApproval, type EgressDecision } from "./EgressApproval";
 import { MessageList } from "./MessageList";
 import { SettingsView } from "./SettingsView";
@@ -55,16 +57,24 @@ interface DraftAudio {
   transcript: string;
 }
 
+// A persisted image chip: only `done` chips (downsized src + description) are saved — never
+// in-flight/error chips or any AbortController (#419).
+interface DraftImage {
+  id: string;
+  src: string;
+  description: string;
+}
+
 interface ComposerDraft {
   input: string;
-  attachedImages: string[];
+  images: DraftImage[];
   audio: DraftAudio[];
 }
 
 function loadDraft(): ComposerDraft {
   try {
     const raw = sessionStorage.getItem(DRAFT_KEY);
-    if (!raw) return { input: "", attachedImages: [], audio: [] };
+    if (!raw) return { input: "", images: [], audio: [] };
     const d = JSON.parse(raw) as Partial<ComposerDraft>;
     const audio = Array.isArray(d.audio)
       ? d.audio.filter(
@@ -75,19 +85,28 @@ function loadDraft(): ComposerDraft {
             typeof a.transcript === "string",
         )
       : [];
+    const images = Array.isArray(d.images)
+      ? d.images.filter(
+          (im): im is DraftImage =>
+            !!im &&
+            typeof im.id === "string" &&
+            typeof im.src === "string" &&
+            typeof im.description === "string",
+        )
+      : [];
     return {
       input: typeof d.input === "string" ? d.input : "",
-      attachedImages: Array.isArray(d.attachedImages) ? d.attachedImages.filter((s) => typeof s === "string") : [],
+      images,
       audio,
     };
   } catch {
-    return { input: "", attachedImages: [], audio: [] };
+    return { input: "", images: [], audio: [] };
   }
 }
 
 function saveDraft(draft: ComposerDraft): void {
   try {
-    if (!draft.input && draft.attachedImages.length === 0 && draft.audio.length === 0) {
+    if (!draft.input && draft.images.length === 0 && draft.audio.length === 0) {
       sessionStorage.removeItem(DRAFT_KEY); // keep storage clean once the draft is empty/sent
       return;
     }
@@ -113,6 +132,57 @@ export function transcribeErrorMessage(e: unknown): string {
   const msg = String(e);
   if (msg.includes("413")) return "That recording is too long. Try a shorter one.";
   return `Transcription failed: ${msg}`;
+}
+
+// Friendlier message for a failed image description (#419).
+export function describeImageError(e: unknown): string {
+  const msg = String(e);
+  if (msg.includes("413")) return "That image is too large.";
+  if (msg.includes("vision")) return "The default model isn't a vision model.";
+  return "Couldn't describe the image.";
+}
+
+// Cap on attached images per turn, and the longest-edge a kept image is downscaled to (#419) — large
+// enough to stay understandable, small enough to bound vision tokens, payload, and DB storage.
+const MAX_IMAGES = 6;
+const IMAGE_MAX_EDGE = 1024;
+
+/** Downscale an image file to a data-URL ONLY if its longest edge exceeds IMAGE_MAX_EDGE; otherwise
+ * keep it as-is. Re-encodes a downscaled image as JPEG (~0.82) to shrink payload + stored size. The
+ * downsized result is what's attached, described, sent, and persisted (#419). */
+export async function downscaleImage(file: File): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result as string);
+    r.onerror = () => reject(new Error("read failed"));
+    r.readAsDataURL(file);
+  });
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const el = new Image();
+    el.onload = () => resolve(el);
+    el.onerror = () => reject(new Error("decode failed"));
+    el.src = dataUrl;
+  });
+  const longest = Math.max(img.naturalWidth, img.naturalHeight);
+  if (!longest || longest <= IMAGE_MAX_EDGE) return dataUrl; // small enough — keep original bytes
+  const scale = IMAGE_MAX_EDGE / longest;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(img.naturalWidth * scale);
+  canvas.height = Math.round(img.naturalHeight * scale);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return dataUrl; // no canvas support — fall back to the original
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.82);
+}
+
+/** A data-URL -> Blob (so the downsized image can be POSTed as multipart for description). */
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [head, body] = dataUrl.split(",", 2);
+  const mime = /data:([^;]+)/.exec(head)?.[1] ?? "image/jpeg";
+  const bytes = atob(body ?? "");
+  const arr = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+  return new Blob([arr], { type: mime });
 }
 
 // Seconds -> "m:ss" for the recording timer.
@@ -237,8 +307,19 @@ export function Chat({
   // The composer draft is restored from sessionStorage so a remount/reload (e.g. a session
   // re-validation that unmounts Chat) doesn't discard typed text or a staged attachment (#369).
   const [input, setInput] = useState(() => loadDraft().input);
-  // Image parts attached to the next turn, as data-URLs (M9.1 vision).
-  const [attachedImages, setAttachedImages] = useState<string[]>(() => loadDraft().attachedImages);
+  // Image attachment chips (#419): each attached image is downsized (if large) and described by the
+  // vision model in the background. Only `done` chips (downsized src + description) restore from the
+  // draft; in-flight/error are not. The downsized image + description are what get sent/persisted.
+  const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>(() =>
+    loadDraft().images.map((im) => ({
+      id: im.id,
+      src: im.src,
+      description: im.description,
+      status: "done" as const,
+    })),
+  );
+  // One AbortController per in-flight description, keyed by chip id (removing a chip cancels it).
+  const imageAbortRef = useRef<Map<string, AbortController>>(new Map());
   // Audio attachment chips (#406): each dropped audio file is transcribed in the background. Only
   // `done` chips are restored from the draft (as completed transcripts); in-flight/error are not.
   const [audioAttachments, setAudioAttachments] = useState<AudioAttachment[]>(() =>
@@ -410,8 +491,11 @@ export function Chat({
     const audio = audioAttachments
       .filter((a) => a.status === "done")
       .map((a) => ({ id: a.id, name: a.name, transcript: a.transcript }));
-    saveDraft({ input, attachedImages, audio });
-  }, [input, attachedImages, audioAttachments]);
+    const images = imageAttachments
+      .filter((im) => im.status === "done")
+      .map((im) => ({ id: im.id, src: im.src, description: im.description }));
+    saveDraft({ input, images, audio });
+  }, [input, imageAttachments, audioAttachments]);
 
   function newChat(): void {
     setChats((prev) => ({ ...prev, [NEW_CHAT]: EMPTY_CHAT }));
@@ -623,15 +707,58 @@ export function Chat({
   }
 
   function onAttachImages(files: FileList | null): void {
-    // Read each image as a data-URL (sent to vision models as base64); cap count to keep turns sane.
+    // Each image is downsized (if large) then described by the vision model in the BACKGROUND, so
+    // the description shows on hover and (for non-vision models) augments the message (#419). Cap the
+    // total count; ignore extras past the cap.
     const list = Array.from(files ?? []).filter((f) => f.type.startsWith("image/"));
-    for (const f of list.slice(0, 4)) {
-      const reader = new FileReader();
-      reader.onload = () =>
-        setAttachedImages((imgs) => [...imgs, reader.result as string].slice(0, 4));
-      reader.readAsDataURL(f);
+    const room = Math.max(0, MAX_IMAGES - imageAttachments.length);
+    for (const f of list.slice(0, room)) {
+      const id = `img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const controller = new AbortController();
+      imageAbortRef.current.set(id, controller);
+      void (async () => {
+        let src: string;
+        try {
+          src = await downscaleImage(f);
+        } catch {
+          src = await new Promise<string>((resolve) => {
+            const r = new FileReader();
+            r.onload = () => resolve(r.result as string);
+            r.readAsDataURL(f);
+          });
+        }
+        setImageAttachments((cur) => [...cur, { id, src, description: "", status: "describing" }]);
+        try {
+          const description = await describeImage(token, dataUrlToBlob(src), controller.signal);
+          imageAbortRef.current.delete(id);
+          setImageAttachments((cur) =>
+            cur.map((c) => (c.id === id ? { ...c, status: "done", description } : c)),
+          );
+        } catch (e: unknown) {
+          imageAbortRef.current.delete(id);
+          if ((e as { name?: string } | null)?.name === "AbortError") return; // chip removed
+          setImageAttachments((cur) =>
+            cur.map((c) =>
+              c.id === id ? { ...c, status: "error", error: describeImageError(e) } : c,
+            ),
+          );
+        }
+      })();
     }
   }
+
+  // Remove an image chip: abort its in-flight description (if any) and drop it.
+  function removeImage(id: string): void {
+    const controller = imageAbortRef.current.get(id);
+    if (controller) {
+      controller.abort();
+      imageAbortRef.current.delete(id);
+    }
+    setImageAttachments((cur) => cur.filter((c) => c.id !== id));
+  }
+
+  const doneImages = imageAttachments.filter((im) => im.status === "done");
+  const imageDescribing = imageAttachments.some((im) => im.status === "describing");
 
   // Drag-drop audio (#406): each dropped audio file becomes a `transcribing` chip whose transcription
   // runs in the BACKGROUND (no composer hijack, no auto-send). On resolve the chip becomes `done`
@@ -688,23 +815,41 @@ export function Chat({
   async function send(): Promise<void> {
     cancelAutoSend();
     const typed = input.trim();
-    const images = attachedImages;
-    // Fold each `done` audio chip's transcript into the outgoing content as a labeled block,
-    // appended after the typed text (Option (b), #406). In-flight/error/empty chips are excluded.
-    const audioBlocks = doneAudio
-      .map((a) => `[Audio: ${a.name}]\n${a.transcript}`)
-      .join("\n\n");
-    const content = audioBlocks ? (typed ? `${typed}\n\n${audioBlocks}` : audioBlocks) : typed;
+    // Only `done` images go out (downsized src + description); in-flight/error are excluded.
+    const imgs = doneImages;
+    const images = imgs.map((im) => im.src);
+    const descriptions = imgs.map((im) => im.description);
+    const isVision = models.find((m) => m.name === model)?.capabilities.vision ?? false;
+    // Fold each `done` audio chip's transcript into the outgoing content (Option (b), #406).
+    const audioBlocks = doneAudio.map((a) => `[Audio: ${a.name}]\n${a.transcript}`).join("\n\n");
+    // Augment-not-replace (#419): a vision model receives the image itself, so don't fold its
+    // description; a NON-vision model can't see the image, so fold the descriptions as a fallback.
+    const imageBlocks =
+      !isVision && descriptions.some(Boolean)
+        ? descriptions.filter(Boolean).map((d) => `[Image: ${d}]`).join("\n\n")
+        : "";
+    const content = [typed, audioBlocks, imageBlocks].filter(Boolean).join("\n\n");
     // Allow sending with only an image or only a transcript (no typed text). Block while a chip is
-    // still transcribing (the Send button is also disabled).
-    if ((!content && images.length === 0) || !model || view.busy || audioTranscribing) return;
+    // still transcribing/describing (the Send button is also disabled).
+    if (
+      (!content && images.length === 0) ||
+      !model ||
+      view.busy ||
+      audioTranscribing ||
+      imageDescribing
+    )
+      return;
     setError(null);
     setInput("");
-    setAttachedImages([]);
+    setImageAttachments([]);
     setAudioAttachments([]);
 
     const startKey = activeId ?? NEW_CHAT;
-    const userMsg: ChatMessage = { role: "user", content, ...(images.length ? { images } : {}) };
+    const userMsg: ChatMessage = {
+      role: "user",
+      content,
+      ...(images.length ? { images, image_descriptions: descriptions } : {}),
+    };
     const history: ChatMessage[] = [...(chats[startKey]?.messages ?? []), userMsg];
     const assistantIndex = history.length;
     // Optimistically show the user turn + an empty assistant bubble and mark this chat busy.
@@ -1323,31 +1468,12 @@ export function Chat({
                 done chip reveals its full transcript on hover/focus/click with a Copy button. */}
             <AudioChips chips={audioAttachments} onRemove={removeAudio} />
 
-            {/* Attached image thumbnails (M9.1), removable before sending. */}
-            {attachedImages.length > 0 && (
-              <div data-testid="image-attachments" style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
-                {attachedImages.map((src, i) => (
-                  <span key={i} style={{ position: "relative", display: "inline-block" }}>
-                    <img
-                      src={src}
-                      alt="attachment"
-                      style={{ height: 56, borderRadius: 4, border: "1px solid #ddd" }}
-                    />
-                    <button
-                      data-testid={`remove-image-${i}`}
-                      onClick={() => setAttachedImages((imgs) => imgs.filter((_, k) => k !== i))}
-                      title="Remove"
-                      style={{ position: "absolute", top: -6, right: -6, borderRadius: "50%", lineHeight: 1, padding: "0 5px" }}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-            {attachedImages.length > 0 && selected && !selected.capabilities.vision && (
+            {/* Attached image chips (#419): each is downsized + described by the vision model in the
+                background; hover a done thumbnail for its description + a Copy button. Removable. */}
+            <ImageChips chips={imageAttachments} onRemove={removeImage} />
+            {imageAttachments.length > 0 && selected && !selected.capabilities.vision && (
               <span data-testid="vision-hint" style={{ color: "#b06f00", fontSize: "0.8rem" }}>
-                The selected model isn’t a vision model — pick one tagged “vision” to use images.
+                The selected model isn’t a vision model — its description is sent as text instead.
               </span>
             )}
 
@@ -1475,8 +1601,9 @@ export function Chat({
                     busy ||
                     transcribing ||
                     audioTranscribing ||
+                    imageDescribing ||
                     !model ||
-                    (input.trim() === "" && attachedImages.length === 0 && doneAudio.length === 0)
+                    (input.trim() === "" && doneImages.length === 0 && doneAudio.length === 0)
                   }
                   aria-label="Send message"
                   title="Send message (Enter)"

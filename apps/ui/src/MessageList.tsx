@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import type { ChatMessage, Citation, ContextBreakdown, TraceItem, TurnUsage } from "./api";
 import { approxTokens, ContextComposition } from "./ContextComposition";
+import { TranscriptImages } from "./ImageChips";
 import { Markdown } from "./Markdown";
 import { MessageDetails } from "./MessageDetails";
 import { ReadAloudButton } from "./ReadAloudButton";
@@ -190,15 +191,10 @@ export function MessageList({
               m.content
             )}
             {!collapsed[i] && m.images && m.images.length > 0 && (
-              <div data-testid="msg-images" style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", marginTop: "0.25rem" }}>
-                {m.images.map((src, k) => (
-                  <img
-                    key={k}
-                    src={src}
-                    alt="attachment"
-                    style={{ maxHeight: 160, borderRadius: 4, border: "1px solid #ddd" }}
-                  />
-                ))}
+              // Hover a described image for its vision description + Copy (#419), reconstructed from
+              // the persisted images + image_descriptions.
+              <div style={{ marginTop: "0.25rem" }}>
+                <TranscriptImages images={m.images} descriptions={m.image_descriptions} />
               </div>
             )}
           </div>
