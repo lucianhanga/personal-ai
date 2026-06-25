@@ -708,6 +708,10 @@ test("dropping a small document extracts it and folds the text into the message 
     expect(screen.getByTestId("document-attachment")).toHaveAttribute("data-status", "small"),
   );
 
+  // A small doc carries the neutral "In message" affordance (folded inline, not RAG-indexed).
+  expect(screen.getByTestId("document-retrieval-badge")).toHaveAttribute("data-retrieval", "inline");
+  expect(screen.getByTestId("document-retrieval-badge")).toHaveTextContent(/in message/i);
+
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "summarize this" } });
   fireEvent.click(screen.getByTestId("send"));
 
@@ -718,6 +722,8 @@ test("dropping a small document extracts it and folds the text into the message 
   // Display-vs-model split (#426): the original prompt (not the folded content) is sent for the
   // bubble; the model still receives the folded `content` asserted above.
   expect(last.displayContent).toBe("summarize this");
+  // Ingest-at-send (#436): a small doc is folded inline and is NOT placed in `documents_full`.
+  expect(last.documents_full).toBeUndefined();
   // The COMPOSER chip row clears after a successful send (the sent message now renders its own
   // read-only transcript chip with data-status="sent", so we scope to the composer's `small` chip).
   await waitFor(() =>
@@ -725,7 +731,7 @@ test("dropping a small document extracts it and folds the text into the message 
   );
 });
 
-test("a large document yields a `large` chip and is NOT folded into the message (#416)", async () => {
+test("a large document is sent in documents_full for RAG ingest, not folded inline (#436)", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   // Over the 6000-token inline gate (~4 chars/token -> > 24000 chars).
@@ -749,19 +755,25 @@ test("a large document yields a `large` chip and is NOT folded into the message 
   await waitFor(() =>
     expect(screen.getByTestId("document-attachment")).toHaveAttribute("data-status", "large"),
   );
-  expect(screen.getByTestId("document-attachment")).toHaveTextContent(/too large/i);
+  // A large doc carries the amber "Searched in this chat" affordance (RAG-indexed, not inline).
+  expect(screen.getByTestId("document-retrieval-badge")).toHaveAttribute("data-retrieval", "rag");
+  expect(screen.getByTestId("document-retrieval-badge")).toHaveTextContent(/searched in this chat/i);
 
   // The full text is still reachable for read/copy via the panel.
   fireEvent.focus(screen.getByTestId("document-attachment"));
   expect(await screen.findByTestId("document-panel")).toHaveTextContent("lorem ipsum");
 
-  // A large doc does not block sending, but its text is NOT folded into the message.
+  // A large doc does not block sending; its text is NOT folded inline.
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "what is this?" } });
   fireEvent.click(screen.getByTestId("send"));
   await waitFor(() => expect(stream).toHaveBeenCalled());
   const last = stream.mock.calls[0][0].messages.at(-1);
   expect(last?.content).toBe("what is this?");
   expect(last?.content).not.toContain("[Document:");
+  // Ingest-at-send (#436): the FULL extracted text goes in `documents_full` for conversation RAG.
+  expect(last?.documents_full).toEqual([{ name: "report.pdf", text: big }]);
+  // It also keeps a display chip in `documents` (drives the transcript chip on reload).
+  expect(last?.documents).toEqual([{ name: "report.pdf", text: big }]);
 });
 
 test("an unsupported / failed extraction yields an error chip (#416)", async () => {

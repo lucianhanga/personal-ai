@@ -8,12 +8,32 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from typing import Any
 
 from personalai_contracts.ports.storage import GLOBAL_SCOPE, Scope, VectorMatch, VectorRecord
-from personalai_storage_postgres.db import TENANT_ID_SQL, Querier, scope_predicate
+from personalai_storage_postgres.db import (
+    TENANT_ID_SQL,
+    Querier,
+    scope_predicate,
+    union_scope_predicate,
+)
 
 # Embedding dimension of the default embedding model (qwen3-embedding:0.6b).
 VECTOR_DIM = 1024
+
+
+def _retrieval_predicate(
+    scope: Scope, union_conversation_id: str | None, *, next_param: int
+) -> tuple[str, list[Any]]:
+    """Pick the scope WHERE fragment: a UNION (global OR conversation) when
+    ``union_conversation_id`` is set (#420 PR4), else the single-scope predicate.
+    ``union_conversation_id`` wins over ``scope`` so a tier-2 retrieval sees both the attached doc
+    and the global corpus while staying anti-bleed.
+    """
+    if union_conversation_id is not None:
+        return union_scope_predicate(union_conversation_id, next_param=next_param)
+    return scope_predicate(scope, next_param=next_param)
+
 
 # Reciprocal Rank Fusion constant (#420 hybrid retrieval). 60 is the canonical RRF k from the
 # original paper and the doktokNG HybridPostgresRetriever -- it damps the contribution of low ranks
@@ -54,12 +74,18 @@ class PgVectorRepository:
         )
 
     async def query(
-        self, vector: Sequence[float], top_k: int = 5, *, scope: Scope = GLOBAL_SCOPE
+        self,
+        vector: Sequence[float],
+        top_k: int = 5,
+        *,
+        scope: Scope = GLOBAL_SCOPE,
+        union_conversation_id: str | None = None,
     ) -> Sequence[VectorMatch]:
         # Scope is an additional app-layer filter on top of tenant RLS. The global default adds
         # `conversation_id IS NULL AND project_id IS NULL` so conversation/project rows can never
-        # leak into a global search (anti-bleed, #420). Scoped predicates are fully parameterized.
-        predicate, params = scope_predicate(scope, next_param=2)
+        # leak into a global search (anti-bleed, #420). A union retrieval (#420 PR4) instead matches
+        # `global OR conversation_id = :cid`. Both predicates are fully parameterized.
+        predicate, params = _retrieval_predicate(scope, union_conversation_id, next_param=2)
         rows = await self._pool.fetch(
             "SELECT id, metadata, 1 - (embedding <=> $1::vector) AS score "
             f"FROM vectors WHERE {predicate} "
@@ -82,6 +108,7 @@ class PgVectorRepository:
         top_k: int = 5,
         *,
         scope: Scope = GLOBAL_SCOPE,
+        union_conversation_id: str | None = None,
     ) -> Sequence[VectorMatch]:
         # ONE query, two arms fused by Reciprocal Rank Fusion (RRF, k=60 canonical), the doktokNG
         # HybridPostgresRetriever shape (#420 storage design): a dense arm (pgvector cosine over the
@@ -92,11 +119,12 @@ class PgVectorRepository:
         #
         # $1=qvec, $2=qtext, $3=k (per-arm + final LIMIT), $4=rrf constant. The scope predicate's
         # bound params start at $5 and are reused verbatim in BOTH arms (the same scope filters
-        # dense and lexical identically -- anti-bleed). Tenant is enforced by RLS on the
-        # tenant-bound connection and is intentionally absent from this SQL. `_init_connection` sets
-        # `hnsw.iterative_scan = relaxed_order`, so a scoped (filtered) dense arm still returns a
-        # full k. The scope value is bound, never interpolated.
-        predicate, scope_params = scope_predicate(scope, next_param=5)
+        # dense and lexical identically -- anti-bleed). When union_conversation_id is set the
+        # predicate is the global+conversation union (#420 PR4); else the single scope. Tenant is
+        # enforced by RLS on the tenant-bound connection and is intentionally absent from this SQL.
+        # `_init_connection` sets `hnsw.iterative_scan = relaxed_order`, so a scoped (filtered)
+        # dense arm still returns a full k. The scope value is bound, never interpolated.
+        predicate, scope_params = _retrieval_predicate(scope, union_conversation_id, next_param=5)
         rows = await self._pool.fetch(
             "WITH dense AS ("
             "  SELECT id, metadata, "

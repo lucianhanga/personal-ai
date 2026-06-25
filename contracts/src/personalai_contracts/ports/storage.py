@@ -88,7 +88,12 @@ class VectorRepository(Protocol):
     ) -> None: ...
 
     async def query(
-        self, vector: Sequence[float], top_k: int = 5, *, scope: Scope = GLOBAL_SCOPE
+        self,
+        vector: Sequence[float],
+        top_k: int = 5,
+        *,
+        scope: Scope = GLOBAL_SCOPE,
+        union_conversation_id: str | None = None,
     ) -> Sequence[VectorMatch]: ...
 
     async def hybrid_query(
@@ -98,6 +103,7 @@ class VectorRepository(Protocol):
         top_k: int = 5,
         *,
         scope: Scope = GLOBAL_SCOPE,
+        union_conversation_id: str | None = None,
     ) -> Sequence[VectorMatch]:
         """Dense (pgvector cosine) + lexical (FTS) retrieval fused by Reciprocal Rank Fusion (#420).
 
@@ -106,6 +112,12 @@ class VectorRepository(Protocol):
         RRF score (rank-based, not cosine), so citations are preserved while ranking improves. Same
         ``scope`` / anti-bleed semantics as :meth:`query`; the global default excludes
         conversation/project rows.
+
+        ``union_conversation_id`` (#420 PR4): when set, retrieval covers the UNION of the global
+        corpus AND that conversation's ephemeral attachments (``global OR conversation_id = :cid``),
+        so an attached large doc and the global corpus are both searchable in one question. It takes
+        precedence over ``scope`` and preserves anti-bleed: only rows whose ``conversation_id``
+        equals the bound id (plus global rows) can match -- another conversation's rows never do.
         """
         ...
 

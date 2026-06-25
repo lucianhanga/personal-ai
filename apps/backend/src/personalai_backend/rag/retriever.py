@@ -63,17 +63,26 @@ class HybridVectorStoreRetriever(BaseRetriever):
     embeddings: ProviderEmbeddings
     top_k: int = 5
     scope: Scope = GLOBAL_SCOPE
+    # When set, retrieval covers the UNION of the global corpus AND this conversation's ephemeral
+    # attachments (#420 PR4: "global OR conversation_id = :cid"). Takes precedence over ``scope``
+    # and is passed straight to ``hybrid_query`` so the storage layer enforces anti-bleed.
+    union_conversation_id: str | None = None
 
     async def _aget_relevant_documents(
         self, query: str, *, run_manager: AsyncCallbackManagerForRetrieverRun
     ) -> list[Document]:
         # Cap then embed via our ModelProvider seam (NOT langchain-ollama), then run the single
-        # dense+lexical RRF query honoring the bound scope. Empty embedding -> no results.
+        # dense+lexical RRF query honoring the bound scope (or the global+conversation union when
+        # union_conversation_id is set). Empty embedding -> no results.
         embedding = await self.embeddings.aembed_query(query[:_MAX_QUERY_CHARS])
         if not embedding:
             return []
         matches = await self.vectors.hybrid_query(
-            embedding, query[:_MAX_QUERY_CHARS], self.top_k, scope=self.scope
+            embedding,
+            query[:_MAX_QUERY_CHARS],
+            self.top_k,
+            scope=self.scope,
+            union_conversation_id=self.union_conversation_id,
         )
         return [_to_document(m) for m in matches]
 
