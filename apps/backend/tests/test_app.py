@@ -768,7 +768,5 @@ def test_extract_file_oversized_is_413() -> None:
 
 
 def test_extract_file_requires_token(client: TestClient) -> None:
-    res = client.post(
-        "/api/v1/files/extract", files={"file": ("notes.txt", b"hi", "text/plain")}
-    )
+    res = client.post("/api/v1/files/extract", files={"file": ("notes.txt", b"hi", "text/plain")})
     assert res.status_code == 401
