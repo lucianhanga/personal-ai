@@ -18,6 +18,8 @@ import {
   resumeChat,
   saveSettings,
   streamChat,
+  truncateConversation,
+  cancelChat,
   describeImage,
   extractDocument,
   transcribeAudio,
@@ -42,7 +44,7 @@ import { ChatsPanel } from "./ChatsPanel";
 import { DocumentChips, type DocumentAttachment } from "./DocumentChips";
 import { ImageChips, type ImageAttachment } from "./ImageChips";
 import { EgressApproval, type EgressDecision } from "./EgressApproval";
-import { MessageList } from "./MessageList";
+import { MessageList, type CopyPayload } from "./MessageList";
 import { SettingsView } from "./SettingsView";
 import { SidePanel } from "./SidePanel";
 
@@ -287,6 +289,12 @@ interface ChatState {
   busy: boolean;
   // Set when a turn is suspended at the durable human gate (M8.1c), awaiting approve/reject.
   pending: ApprovalRequest | null;
+  // User-driven Stop (#412): the abort is in flight (the button shows a muted, disabled square so a
+  // double-click can't double-abort). Cleared when the stream settles.
+  stopping: boolean;
+  // The last turn was stopped by the user this session (#412) -> show the "Generation stopped."
+  // marker live (before any reload from meta.stopped). Reset on the next send.
+  stopped: boolean;
 }
 
 const EMPTY_CHAT: ChatState = {
@@ -299,6 +307,8 @@ const EMPTY_CHAT: ChatState = {
   contexts: {},
   busy: false,
   pending: null,
+  stopping: false,
+  stopped: false,
 };
 
 /** Set the latest turn's usage, attach it to its assistant message (for the per-message footer),
@@ -439,10 +449,23 @@ export function Chat({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
+  // User-driven Stop (#412): one AbortController per chat key, so aborting the active chat's stream
+  // closes only its SSE fetch (per-chat, mirroring audioAbortRef/imageAbortRef). Stopping chat A
+  // from B is impossible — Stop always targets the active chat's controller.
+  const streamAbortRef = useRef<Map<string, AbortController>>(new Map());
+  // The gated run_id per chat key (set when an approval_request arrives), so Stop can fire the
+  // authoritative POST /chat/{run_id}/cancel additionally to aborting the fetch. Non-gated turns
+  // have no run_id -> abort-only (path A), which is correct.
+  const runIdRef = useRef<Map<string, string>>(new Map());
 
   const activeKey = activeId ?? NEW_CHAT;
   const view = chats[activeKey] ?? EMPTY_CHAT;
   const { messages, citations, trace, usage, totals, contexts, busy, pending } = view;
+  const stopping = view.stopping;
+  const stopped = view.stopped;
+  // A Copy onto a composer that already has a draft pending a replace confirm (#441). Holds the
+  // payload to apply if the user confirms "Replace".
+  const [pendingCopy, setPendingCopy] = useState<CopyPayload | null>(null);
 
   const patchChat = (key: string, fn: (s: ChatState) => ChatState): void => {
     setChats((prev) => ({ ...prev, [key]: fn(prev[key] ?? EMPTY_CHAT) }));
@@ -1056,12 +1079,20 @@ export function Chat({
     };
     const history: ChatMessage[] = [...(chats[startKey]?.messages ?? []), userMsg];
     const assistantIndex = history.length;
-    // Optimistically show the user turn + an empty assistant bubble and mark this chat busy.
+    // User-driven Stop (#412): a fresh AbortController for THIS turn, keyed by chat key. Stop aborts
+    // it; the stream's catch keeps the partial + marks the chat stopped.
+    const abort = new AbortController();
+    streamAbortRef.current.set(startKey, abort);
+    runIdRef.current.delete(startKey);
+    // Optimistically show the user turn + an empty assistant bubble and mark this chat busy; clear
+    // any prior stop marker for this chat.
     patchChat(startKey, (s) => ({
       ...s,
       messages: [...history, { role: "assistant", content: "" }],
       busy: true,
       usage: null,
+      stopping: false,
+      stopped: false,
     }));
 
     let targetId = activeId;
@@ -1080,6 +1111,9 @@ export function Chat({
         });
         setActiveId((cur) => (cur === null ? conv.id : cur)); // don't yank focus if user switched
         setConversations(await fetchConversations(token)); // show the new chat (with its marker)
+        // Re-key the abort controller from NEW_CHAT to the real id so Stop still targets this stream.
+        streamAbortRef.current.delete(startKey);
+        streamAbortRef.current.set(key, abort);
       }
 
       let acc = "";
@@ -1096,6 +1130,7 @@ export function Chat({
           reasoning,
           conversationId: targetId ?? undefined,
           token,
+          signal: abort.signal,
         },
         (delta) => {
           acc += delta;
@@ -1152,7 +1187,9 @@ export function Chat({
         },
         (req) => {
           // Durable human gate (M8.1c): the turn is suspended; the proposed answer is already in the
-          // bubble (acc). Stash the run so Approve/Reject can resume it.
+          // bubble (acc). Stash the run so Approve/Reject can resume it. Record the run_id so a Stop
+          // can fire the authoritative /cancel for this gated run (#412).
+          if (req.run_id) runIdRef.current.set(key, req.run_id);
           patchChat(key, (s) => ({ ...s, pending: req }));
         },
         (step) =>
@@ -1219,14 +1256,151 @@ export function Chat({
               [assistantIndex]: appendTrace(s.trace[assistantIndex], item),
             },
           })),
+        // User-driven Stop (#412, path B): the backend cancelled this gated run mid-stream and sent
+        // a terminal `event: stopped`. Settle the marker deterministically (vs only inferring it
+        // from the abort) and clear any half-shown approval card.
+        () => patchChat(key, (s) => ({ ...s, stopped: true, pending: null })),
       );
       if (persistence) setConversations(await fetchConversations(token));
     } catch (e: unknown) {
-      setError(String(e));
+      // User-driven Stop (#412, path A): an aborted fetch is NOT an error — the partial answer
+      // already streamed into the bubble (acc); keep it and mark the chat stopped so the
+      // "Generation stopped." marker shows. Any other failure surfaces as today.
+      if (abort.signal.aborted || (e as { name?: string } | null)?.name === "AbortError") {
+        patchChat(key, (s) => ({ ...s, stopped: true, pending: null }));
+      } else {
+        setError(String(e));
+      }
     } finally {
-      patchChat(key, (s) => ({ ...s, busy: false }));
+      streamAbortRef.current.delete(key);
+      runIdRef.current.delete(key);
+      patchChat(key, (s) => ({ ...s, busy: false, stopping: false }));
     }
   }
+
+  /** User-driven Stop (#412): abort the ACTIVE chat's in-flight stream. Aborting the fetch closes
+   * the SSE socket (path A) so the backend unwinds + persists the partial; for a gated run we ALSO
+   * fire the authoritative POST /chat/{run_id}/cancel (path B) to delete the durable checkpoint so
+   * the run isn't left resumable. Per-chat: Stop always targets the active chat's controller, never
+   * another chat's stream. The Stopping state guards a double-click. */
+  function stop(): void {
+    const key = activeKey;
+    const ctrl = streamAbortRef.current.get(key);
+    if (ctrl === undefined) return;
+    patchChat(key, (s) => ({ ...s, stopping: true }));
+    const runId = runIdRef.current.get(key);
+    if (runId) void cancelChat(token, runId).catch(() => undefined);
+    ctrl.abort();
+  }
+
+  /** Rehydrate the active composer from a copied question (#441), and write the text to the
+   * clipboard as a secondary path. Resources re-attach as `done` chips (no re-describe / re-extract
+   * / re-transcribe — the data is already processed). Replaces the draft only if it is empty;
+   * otherwise a brief inline "replace?" confirm guards against destroying half-typed text. */
+  function applyCopy(payload: CopyPayload): void {
+    setInput(payload.text);
+    setImageAttachments(
+      payload.images.map((src, idx) => ({
+        id: `img_${Date.now().toString(36)}_${idx}`,
+        src,
+        description: payload.imageDescriptions[idx] ?? "",
+        status: "done" as const,
+      })),
+    );
+    setDocumentAttachments(
+      payload.documents.map((d, idx) => ({
+        id: `doc_${Date.now().toString(36)}_${idx}`,
+        name: d.name,
+        text: d.text,
+        status: docTokenEstimate(d.text) <= DOC_INLINE_TOKEN_GATE ? ("small" as const) : ("large" as const),
+      })),
+    );
+    setAudioAttachments(
+      payload.audio.map((a, idx) => ({
+        id: `aud_${Date.now().toString(36)}_${idx}`,
+        name: a.name,
+        transcript: a.transcript,
+        status: "done" as const,
+      })),
+    );
+    // Secondary path: also place the plain question text on the clipboard so the user can paste it
+    // manually into any other chat's composer (clipboard can't carry the re-attachable resources).
+    if (payload.text) void navigator.clipboard?.writeText(payload.text).catch(() => undefined);
+  }
+
+  function copyToComposer(payload: CopyPayload): void {
+    const draftEmpty =
+      input.trim() === "" &&
+      imageAttachments.length === 0 &&
+      audioAttachments.length === 0 &&
+      documentAttachments.length === 0;
+    if (draftEmpty) {
+      applyCopy(payload);
+    } else {
+      // Never silently destroy a half-typed message — confirm the replace first.
+      setPendingCopy(payload);
+    }
+  }
+
+  /** Edit a question (#441): truncate from this turn (delete it + everything after), then re-run the
+   * edited text via the existing /chat path (two calls, no new handler). Disabled while busy. */
+  async function editResubmit(fromMessageId: number, text: string): Promise<void> {
+    const id = activeId;
+    if (id === null || busy) return;
+    setError(null);
+    try {
+      await truncateConversation(token, id, fromMessageId);
+      // Reload the now-truncated history, then re-run the edited question as a fresh send. Loading
+      // the server state first keeps the optimistic send building on the correct (truncated) history.
+      const conv = await fetchConversation(token, id);
+      setChats((prev) => ({ ...prev, [id]: { ...(prev[id] ?? EMPTY_CHAT), messages: conv.messages } }));
+      setInput(text);
+      setImageAttachments([]);
+      setAudioAttachments([]);
+      setDocumentAttachments([]);
+      // Defer the send so the truncated history + composer text are committed first.
+      window.setTimeout(() => sendRef.current(), 0);
+    } catch (e: unknown) {
+      setError(String(e));
+    }
+  }
+
+  /** Delete a question and everything after it (#441): truncate only, no re-run. Disabled while busy. */
+  async function deleteFrom(fromMessageId: number): Promise<void> {
+    const id = activeId;
+    if (id === null || busy) return;
+    setError(null);
+    try {
+      await truncateConversation(token, id, fromMessageId);
+      const conv = await fetchConversation(token, id);
+      setChats((prev) => ({ ...prev, [id]: { ...(prev[id] ?? EMPTY_CHAT), messages: conv.messages } }));
+      if (persistence) setConversations(await fetchConversations(token));
+    } catch (e: unknown) {
+      setError(String(e));
+    }
+  }
+
+  // Esc-to-stop (#412): while the active chat is busy (and not suspended at a gate — there Stop is
+  // not the right control, the gate buttons govern), Escape stops generation. Guard: if a chip
+  // description panel is open, Escape closes that first (its own listener), so we don't stop while a
+  // transient panel is up — a second Escape (panel now closed) reaches here and stops. We also skip
+  // when focus is inside an open dialog/panel so the panel's own Escape wins.
+  useEffect(() => {
+    if (!busy || pending) return;
+    function onKey(e: KeyboardEvent): void {
+      if (e.key !== "Escape") return;
+      // A chip DESCRIPTION panel (image/document/audio) is open -> let it handle Escape first (a
+      // second Escape, panel now closed, reaches here and stops). Match only those three transient
+      // panels, not the always-present layout panels (chats/side/settings) whose testids also end
+      // in "-panel".
+      if (document.querySelector('[data-testid="image-panel"],[data-testid="document-panel"],[data-testid="audio-panel"]'))
+        return;
+      stop();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, pending, activeKey]);
 
   // The auto-send timer fires a stable ref so it always calls the latest send (current input).
   sendRef.current = () => void send();
@@ -1462,6 +1636,10 @@ export function Chat({
               listRef={listRef}
               onScroll={onMessagesScroll}
               onAllowHost={(host) => void onAllowHost(host)}
+              liveStopped={stopped}
+              onCopyToComposer={copyToComposer}
+              onEditResubmit={(fromId, text) => void editResubmit(fromId, text)}
+              onDelete={(fromId) => void deleteFrom(fromId)}
             />
 
             {!atBottom && (
@@ -1696,6 +1874,41 @@ export function Chat({
               </span>
             )}
 
+            {/* Copy-into-a-non-empty-composer confirm (#441): never silently destroy a half-typed
+                draft. Amber, inline; Replace applies the copied question, Cancel keeps the draft. */}
+            {pendingCopy && (
+              <div
+                data-testid="copy-replace-confirm"
+                role="status"
+                style={{
+                  display: "flex",
+                  gap: "0.6rem",
+                  alignItems: "center",
+                  fontSize: "0.85rem",
+                  color: "#b06f00",
+                  border: "1px solid #e6c200",
+                  background: "#fff8e1",
+                  borderRadius: 6,
+                  padding: "0.35rem 0.6rem",
+                }}
+              >
+                <span style={{ flex: 1 }}>Composer has unsaved text — replace it?</span>
+                <button
+                  data-testid="copy-replace-yes"
+                  onClick={() => {
+                    applyCopy(pendingCopy);
+                    setPendingCopy(null);
+                  }}
+                  style={{ fontWeight: 600 }}
+                >
+                  Replace
+                </button>
+                <button data-testid="copy-replace-cancel" onClick={() => setPendingCopy(null)}>
+                  Cancel
+                </button>
+              </div>
+            )}
+
             <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-end" }}>
               {/* Drop images onto the composer to attach them (#324) — replaces the old button. */}
               <div
@@ -1817,27 +2030,50 @@ export function Chat({
                     <span aria-hidden="true">{transcribing ? "…" : recording ? "■" : "●"}</span>
                   </button>
                 )}
-                <button
-                  data-testid="send"
-                  onClick={() => void send()}
-                  disabled={
-                    busy ||
-                    transcribing ||
-                    audioTranscribing ||
-                    imageDescribing ||
-                    docExtracting ||
-                    !model ||
-                    (input.trim() === "" &&
-                      doneImages.length === 0 &&
-                      doneAudio.length === 0 &&
-                      smallDocs.length === 0)
-                  }
-                  aria-label="Send message"
-                  title="Send message (Enter)"
-                  style={{ fontSize: "1.1rem", lineHeight: 1, padding: "0.25rem 0.6rem" }}
-                >
-                  <span aria-hidden="true">{busy ? "…" : "↑"}</span>
-                </button>
+                {/* Send BECOMES Stop while this chat is busy (#412): same slot, no layout shift. The
+                    dead "…" busy state is now the actionable Stop control (red ■). Stopping is a
+                    brief disabled (muted ■) guard against a double-abort. Not shown while suspended
+                    at a gate (busy is false then) — the gate's Approve/Reject govern instead. */}
+                {busy ? (
+                  <button
+                    data-testid="stop-generation"
+                    onClick={stop}
+                    disabled={stopping}
+                    aria-label={stopping ? "Stopping…" : "Stop generating"}
+                    title={stopping ? "Stopping…" : "Stop generating"}
+                    style={{
+                      fontSize: "1.1rem",
+                      lineHeight: 1,
+                      padding: "0.25rem 0.6rem",
+                      // Red = stoppable (destructive-but-safe; matches the record-stop convention);
+                      // muted while the abort is in flight.
+                      color: stopping ? "#888" : "#b00020",
+                    }}
+                  >
+                    <span aria-hidden="true">■</span>
+                  </button>
+                ) : (
+                  <button
+                    data-testid="send"
+                    onClick={() => void send()}
+                    disabled={
+                      transcribing ||
+                      audioTranscribing ||
+                      imageDescribing ||
+                      docExtracting ||
+                      !model ||
+                      (input.trim() === "" &&
+                        doneImages.length === 0 &&
+                        doneAudio.length === 0 &&
+                        smallDocs.length === 0)
+                    }
+                    aria-label="Send message"
+                    title="Send message (Enter)"
+                    style={{ fontSize: "1.1rem", lineHeight: 1, padding: "0.25rem 0.6rem" }}
+                  >
+                    <span aria-hidden="true">↑</span>
+                  </button>
+                )}
               </div>
               {/* Screen-reader-only live status: an aria-label swap on a button is not always
                   reannounced, so the recording/transcribing transition is voiced here. */}
@@ -1854,6 +2090,22 @@ export function Chat({
                 }}
               >
                 {transcribing ? "Transcribing" : recording ? "Recording" : (micNotice ?? "")}
+              </span>
+              {/* Stop confirmation (#412): the aria-label swap on the button is not always
+                  reannounced, so the stop is voiced here for non-visual users. */}
+              <span
+                data-testid="stop-status"
+                aria-live="polite"
+                style={{
+                  position: "absolute",
+                  width: 1,
+                  height: 1,
+                  overflow: "hidden",
+                  clip: "rect(0 0 0 0)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {stopped ? "Generation stopped." : ""}
               </span>
             </div>
           </section>

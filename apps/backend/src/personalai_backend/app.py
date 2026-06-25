@@ -21,7 +21,7 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -323,6 +323,15 @@ class ConversationRename(BaseModel):
     """Request body for renaming a conversation."""
 
     title: str
+
+
+class ConversationTruncate(BaseModel):
+    """Request body for truncate-from-turn (#441): delete the message with this id and everything
+    after it. Backs Delete (truncate-only) and the first step of Edit (truncate, then resubmit via
+    the existing /chat endpoint). ``from_message_id`` is the stable ``messages.id`` from
+    ``get_conversation``, not an array index."""
+
+    from_message_id: int
 
 
 class MemoryUpdate(BaseModel):
@@ -1051,6 +1060,13 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         egress_guard=lambda host: assert_egress_allowed(effective_egress_config(boot.config), host),
     )
     app.state.bg_tasks = set()  # fire-and-forget background tasks (e.g. memory extraction)
+    # User-driven cancel (#412): a per-run asyncio.Event so an explicit POST /chat/{run_id}/cancel
+    # can signal the OTHER request's streaming turn to break promptly (path B). Keyed by run_id;
+    # entries are created when a gated turn starts and removed in the stream's finally (no leak).
+    # In-process only (acceptable: loopback-first single-process app). A future multi-worker deploy
+    # would move this to a checkpoint flag — noted as tech-debt.
+    cancellations: dict[str, asyncio.Event] = {}
+    app.state.cancellations = cancellations
 
     # CORS restricted to the configured origins (a loopback dev allowlist). Credentials are allowed
     # in BOTH modes: the SPA always sends credentials:"include", and a credentialed cross-origin
@@ -1776,6 +1792,16 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 meta=turn_meta or None,
             )
 
+        # User-driven cancel (#412): for a GATED run (run_id set), register an asyncio.Event so an
+        # explicit POST /chat/{run_id}/cancel can break THIS streaming turn promptly (path B). The
+        # entry is removed in the stream's finally below. Non-gated turns have no run_id and rely
+        # on client-disconnect (path A) alone — there is no checkpoint to clean and the generator
+        # unwind already stops the provider, so disconnect-only is correct and sufficient for them.
+        cancel_event: asyncio.Event | None = None
+        if run_id is not None:
+            cancel_event = asyncio.Event()
+            app.state.cancellations[run_id] = cancel_event
+
         async def event_stream() -> AsyncIterator[bytes]:
             # Tag tool-audit + app-log entries produced during this turn with the active chat,
             # so the UI can show per-conversation history (reset when the stream ends).
@@ -1783,6 +1809,33 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             # Enforce this tenant's effective egress for in-process tools this turn (#290).
             eg_token = current_egress.set(config)
             turn_started = time.perf_counter()  # wall-clock for this turn (reported in `usage`)
+
+            async def _persist_stopped() -> None:
+                # Persist the partial turn with a dedicated meta["stopped"] marker (#412), mirroring
+                # the error / repetition_stopped / E_TIMEOUT "keep partial + mark + persist"
+                # contract but for a user-initiated halt (distinct from a failure). Reached on a
+                # client disconnect (path A) and on the /cancel race (path B). Prepend the RAG
+                # prelude (#437) so a stopped turn still shows the indexing/retrieval steps it
+                # completed. Best-effort: never raise into the stream (the error path's precedent).
+                # The user turn was already persisted up front, so the question survives regardless.
+                stopped_trace = prelude + sse.trace
+                if persist_id is None or storage is None or not (sse.answer or stopped_trace):
+                    return
+                meta_stop: dict[str, Any] = {
+                    "stopped": {"by": "user", "ts": datetime.now(UTC).isoformat(timespec="seconds")}
+                }
+                if stopped_trace:
+                    meta_stop["trace"] = stopped_trace
+                try:
+                    await storage.conversations.add_message(
+                        conversation_id=persist_id,
+                        role="assistant",
+                        content=sse.answer or "(stopped)",
+                        meta=meta_stop,
+                    )
+                except Exception:  # noqa: BLE001 - persist is best-effort, like the error path
+                    logger.warning("persisting a stopped turn failed", exc_info=True)
+
             try:
                 # Surface the context composition up front (before tokens stream), so the user sees
                 # what was assembled for this question even as the agents add to it.
@@ -1815,7 +1868,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     # Orchestration lives in run_turn (FastAPI-independent, fake-testable); the
                     # route maps its typed events to SSE frames + the ordered trace.
                     async with asyncio.timeout(config.agent_timeout_seconds):
-                        async for ev in run_turn(
+                        turn_events = run_turn(
                             generation=generation,
                             provider=provider,
                             use_tools=req.use_tools,
@@ -1834,13 +1887,75 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                             sources=sources,
                             evidence_budget=config.evidence_budget,
                             retrieval_query=standalone or last_user or "",
-                        ):
-                            frame_bytes = sse.map(ev)
-                            if frame_bytes is not None:
-                                yield frame_bytes
-                            elif ev.kind == "final":  # mapper returns None for `final`
-                                done = {"delta": "", "done": True, "finish_reason": "stop"}
-                                yield f"data: {json.dumps(done)}\n\n".encode()
+                        )
+                        # User-driven cancel (#412, path B) applies ONLY to a gated run (one with a
+                        # cancel Event): race each step against the Event so an explicit /cancel
+                        # breaks the turn within one chunk, emits a terminal `event: stopped`,
+                        # persists the partial (meta["stopped"]), and closes the agen. The common
+                        # NON-gated turn keeps the plain `async for` so path A's GeneratorExit
+                        # unwind on client disconnect is exactly as before.
+                        if cancel_event is None:
+                            async for ev in turn_events:
+                                frame_bytes = sse.map(ev)
+                                if frame_bytes is not None:
+                                    yield frame_bytes
+                                elif ev.kind == "final":  # mapper returns None for `final`
+                                    done = {"delta": "", "done": True, "finish_reason": "stop"}
+                                    yield f"data: {json.dumps(done)}\n\n".encode()
+                        else:
+                            turn_iter = turn_events.__aiter__()
+
+                            async def _next_event() -> Any:
+                                return await turn_iter.__anext__()
+
+                            cancel_wait = asyncio.ensure_future(cancel_event.wait())
+                            stopped_by_user = False
+                            try:
+                                while True:
+                                    nxt = asyncio.ensure_future(_next_event())
+                                    done_set, _pending = await asyncio.wait(
+                                        {nxt, cancel_wait},
+                                        return_when=asyncio.FIRST_COMPLETED,
+                                    )
+                                    if nxt not in done_set:
+                                        # /cancel won the race: stop the turn promptly.
+                                        nxt.cancel()
+                                        with suppress(asyncio.CancelledError):
+                                            await nxt
+                                        # run_turn is an async generator; close it so the provider
+                                        # stream unwinds (getattr keeps the AsyncIterator type ok).
+                                        aclose = getattr(turn_events, "aclose", None)
+                                        if aclose is not None:
+                                            await aclose()
+                                        stopped_by_user = True
+                                        break
+                                    try:
+                                        ev = await nxt
+                                    except StopAsyncIteration:
+                                        break
+                                    frame_bytes = sse.map(ev)
+                                    if frame_bytes is not None:
+                                        yield frame_bytes
+                                    elif ev.kind == "final":  # mapper returns None for `final`
+                                        done = {"delta": "", "done": True, "finish_reason": "stop"}
+                                        yield f"data: {json.dumps(done)}\n\n".encode()
+                            finally:
+                                cancel_wait.cancel()
+                                with suppress(asyncio.CancelledError):
+                                    await cancel_wait
+                            if stopped_by_user:
+                                yield b'event: stopped\ndata: {"by":"user"}\n\n'
+                                await _persist_stopped()
+                                return
+                except asyncio.CancelledError:
+                    # User-driven cancel (#412, path A): the client's AbortController closed the SSE
+                    # socket, so the consumer was cancelled and the cancellation propagated through
+                    # the `async for` (a BaseException — NOT caught by `except Exception` below).
+                    # Persist the partial with meta["stopped"] (consistent with the error path),
+                    # then re-raise so the framework's cancellation semantics are preserved (the
+                    # socket is already gone, so no terminal frame is emitted — the client knows).
+                    await _persist_stopped()
+                    raise
                 except TimeoutError:
                     # Whole-turn wall-clock cap hit: surface E_TIMEOUT so a wedged model/node can't
                     # hang the stream forever. Any partial answer was already streamed.
@@ -1964,6 +2079,10 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             finally:
                 current_conversation.reset(cv_token)
                 current_egress.reset(eg_token)
+                # Remove this run's cancel Event (#412) so the registry can't grow unbounded — on
+                # normal completion, a disconnect, OR a /cancel race (all routes hit finally).
+                if run_id is not None:
+                    app.state.cancellations.pop(run_id, None)
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -2109,6 +2228,60 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 current_egress.reset(eg_token)
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    @app.post(
+        "/api/v1/chat/{run_id}/cancel",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def cancel_chat(run_id: str) -> StructuredResult:
+        # User-driven cancel (#412), path B — the authoritative stop for a GATED/suspended run. A
+        # fresh SecurityContext is in scope (CSRF via require_context). Authz mirrors /resume:
+        #   - cross-TENANT -> 404 (the tenant-bound checkpointer can't see another tenant's thread).
+        #   - within-tenant, different SUBJECT -> 403 (checkpoint subject_id is server-trusted).
+        # On success: signal the in-process cancel Event (if the run is actively streaming, so the
+        # turn breaks within one chunk) AND delete the durable checkpoint so the run isn't left
+        # resumable. Idempotent: a finished/already-cancelled run has no checkpoint -> 404; a
+        # double-click that loses the checkpoint race is harmless (adelete_thread is a no-op).
+        config: CoreConfig = app.state.config
+        sec = current_security.get()
+        if app.state.tenant_db is None or sec is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="cancel requires a database and an authenticated context",
+            )
+        checkpointer = TenantCheckpointSaver(app.state.tenant_db, sec.tenant_id)
+        # Headline isolation rule (same as /resume): the checkpoint loads only under the caller's
+        # tenant (RLS), so a run owned by another tenant is simply not found -> 404.
+        if await checkpointer.aget_tuple({"configurable": {"thread_id": run_id}}) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run")
+        # Subject authz: a run may only be cancelled by the SAME subject that started it (even
+        # within one tenant). Read the server-trusted subject_id from the checkpoint's interrupt.
+        provider = _resolve_provider(None)
+        registries: Registries = app.state.bootstrap.registries
+        tool_list = [registries.tools.get(n) for n in registries.tools.names()]
+        pending = await read_pending_interrupt(
+            gateway=app.state.bootstrap.gateway,
+            provider=provider,
+            model=config.default_model,
+            checkpointer=checkpointer,
+            thread_id=run_id,
+            tools=tool_list,
+        )
+        owner_subject = str((pending or {}).get("subject_id", ""))
+        if owner_subject and owner_subject != sec.subject_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="not the run's subject"
+            )
+        # Signal an actively-streaming turn to stop promptly (only after the tenant+subject check,
+        # so a client can never cancel a run it doesn't own). A run parked at a gate has no live
+        # stream, so the Event may be absent — the checkpoint delete is what stops it being
+        # resumable.
+        event = app.state.cancellations.get(run_id)
+        if event is not None:
+            event.set()
+        await checkpointer.adelete_thread(run_id)
+        return StructuredResult(ok=True, data={"run_id": run_id, "cancelled": True})
 
     @app.post(
         "/api/v1/assistant/execute",
@@ -2591,6 +2764,10 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation")
         messages = [
             {
+                # Stable per-message id (#441): messages.id is a global monotonic bigint, the
+                # cursor for truncate-from-turn (Edit/Delete) and the Copy buffer. Purely additive
+                # — the UI keeps rendering by array order and now also carries an id per turn.
+                "id": m.id,
                 "role": m.role,
                 "content": m.content,
                 "meta": m.meta,
@@ -2643,6 +2820,44 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         storage = _require_storage()
         await storage.conversations.delete(conversation_id)
         return StructuredResult(ok=True, data={"id": conversation_id})
+
+    @app.post(
+        "/api/v1/conversations/{conversation_id}/truncate",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def truncate_conversation(
+        conversation_id: str, body: ConversationTruncate
+    ) -> StructuredResult:
+        # Truncate-from-turn (#441): delete the message with from_message_id and everything after
+        # it, in one RLS-scoped transaction. Backs Delete (truncate-only) and Edit's first step
+        # (truncate then resubmit via /chat). Tenant + membership safety:
+        #   - require_context gives tenant scope; RLS confines the delete to the caller's tenant.
+        #   - We verify from_message_id actually belongs to THIS conversation first, so a foreign
+        #     or garbage global id becomes a 404 rather than a silent no-op (messages.id is global,
+        #     so a conversation_id + id>=N predicate is mandatory and an unrelated id can't match).
+        # Assistant turns + all meta (trace/images/docs/audio) cascade because they are messages
+        # rows with a higher id. Conversation-scoped tier-2 RAG vectors are NOT individually purged
+        # here (they are conversation-isolated and die on conversation delete; Edit re-ingests
+        # idempotently under the same content-hash) — documented limitation, stronger cleanup is a
+        # deferred follow-up. Long-term memory is durable cross-conversation and is left untouched.
+        storage = _require_storage()
+        if await storage.conversations.get(conversation_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation")
+        messages = await storage.conversations.list_messages(conversation_id)
+        if not any(m.id == body.from_message_id for m in messages):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="message")
+        deleted = await storage.conversations.truncate_from(
+            conversation_id, from_message_id=body.from_message_id
+        )
+        return StructuredResult(
+            ok=True,
+            data={
+                "conversation_id": conversation_id,
+                "from_message_id": body.from_message_id,
+                "deleted_count": len(deleted),
+            },
+        )
 
     @app.get(
         "/api/v1/memory", response_model=StructuredResult, dependencies=[Depends(require_context)]

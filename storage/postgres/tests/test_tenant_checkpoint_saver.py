@@ -129,6 +129,65 @@ def test_cross_tenant_cannot_read_or_resume() -> None:
     asyncio.run(_run())
 
 
+def test_adelete_thread_clears_a_gated_run() -> None:
+    """#412: adelete_thread removes a suspended run's durable checkpoint so it is no longer
+    resumable (a subsequent aget_tuple -> None, the /resume 404 rule), and is idempotent."""
+
+    async def _run() -> None:
+        pool = await create_pool(DB_URL)
+        try:
+            await apply_migrations(pool)
+            tdb = TenantDb(pool)
+            tenant = (await PgTenantStore(pool).create_tenant("A")).id
+            run_id = str(uuid.uuid4())
+            config: RunnableConfig = {"configurable": {"thread_id": run_id}}
+
+            # Suspend a run at the gate so a checkpoint (and pending writes) exist.
+            saver = TenantCheckpointSaver(tdb, tenant)
+            app = _gate_graph().compile(checkpointer=saver)
+            assert "__interrupt__" in await app.ainvoke({"value": 1}, config)
+            assert await saver.aget_tuple(config) is not None
+
+            # Cancel: delete the thread -> no checkpoint remains, so it can't be resumed.
+            await saver.adelete_thread(run_id)
+            assert await saver.aget_tuple(config) is None
+
+            # Idempotent: deleting an already-cleared thread is a no-op (safe double-click Stop).
+            await saver.adelete_thread(run_id)
+            assert await saver.aget_tuple(config) is None
+        finally:
+            await pool.close()
+
+    asyncio.run(_run())
+
+
+def test_adelete_thread_is_tenant_scoped() -> None:
+    """#412: adelete_thread runs under RLS — tenant B deleting A's run_id removes nothing; A's
+    checkpoint survives and stays resumable."""
+
+    async def _run() -> None:
+        pool = await create_pool(DB_URL)
+        try:
+            await apply_migrations(pool)
+            tdb = TenantDb(pool)
+            tenants = PgTenantStore(pool)
+            a = (await tenants.create_tenant("A")).id
+            b = (await tenants.create_tenant("B")).id
+            run_id = str(uuid.uuid4())
+            config: RunnableConfig = {"configurable": {"thread_id": run_id}}
+
+            app_a = _gate_graph().compile(checkpointer=TenantCheckpointSaver(tdb, a))
+            await app_a.ainvoke({"value": 1}, config)
+
+            # B attempts to delete A's run by id -> RLS scopes the delete to B, so A's rows remain.
+            await TenantCheckpointSaver(tdb, b).adelete_thread(run_id)
+            assert await TenantCheckpointSaver(tdb, a).aget_tuple(config) is not None
+        finally:
+            await pool.close()
+
+    asyncio.run(_run())
+
+
 def test_put_get_list_directly() -> None:
     async def _run() -> None:
         pool = await create_pool(DB_URL)

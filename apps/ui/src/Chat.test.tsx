@@ -1004,7 +1004,7 @@ test("shows conversations and lazily creates one on first send", async () => {
   await waitFor(() =>
     expect(stream).toHaveBeenCalledWith(
       expect.objectContaining({ conversationId: "c2" }),
-      ...Array(12).fill(expect.any(Function)),
+      ...Array(13).fill(expect.any(Function)),
     ),
   );
 });
@@ -1170,7 +1170,7 @@ test("the chosen reasoning amount is sent to the chat request", async () => {
   await waitFor(() =>
     expect(stream).toHaveBeenCalledWith(
       expect.objectContaining({ reasoning: "brief", think: true }),
-      ...Array(12).fill(expect.any(Function)),
+      ...Array(13).fill(expect.any(Function)),
     ),
   );
 
@@ -1181,7 +1181,7 @@ test("the chosen reasoning amount is sent to the chat request", async () => {
   await waitFor(() =>
     expect(stream).toHaveBeenCalledWith(
       expect.objectContaining({ reasoning: "off", think: false }),
-      ...Array(12).fill(expect.any(Function)),
+      ...Array(13).fill(expect.any(Function)),
     ),
   );
 });
@@ -1392,4 +1392,108 @@ test("streams planner and critic steps into the live trace (followable agent flo
   expect(screen.getByTestId("details-plan")).toHaveTextContent("outline the answer");
   expect(screen.getByTestId("details-critique")).toHaveTextContent("Critic");
   expect(screen.getByTestId("details-critique")).toHaveTextContent("looks complete");
+});
+
+// --- #412: the Stop button ----------------------------------------------------------------------
+
+test("while streaming, the Send slot becomes a red Stop button; aborting returns to Send", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  // A stream that stays in flight until its AbortSignal fires, then rejects like a real abort.
+  vi.spyOn(api, "streamChat").mockImplementation(
+    (params, onDelta) =>
+      new Promise((_resolve, reject) => {
+        onDelta("partial answer"); // some text streamed before the stop
+        params.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      }),
+  );
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "hi" } });
+  fireEvent.click(screen.getByTestId("send"));
+
+  // Streaming: the Send button is replaced by Stop (red square, aria-label "Stop generating").
+  const stop = await screen.findByTestId("stop-generation");
+  expect(stop).toHaveAttribute("aria-label", "Stop generating");
+  expect(stop).toHaveStyle({ color: "#b00020" });
+  expect(screen.queryByTestId("send")).toBeNull();
+  expect(screen.getByTestId("msg-assistant")).toHaveTextContent("partial answer");
+
+  // Click Stop: the abort fires, the partial stays, and the slot returns to Send.
+  fireEvent.click(stop);
+  await waitFor(() => expect(screen.getByTestId("send")).toBeInTheDocument());
+  expect(screen.getByTestId("msg-assistant")).toHaveTextContent("partial answer");
+  // The amber "Generation stopped." marker shows (live), and the SR status announces it.
+  expect(screen.getByTestId("stopped-marker")).toHaveTextContent("Generation stopped.");
+  expect(screen.getByTestId("stop-status")).toHaveTextContent("Generation stopped.");
+});
+
+test("Escape stops an in-flight generation (no chip panel open)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "streamChat").mockImplementation(
+    (params, onDelta) =>
+      new Promise((_resolve, reject) => {
+        onDelta("streaming");
+        params.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      }),
+  );
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "hi" } });
+  fireEvent.click(screen.getByTestId("send"));
+  await screen.findByTestId("stop-generation");
+
+  fireEvent.keyDown(document, { key: "Escape" });
+  await waitFor(() => expect(screen.getByTestId("send")).toBeInTheDocument());
+  expect(screen.getByTestId("stopped-marker")).toBeInTheDocument();
+});
+
+// --- #441: the cross-chat copy buffer -----------------------------------------------------------
+
+test("Copy in chat A rehydrates the composer so it can be re-sent (cross-chat buffer)", async () => {
+  vi.spyOn(api, "fetchProviders").mockResolvedValue({ default: "ollama", providers: ["ollama"] });
+  vi.spyOn(api, "fetchFiles").mockResolvedValue([]);
+  vi.spyOn(api, "fetchMemories").mockResolvedValue([]);
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "fetchConversations").mockResolvedValue([CONV]);
+  // Chat A (CONV) has one persisted question with a stable id + a document resource.
+  vi.spyOn(api, "fetchConversation").mockResolvedValue({
+    id: "c1",
+    title: "Old chat",
+    messages: [
+      {
+        id: 42,
+        role: "user",
+        content: "folded",
+        displayContent: "Summarize the deck",
+        documents: [{ name: "deck.pdf", text: "slide one" }],
+      },
+      { role: "assistant", content: "done" },
+    ],
+  });
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.assign(navigator, { clipboard: { writeText } });
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+  // Open chat A and Copy its question into the (empty) composer.
+  fireEvent.click(await screen.findByText("Old chat"));
+  await screen.findByTestId("msg-user");
+  fireEvent.click(screen.getByTestId("question-copy-0"));
+
+  // The composer is rehydrated with the question text + the re-attached document chip.
+  await waitFor(() =>
+    expect((screen.getByTestId("composer") as HTMLTextAreaElement).value).toBe("Summarize the deck"),
+  );
+  expect(screen.getByTestId("document-attachments")).toHaveTextContent("deck.pdf");
+  // Secondary path: the plain text is also placed on the clipboard.
+  expect(writeText).toHaveBeenCalledWith("Summarize the deck");
 });

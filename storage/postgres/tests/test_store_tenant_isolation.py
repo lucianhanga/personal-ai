@@ -69,3 +69,45 @@ def test_conversation_store_isolates_via_tenant_db() -> None:
             await pool.close()
 
     asyncio.run(_run())
+
+
+def test_truncate_from_is_rls_scoped_and_cross_tenant_safe() -> None:
+    """#441: truncate_from runs under RLS — A's truncate confines to A's tenant, and B cannot
+    truncate A's conversation even with A's exact message id (RLS makes the rows invisible)."""
+
+    async def _run() -> None:
+        pool = await create_pool(DB_URL)
+        try:
+            await apply_migrations(pool)
+            tenants = PgTenantStore(pool)
+            tdb = TenantDb(pool)
+            a = (await tenants.create_tenant("A")).id
+            b = (await tenants.create_tenant("B")).id
+            id_a = f"a-{uuid.uuid4()}"
+
+            # A creates a conversation with two turns through a bound connection.
+            async with tdb.acquire(a) as conn:
+                store = PgConversationStore(conn)
+                await store.create(id=id_a, title="A")
+                m1 = await store.add_message(conversation_id=id_a, role="user", content="q1")
+                await store.add_message(conversation_id=id_a, role="assistant", content="a1")
+
+            # B tries to truncate A's conversation from A's message id -> RLS makes A's rows
+            # invisible, so nothing is deleted (the delete matches no row under B's role).
+            async with tdb.acquire(b) as conn:
+                deleted_by_b = await PgConversationStore(conn).truncate_from(
+                    id_a, from_message_id=m1.id
+                )
+            assert deleted_by_b == []
+
+            # A's turns are intact; A can truncate its own conversation.
+            async with tdb.acquire(a) as conn:
+                store = PgConversationStore(conn)
+                assert len(await store.list_messages(id_a)) == 2
+                deleted_by_a = await store.truncate_from(id_a, from_message_id=m1.id)
+                assert deleted_by_a == [m1.id] or m1.id in deleted_by_a
+                assert await store.list_messages(id_a) == []
+        finally:
+            await pool.close()
+
+    asyncio.run(_run())

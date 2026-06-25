@@ -108,6 +108,21 @@ class TenantCheckpointSaver(BaseCheckpointSaver[str]):
                     w_blob,
                 )
 
+    async def adelete_thread(self, thread_id: str) -> None:
+        """Delete all durable checkpoint state for ``thread_id`` (the run id), tenant-scoped (#412).
+
+        Used by ``POST /chat/{run_id}/cancel`` so a cancelled gated run is not left resumable: a
+        subsequent ``/resume`` finds no checkpoint and 404s naturally (matching the existing
+        ``aget_tuple is None -> 404`` rule). Both deletes run in ONE ``TenantDb`` unit of work, so
+        the checkpoint rows and their writes commit/roll back together; RLS (migration 0014) scopes
+        the delete to the bound tenant (belt-and-suspenders to the explicit ``thread_id``).
+        Idempotent: deleting an already-finished/already-cancelled thread is a no-op (0 rows), so a
+        double-click Stop is safe.
+        """
+        async with self._db.acquire(self._tenant) as conn:
+            await conn.execute("DELETE FROM agent_checkpoint_writes WHERE thread_id=$1", thread_id)
+            await conn.execute("DELETE FROM agent_checkpoints WHERE thread_id=$1", thread_id)
+
     async def aget_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
         cfg = config["configurable"]
         thread_id, ns = cfg["thread_id"], cfg.get("checkpoint_ns", "")
