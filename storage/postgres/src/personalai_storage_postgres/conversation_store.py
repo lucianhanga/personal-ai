@@ -128,6 +128,38 @@ class PgConversationStore:
         )
         return [_to_message(r) for r in rows]
 
+    async def truncate_from(self, conversation_id: str, *, from_message_id: int) -> Sequence[int]:
+        """Delete every message with ``id >= from_message_id`` in this conversation and bump the
+        conversation's ``updated_at``, atomically (#441).
+
+        This is the tenant-safe "truncate-from-turn" primitive behind message management: Delete is
+        truncate-only, Edit is truncate-then-resubmit. Deleting the targeted user turn cascades its
+        assistant turn(s) and their meta because they are themselves ``messages`` rows with a higher
+        ``id`` (``messages.id`` is a global monotonic ``bigint`` identity, so ``id`` ordering is the
+        natural per-conversation cursor — ``list_messages`` orders by it).
+
+        Because ``messages.id`` is GLOBAL (not per-conversation), the predicate keys on BOTH
+        ``conversation_id = $1`` AND ``id >= $2`` so a foreign/garbage id can never delete another
+        conversation's rows — it simply matches nothing (RLS additionally confines the delete to
+        the caller's tenant; a cross-tenant id matches no row under the bound role). Idempotent: a
+        re-run (double-click, or Edit's truncate firing twice) deletes 0 rows and returns ``[]``.
+
+        Returns the deleted ids (for a caller's optional cascade of conversation-scoped artifacts).
+        Both the DELETE and the ``updated_at`` bump run in one statement (CTE), mirroring
+        ``add_message``'s atomicity (audit A3/#226).
+        """
+        rows = await self._pool.fetch(
+            "WITH del AS ("
+            "  DELETE FROM messages WHERE conversation_id = $1 AND id >= $2 RETURNING id"
+            "), upd AS ("
+            "  UPDATE conversations SET updated_at = now() "
+            "  WHERE id = $1 AND EXISTS (SELECT 1 FROM del)"
+            ") SELECT id FROM del ORDER BY id",
+            conversation_id,
+            from_message_id,
+        )
+        return [r["id"] for r in rows]
+
 
 def _to_conversation(row: asyncpg.Record) -> Conversation:
     return Conversation(

@@ -121,12 +121,20 @@ export interface MessageMeta {
   // Per-question context snapshot (same shape as the live `context` SSE event), so each past
   // assistant turn can show "what was in the context window" — see the per-message disclosure.
   context?: ContextBreakdown;
+  // User-driven Stop (#412): set on an assistant turn that the user halted mid-generation. Persisted
+  // distinct from the red `error` path so the transcript frames it as an intentional stop (amber
+  // "Generation stopped." marker), not a failure. Absent on completed turns.
+  stopped?: { by: string; ts?: string };
   // Legacy (pre-ordered-trace) fields, kept for older persisted messages.
   tool_steps?: ToolStep[];
   thinking?: string;
 }
 
 export interface ChatMessage {
+  // Stable per-message id (#441): the global monotonic `messages.id` from the backend, surfaced by
+  // get_conversation. The cursor for truncate-from-turn (Edit/Delete) and the Copy buffer. Absent on
+  // the in-flight (optimistic) turn that hasn't been persisted yet — Edit/Delete are disabled there.
+  id?: number;
   role: "system" | "user" | "assistant";
   content: string;
   // Attached image parts as data-URLs (data:image/...;base64,...) for vision models (M9.1).
@@ -1000,6 +1008,26 @@ export async function deleteConversation(token: string, id: string): Promise<voi
   if (!res.ok) throw new Error(`delete conversation failed: ${res.status}`);
 }
 
+/** Truncate-from-turn (#441): delete the message with `fromMessageId` and EVERYTHING after it, in
+ * one tenant-safe transaction. Backs Delete (truncate-only) and the first step of Edit (truncate,
+ * then re-run via `streamChat`). `fromMessageId` is the stable `ChatMessage.id` from
+ * `fetchConversation`, not an array index. Returns how many messages were deleted. */
+export async function truncateConversation(
+  token: string,
+  conversationId: string,
+  fromMessageId: number,
+): Promise<{ deletedCount: number }> {
+  const res = await fetch(`${API_BASE}/api/v1/conversations/${conversationId}/truncate`, {
+    method: "POST",
+    credentials: CREDS,
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ from_message_id: fromMessageId }),
+  });
+  if (!res.ok) throw new Error(`truncate failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { deleted_count?: number } };
+  return { deletedCount: body.data?.deleted_count ?? 0 };
+}
+
 /**
  * Stream a chat completion. Calls `onDelta` for each token, `onCitations` for the RAG citations
  * event (if any), and resolves when done. Parses the SSE frames emitted by POST /api/v1/chat.
@@ -1017,6 +1045,9 @@ export async function streamChat(
     reasoning?: "off" | "brief" | "full";
     conversationId?: string;
     token: string;
+    // User-driven Stop (#412): aborting this signal closes the SSE fetch; the backend's generator
+    // unwinds and persists the partial with meta["stopped"]. Mirrors describeImage/transcribeAudio.
+    signal?: AbortSignal;
   },
   onDelta: (delta: string) => void,
   onCitations?: (citations: Citation[]) => void,
@@ -1033,6 +1064,11 @@ export async function streamChat(
   // frames before the agent loop. The item IS a TraceItem; the caller appends it into the per-turn
   // trace so it streams in first (ahead of the agent steps) and matches the persisted meta["trace"].
   onPrelude?: (item: TraceItem) => void,
+  // User-driven Stop (#412, path B): the backend emits a terminal `event: stopped` when a gated run
+  // is cancelled mid-stream, so the UI can settle the "Generation stopped." marker deterministically
+  // (vs only inferring it from a socket close). Not emitted on a pure client-disconnect (the client
+  // already knows it aborted).
+  onStopped?: () => void,
 ): Promise<void> {
   // Snake-case the sent-message display field (#426) for the backend's ChatMessageIn. `documents`/
   // `audio` are already single words; only `displayContent` -> `display_content` needs mapping.
@@ -1057,6 +1093,7 @@ export async function streamChat(
       reasoning: params.reasoning,
       conversation_id: params.conversationId,
     }),
+    signal: params.signal,
   });
   if (!res.ok || res.body === null) throw new Error(`chat request failed: ${res.status}`);
 
@@ -1092,6 +1129,7 @@ export async function streamChat(
     }
     if (event === "usage") return onUsage?.(parsed as UsageInfo);
     if (event === "approval_request") return onApproval?.(parsed as ApprovalRequest);
+    if (event === "stopped") return onStopped?.();
     if (event === "error") {
       onError?.((parsed as { error?: { message?: string } }).error?.message ?? "generation failed");
       return;
@@ -1158,6 +1196,21 @@ export async function resumeChat(
   };
 
   await pumpSSE(res.body, processFrame);
+}
+
+/** Cancel a gated/suspended run (#412, path B): authoritative stop for a run that has a `run_id`
+ * (suspended at a gate, or a gated streaming turn). Deletes the durable checkpoint so the run isn't
+ * left resumable. Idempotent server-side (a finished run 404s; safe to ignore). Fired ADDITIONALLY
+ * to aborting the SSE fetch — the abort (path A) covers non-gated turns, this cleans the checkpoint. */
+export async function cancelChat(token: string, runId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/chat/${encodeURIComponent(runId)}/cancel`, {
+    method: "POST",
+    headers: authHeaders(token),
+    credentials: CREDS,
+  });
+  // A finished/already-cancelled run 404s — that is fine (the run is already gone). Surface only
+  // unexpected failures so a caller can log them; never throw on the idempotent 404.
+  if (!res.ok && res.status !== 404) throw new Error(`cancel failed: ${res.status}`);
 }
 
 /** Read an SSE body to completion, dispatching each `\n\n`-delimited frame (incl. a trailing one). */
