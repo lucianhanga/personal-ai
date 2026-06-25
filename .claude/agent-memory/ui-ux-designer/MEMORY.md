@@ -8,3 +8,4 @@
 - [Audio attachment chips](project_audio_attachment_chips.md) — #406: drag-drop-only audio becomes chips mirroring attachedImages; hover/focus/tap panel + Copy; transcript folds into sent message as [Audio: name] blocks; Summarize dropped
 - [Resource activities in timeline](project_resource_activities.md) — #424: image/doc/audio processing = new `resource` node (teal #0d7d7d, ToolIO disclosure) in ActivityTimeline; live pre-turn cluster + persisted meta.activities at top of turn by ts
 - [RAG pipeline in timeline](project_rag_timeline.md) — #437: indexing/retrieval/ner kinds (amber-olive/indigo/fuchsia) prepended to assistant meta.trace; one RAG filter chip; new RetrievalIO citation list; ner dormant til Phase 6
+- [Attachment error UX (incl. 413)](project_attachment_error_ux.md) — upload errors surface inline on the per-file chip (existing `status:"error"`+RED), no toast; normalize-413 once in api.ts; /status lacks byte limits; error chips silently dropped on send
