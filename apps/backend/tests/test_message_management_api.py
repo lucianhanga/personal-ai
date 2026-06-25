@@ -78,10 +78,13 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+_TEST_PW = "pw"  # pragma: allowlist secret  (throwaway password for the test signup/login)
+
+
 def _signup_login(client: TestClient, email: str) -> None:
-    client.post("/api/v1/auth/signup", json={"email": email, "password": "pw"})
+    client.post("/api/v1/auth/signup", json={"email": email, "password": _TEST_PW})
     assert (
-        client.post("/api/v1/auth/login", json={"email": email, "password": "pw"}).status_code
+        client.post("/api/v1/auth/login", json={"email": email, "password": _TEST_PW}).status_code
         == 200
     )
 
