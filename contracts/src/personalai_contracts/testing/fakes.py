@@ -27,8 +27,10 @@ from personalai_contracts.ports.model_provider import (
 )
 from personalai_contracts.ports.retriever import RetrievalQuery, RetrievedItem
 from personalai_contracts.ports.storage import (
+    GLOBAL_SCOPE,
     MemoryItem,
     MemoryKind,
+    Scope,
     VectorMatch,
     VectorRecord,
 )
@@ -114,16 +116,25 @@ class InMemoryRepository[T]:
 
 
 class InMemoryVectorRepository:
-    """A vector store ranking by dot-product similarity."""
+    """A vector store ranking by dot-product similarity.
+
+    Honors the generic RAG scope (#420): records carry the scope they were upserted with, and a
+    query only matches rows of the same scope -- so the global anti-bleed filter is exercised by
+    the fakes too (a conversation-scoped row never leaks into a global query).
+    """
 
     def __init__(self) -> None:
         self._records: dict[str, VectorRecord] = {}
+        self._scopes: dict[str, Scope] = {}
 
-    async def upsert(self, records: Sequence[VectorRecord]) -> None:
+    async def upsert(self, records: Sequence[VectorRecord], *, scope: Scope = GLOBAL_SCOPE) -> None:
         for record in records:
             self._records[record.id] = record
+            self._scopes[record.id] = scope
 
-    async def query(self, vector: Sequence[float], top_k: int = 5) -> Sequence[VectorMatch]:
+    async def query(
+        self, vector: Sequence[float], top_k: int = 5, *, scope: Scope = GLOBAL_SCOPE
+    ) -> Sequence[VectorMatch]:
         scored = [
             VectorMatch(
                 id=rec.id,
@@ -131,6 +142,7 @@ class InMemoryVectorRepository:
                 metadata=rec.metadata,
             )
             for rec in self._records.values()
+            if self._scopes.get(rec.id, GLOBAL_SCOPE) == scope
         ]
         scored.sort(key=lambda m: m.score, reverse=True)
         return scored[:top_k]
@@ -138,6 +150,7 @@ class InMemoryVectorRepository:
     async def delete(self, ids: Sequence[str]) -> None:
         for vid in ids:
             self._records.pop(vid, None)
+            self._scopes.pop(vid, None)
 
 
 class InMemoryMemoryStore:

@@ -29,6 +29,35 @@ class Repository[T](Protocol):
 
 
 @dataclass(frozen=True)
+class Scope:
+    """The corpus partition a vector/document belongs to (the generic RAG scope dimension, #420).
+
+    Exactly one of ``conversation_id`` / ``project_id`` may be set; both ``None`` is the **global**
+    (tenant / Settings -> Documents) corpus. Mirrors the nullable ``conversation_id``/``project_id``
+    columns on ``vectors`` and ``documents`` (migration 0023). Scope is an *additional* app-layer
+    filter on top of tenant RLS, never a replacement for it.
+    """
+
+    conversation_id: str | None = None
+    project_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.conversation_id is not None and self.project_id is not None:
+            raise ValueError(
+                "Scope is mutually exclusive: set conversation_id or project_id, not both"
+            )
+
+    @property
+    def is_global(self) -> bool:
+        """True for the global corpus (no conversation/project scope)."""
+        return self.conversation_id is None and self.project_id is None
+
+
+# The default scope for unscoped callers: today's global corpus (conversation_id/project_id NULL).
+GLOBAL_SCOPE = Scope()
+
+
+@dataclass(frozen=True)
 class VectorRecord:
     """A stored embedding with its metadata."""
 
@@ -48,11 +77,19 @@ class VectorMatch:
 
 @runtime_checkable
 class VectorRepository(Protocol):
-    """Vector upsert / similarity-search / delete."""
+    """Vector upsert / similarity-search / delete.
 
-    async def upsert(self, records: Sequence[VectorRecord]) -> None: ...
+    ``scope`` defaults to :data:`GLOBAL_SCOPE` so existing callers keep reading/writing the global
+    corpus unchanged. A global ``query`` MUST exclude conversation/project rows (anti-bleed, #420).
+    """
 
-    async def query(self, vector: Sequence[float], top_k: int = 5) -> Sequence[VectorMatch]: ...
+    async def upsert(
+        self, records: Sequence[VectorRecord], *, scope: Scope = GLOBAL_SCOPE
+    ) -> None: ...
+
+    async def query(
+        self, vector: Sequence[float], top_k: int = 5, *, scope: Scope = GLOBAL_SCOPE
+    ) -> Sequence[VectorMatch]: ...
 
     async def delete(self, ids: Sequence[str]) -> None: ...
 
