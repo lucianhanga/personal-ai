@@ -141,3 +141,107 @@ test("user message blocks get a tinted background + left accent border to delimi
   expect(user).toHaveStyle({ background: "#eef3fb" });
   expect(user).toHaveStyle({ borderLeft: "3px solid #4a90d9" });
 });
+
+// --- #426: sent-message attachment presentation (display-vs-model split) -------------------------
+
+test("scenario 1: bubble shows the typed prompt + image/doc/audio chips, NOT the folded content", () => {
+  // The model-facing folded content carries the bracketed blocks; the bubble must show only the
+  // original typed prompt (displayContent) plus the chip strip — never the [Document:]/[Audio:] text.
+  const folded =
+    "Summarize the contract\n\n[Audio: call.m4a]\nso about the deadline\n\n[Document: contract.pdf]\nThis Agreement is made on the 1st of January.";
+  renderList([
+    {
+      role: "user",
+      content: folded,
+      displayContent: "Summarize the contract",
+      images: ["data:image/png;base64,AAAA"],
+      image_descriptions: ["a signed page"],
+      documents: [{ name: "contract.pdf", text: "This Agreement is made on the 1st of January." }],
+      audio: [{ name: "call.m4a", transcript: "so about the deadline" }],
+    },
+    { role: "assistant", content: "ok" },
+  ]);
+  const bubble = screen.getByTestId("msg-user");
+  expect(bubble).toHaveTextContent("Summarize the contract");
+  // None of the fold markers / folded payload leak into the bubble.
+  expect(bubble).not.toHaveTextContent("[Document:");
+  expect(bubble).not.toHaveTextContent("[Audio:");
+  expect(bubble).not.toHaveTextContent("This Agreement is made on the 1st of January.");
+  // All three chip rows render, in order.
+  expect(screen.getByTestId("msg-images")).toBeInTheDocument();
+  expect(screen.getByTestId("msg-documents")).toBeInTheDocument();
+  expect(screen.getByTestId("msg-audio")).toBeInTheDocument();
+});
+
+test("scenario 4: a reloaded turn renders identically from structured fields (no fold leak)", () => {
+  // What fetchConversation produces on reload: displayContent + documents + audio (no folded leak).
+  renderList([
+    {
+      role: "user",
+      content: "Summarize\n\n[Document: a.txt]\nfull text here",
+      displayContent: "Summarize",
+      documents: [{ name: "a.txt", text: "full text here" }],
+    },
+  ]);
+  const bubble = screen.getByTestId("msg-user");
+  expect(bubble).toHaveTextContent("Summarize");
+  expect(bubble).not.toHaveTextContent("[Document:");
+  expect(screen.getByTestId("msg-documents")).toHaveTextContent("a.txt");
+});
+
+test("scenario 5: a legacy folded turn (no structural meta) renders content verbatim", () => {
+  // Old turns have only folded `content` — no displayContent/documents/audio. They must render the
+  // content exactly as before (backward-compat), with no chip strip.
+  const legacy = "Old question\n\n[Document: legacy.pdf]\nsome extracted text";
+  renderList([{ role: "user", content: legacy }]);
+  const bubble = screen.getByTestId("msg-user");
+  // Verbatim: the fold markers are still shown (we do NOT retro-parse them into chips).
+  expect(bubble).toHaveTextContent("[Document: legacy.pdf]");
+  expect(screen.queryByTestId("msg-documents")).toBeNull();
+  expect(screen.queryByTestId("msg-audio")).toBeNull();
+});
+
+test("scenario 6: an attachments-only turn renders no empty bubble line, just the chip strip", () => {
+  // No typed text -> displayContent is "" -> the bubble shows the "You:" label + chips, no stray line.
+  renderList([
+    {
+      role: "user",
+      content: "[Image: a cat]",
+      displayContent: "",
+      images: ["data:image/png;base64,AAAA"],
+      image_descriptions: ["a cat"],
+    },
+  ]);
+  const bubble = screen.getByTestId("msg-user");
+  expect(bubble).toHaveTextContent("You:");
+  expect(bubble).not.toHaveTextContent("[Image:");
+  expect(screen.getByTestId("msg-images")).toBeInTheDocument();
+});
+
+test("displayContent takes precedence over content; absent displayContent falls back to content", () => {
+  renderList([
+    { role: "user", content: "FOLDED", displayContent: "typed prompt" },
+    { role: "user", content: "verbatim legacy" },
+  ]);
+  const bubbles = screen.getAllByTestId("msg-user");
+  expect(bubbles[0]).toHaveTextContent("typed prompt");
+  expect(bubbles[0]).not.toHaveTextContent("FOLDED");
+  expect(bubbles[1]).toHaveTextContent("verbatim legacy");
+});
+
+test("collapsing a structural turn hides the chip strip and shows the prompt preview", () => {
+  renderList([
+    {
+      role: "user",
+      content: "folded",
+      displayContent: "Review the deck",
+      documents: [{ name: "deck.pdf", text: "slide one" }],
+    },
+    { role: "assistant", content: "done" },
+  ]);
+  expect(screen.getByTestId("msg-documents")).toBeInTheDocument();
+  fireEvent.click(screen.getByTestId("question-toggle"));
+  // Collapsed: preview of the prompt (not content), chips gone.
+  expect(screen.getByTestId("msg-user")).toHaveTextContent("Review the deck");
+  expect(screen.queryByTestId("msg-documents")).toBeNull();
+});

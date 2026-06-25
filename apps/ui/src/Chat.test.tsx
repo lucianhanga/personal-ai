@@ -500,8 +500,13 @@ test("sending folds the audio transcript into the message content as a labeled b
   const last = sent[sent.length - 1];
   expect(last.role).toBe("user");
   expect(last.content).toBe("please review\n\n[Audio: memo.mp3]\nthe spoken words");
-  // The chip row clears after a successful send.
-  await waitFor(() => expect(screen.queryByTestId("audio-attachment")).toBeNull());
+  // Display-vs-model split (#426): the bubble gets the original prompt; the model gets the fold above.
+  expect(last.displayContent).toBe("please review");
+  // The COMPOSER chip row clears after a successful send (the sent message now renders its own
+  // read-only transcript chip with data-status="sent", so we scope to the composer's `done` chip).
+  await waitFor(() =>
+    expect(document.querySelector('[data-testid="audio-attachment"][data-status="done"]')).toBeNull(),
+  );
 });
 
 test("the old file-picker and Summarize affordances are gone (#406)", async () => {
@@ -710,8 +715,14 @@ test("dropping a small document extracts it and folds the text into the message 
   const sent = stream.mock.calls[0][0].messages;
   const last = sent[sent.length - 1];
   expect(last.content).toBe("summarize this\n\n[Document: notes.txt]\nthe quick brown fox");
-  // The chip row clears after a successful send.
-  await waitFor(() => expect(screen.queryByTestId("document-attachment")).toBeNull());
+  // Display-vs-model split (#426): the original prompt (not the folded content) is sent for the
+  // bubble; the model still receives the folded `content` asserted above.
+  expect(last.displayContent).toBe("summarize this");
+  // The COMPOSER chip row clears after a successful send (the sent message now renders its own
+  // read-only transcript chip with data-status="sent", so we scope to the composer's `small` chip).
+  await waitFor(() =>
+    expect(document.querySelector('[data-testid="document-attachment"][data-status="small"]')).toBeNull(),
+  );
 });
 
 test("a large document yields a `large` chip and is NOT folded into the message (#416)", async () => {

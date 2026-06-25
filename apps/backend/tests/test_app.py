@@ -10,7 +10,11 @@ import respx
 from fastapi.testclient import TestClient
 
 from personalai_backend import create_app
-from personalai_backend.app import _sanitize_activities
+from personalai_backend.app import (
+    _sanitize_activities,
+    _sanitize_attachments,
+    _sanitize_display_content,
+)
 from personalai_backend.composition import bootstrap
 from personalai_contracts.ports import (
     EmbeddingResult,
@@ -958,3 +962,82 @@ def test_sanitize_activities_mixed_valid_and_invalid() -> None:
     )
     refs = [i["ref"] for i in out]
     assert refs == ["good.jpg", "spec.pdf"]
+
+
+# --- #426: sent-message attachment display data — the persist boundary ---------------------------
+
+
+def test_sanitize_display_content_keeps_a_typed_prompt() -> None:
+    assert _sanitize_display_content("Summarize the contract") == "Summarize the contract"
+
+
+def test_sanitize_display_content_none_and_blank_become_none() -> None:
+    # Old turns send no display_content; attachments-only turns send an empty/whitespace prompt.
+    assert _sanitize_display_content(None) is None
+    assert _sanitize_display_content("") is None
+    assert _sanitize_display_content("   \n  ") is None
+
+
+def test_sanitize_display_content_caps_length() -> None:
+    out = _sanitize_display_content("x" * 500_000)
+    assert out is not None
+    assert len(out) == 100_000  # _DISPLAY_CONTENT_CAP
+
+
+def test_sanitize_attachments_documents_keeps_name_and_text() -> None:
+    out = _sanitize_attachments([{"name": "a.pdf", "text": "full text"}], "text")
+    assert out == [{"name": "a.pdf", "text": "full text"}]
+
+
+def test_sanitize_attachments_audio_keeps_name_and_transcript() -> None:
+    out = _sanitize_attachments([{"name": "c.m4a", "transcript": "spoken words"}], "transcript")
+    assert out == [{"name": "c.m4a", "transcript": "spoken words"}]
+
+
+def test_sanitize_attachments_non_list_is_empty() -> None:
+    assert _sanitize_attachments(None, "text") == []
+    assert _sanitize_attachments("not a list", "text") == []
+    assert _sanitize_attachments({"name": "a"}, "text") == []
+
+
+def test_sanitize_attachments_drops_unknown_keys() -> None:
+    # The security-relevant bit: only name + the text field survive; injected keys are dropped.
+    out = _sanitize_attachments(
+        [{"name": "a.pdf", "text": "t", "evil": "<script>", "id": "x"}], "text"
+    )
+    assert out == [{"name": "a.pdf", "text": "t"}]
+
+
+def test_sanitize_attachments_requires_a_name() -> None:
+    assert _sanitize_attachments([{"name": "", "text": "t"}], "text") == []
+    assert _sanitize_attachments([{"name": "   ", "text": "t"}], "text") == []
+    assert _sanitize_attachments([{"text": "t"}], "text") == []
+
+
+def test_sanitize_attachments_allows_empty_text() -> None:
+    # A document/audio with no extracted text is still a valid chip (name + empty body).
+    assert _sanitize_attachments([{"name": "a.pdf"}], "text") == [{"name": "a.pdf", "text": ""}]
+
+
+def test_sanitize_attachments_caps_name_and_text_lengths() -> None:
+    out = _sanitize_attachments([{"name": "n" * 5000, "text": "t" * 500_000}], "text")
+    assert len(out[0]["name"]) == 256  # _ATTACHMENT_NAME_CAP
+    assert len(out[0]["text"]) == 200_000  # _ATTACHMENT_TEXT_CAP
+
+
+def test_sanitize_attachments_bounds_count() -> None:
+    out = _sanitize_attachments([{"name": f"d{i}.pdf", "text": "t"} for i in range(100)], "text")
+    assert len(out) == 32  # _MAX_ATTACHMENTS_PER_TURN; overflow dropped silently, never raises
+
+
+def test_sanitize_attachments_mixed_valid_and_invalid() -> None:
+    out = _sanitize_attachments(
+        [
+            {"name": "good.pdf", "text": "a"},
+            "not a dict",
+            {"name": "", "text": "dropped"},
+            {"name": "also-good.pdf", "text": "b"},
+        ],
+        "text",
+    )
+    assert [i["name"] for i in out] == ["good.pdf", "also-good.pdf"]

@@ -349,3 +349,122 @@ export function AudioChips({
     </div>
   );
 }
+
+/** A sent audio attachment for the transcript (#426): `{ name, transcript }` reconstructed from the
+ * persisted `meta["audio"]`. Always openable (only `done` audio is ever sent). */
+export interface TranscriptAudioItem {
+  name: string;
+  transcript: string;
+}
+
+/** Read-only audio chips for a sent message in the transcript (#426): the same composer hover panel
+ * (full transcript + Copy) and sticky open/Escape/click-away behavior, but with NO remove control
+ * and no status cue — every chip is openable. Mirrors `TranscriptImages`/`TranscriptDocuments`. */
+export function TranscriptAudio({
+  audio,
+}: {
+  audio: TranscriptAudioItem[];
+}): React.ReactElement | null {
+  const [openId, setOpenId] = useState<number | null>(null);
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  // Click-away + Escape dismiss the open panel (a11y: not hover-only), matching the composer.
+  useEffect(() => {
+    if (openId === null) return;
+    function onDocMouseDown(e: MouseEvent): void {
+      if (rowRef.current && !rowRef.current.contains(e.target as Node)) setOpenId(null);
+    }
+    function onKey(e: KeyboardEvent): void {
+      if (e.key === "Escape") setOpenId(null);
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [openId]);
+
+  if (audio.length === 0) return null;
+
+  return (
+    <div
+      ref={rowRef}
+      data-testid="msg-audio"
+      style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}
+    >
+      {audio.map((item, i) => {
+        const open = openId === i;
+        // Reuse the composer's TranscriptPanel shape: a `done` audio chip with its transcript.
+        const chip: AudioAttachment = {
+          id: `ta-${i}`,
+          name: item.name,
+          status: "done",
+          transcript: item.transcript,
+        };
+        return (
+          <span
+            key={i}
+            data-testid="audio-attachment"
+            data-status="sent"
+            tabIndex={0}
+            // Open on hover/focus/click; sticky (no auto-close) so the pointer can reach Copy.
+            onMouseEnter={() => setOpenId(i)}
+            onFocus={() => setOpenId(i)}
+            onClick={() => setOpenId((cur) => (cur === i ? null : i))}
+            style={{
+              position: "relative",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.45rem",
+              maxWidth: "22em",
+              padding: "0.28rem 0.4rem 0.28rem 0.55rem",
+              border: `1px solid ${open ? ACCENT : "#ddd"}`,
+              borderRadius: 14,
+              fontSize: "0.8rem",
+              background: open ? "rgba(74,144,217,0.08)" : "rgba(127,127,127,0.05)",
+              cursor: "pointer",
+              outlineColor: ACCENT,
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{ color: GREEN, fontSize: "0.95rem", lineHeight: 1 }}
+            >
+              ♪
+            </span>
+            <span
+              style={{
+                maxWidth: "9em",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                color: "#333",
+                fontWeight: 500,
+              }}
+              title={item.name}
+            >
+              {item.name}
+            </span>
+            <span aria-hidden="true" style={{ color: "#d0d0d0" }}>
+              ·
+            </span>
+            <span
+              style={{
+                color: MUTED,
+                maxWidth: "11em",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                fontStyle: "italic",
+              }}
+            >
+              {snippet(item.transcript) || "transcript"}
+            </span>
+            {open && <TranscriptPanel chip={chip} />}
+          </span>
+        );
+      })}
+    </div>
+  );
+}

@@ -257,6 +257,138 @@ def test_legacy_turn_without_activities_round_trips_empty() -> None:
 
 
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_sent_message_display_data_round_trip() -> None:
+    # #426: the display-vs-model split. `content` stays the folded model-facing string; the original
+    # typed prompt + structured documents/audio persist on the user turn and surface top-level on
+    # reload so the transcript renders the prompt + chips. The persist boundary sanitizes them.
+    with _client() as client:
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/v1/chat",
+            headers=AUTH,
+            json={
+                "messages": [
+                    {
+                        "role": "user",
+                        # Folded model-facing content (what the model sees).
+                        "content": (
+                            "Summarize the contract\n\n[Audio: call.m4a]\nso about the deadline"
+                            "\n\n[Document: contract.pdf]\nThis Agreement is made."
+                        ),
+                        # Structured display data (what the bubble renders). An injected unknown key
+                        # must be stripped by _sanitize_attachments.
+                        "display_content": "Summarize the contract",
+                        "documents": [
+                            {"name": "contract.pdf", "text": "This Agreement is made.", "evil": "x"}
+                        ],
+                        "audio": [{"name": "call.m4a", "transcript": "so about the deadline"}],
+                    }
+                ],
+                "conversation_id": cid,
+            },
+        ) as resp:
+            "".join(resp.iter_text())
+        msgs = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        user = next(m for m in msgs if m["role"] == "user")
+        # The model-facing folded content is persisted unchanged.
+        assert "[Document: contract.pdf]" in user["content"]
+        # The bubble renders these structured fields instead of the fold.
+        assert user["display_content"] == "Summarize the contract"
+        assert user["documents"] == [{"name": "contract.pdf", "text": "This Agreement is made."}]
+        assert user["audio"] == [{"name": "call.m4a", "transcript": "so about the deadline"}]
+        # Assistant turn carries none of it (the keys live only on the user turn).
+        assistant = next(m for m in msgs if m["role"] == "assistant")
+        assert assistant["display_content"] is None
+        assert assistant["documents"] == []
+        assert assistant["audio"] == []
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_legacy_turn_without_display_data_round_trips_empty() -> None:
+    # #426: old folded turns (no display_content/documents/audio sent) reload with display_content
+    # None + empty arrays so the UI falls back to rendering `content` verbatim (backward-compat).
+    with _client() as client:
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/v1/chat",
+            headers=AUTH,
+            json={
+                "messages": [{"role": "user", "content": "old folded question"}],
+                "conversation_id": cid,
+            },
+        ) as resp:
+            "".join(resp.iter_text())
+        msgs = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        user = next(m for m in msgs if m["role"] == "user")
+        assert user["display_content"] is None
+        assert user["documents"] == []
+        assert user["audio"] == []
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_attachments_only_turn_persists_empty_display_content() -> None:
+    # #426: an attachments-only turn sends a blank display_content; the boundary normalizes it to
+    # None so no empty bubble line is reconstructed, while the documents still round-trip.
+    with _client() as client:
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/v1/chat",
+            headers=AUTH,
+            json={
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "[Document: only.pdf]\nbody",
+                        "display_content": "",  # no typed prompt
+                        "documents": [{"name": "only.pdf", "text": "body"}],
+                    }
+                ],
+                "conversation_id": cid,
+            },
+        ) as resp:
+            "".join(resp.iter_text())
+        msgs = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        user = next(m for m in msgs if m["role"] == "user")
+        assert user["display_content"] is None  # blank normalized to None
+        assert user["documents"] == [{"name": "only.pdf", "text": "body"}]
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_display_data_does_not_leak_to_a_later_attachment_less_turn() -> None:
+    # #426 (mirrors the #396 image rule): a later question without display data must NOT inherit an
+    # earlier turn's documents/audio/display_content.
+    with _client() as client:
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/v1/chat",
+            headers=AUTH,
+            json={
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "first",
+                        "display_content": "first",
+                        "documents": [{"name": "a.pdf", "text": "t"}],
+                    },
+                    {"role": "assistant", "content": "ok"},
+                    {"role": "user", "content": "second"},
+                ],
+                "conversation_id": cid,
+            },
+        ) as resp:
+            "".join(resp.iter_text())
+        msgs = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        user = next(m for m in msgs if m["role"] == "user")
+        assert user["content"] == "second"
+        assert user["display_content"] is None  # not the earlier turn's prompt
+        assert user["documents"] == []  # not the earlier turn's document
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
 def test_activities_do_not_leak_to_a_later_resource_less_turn() -> None:
     # #424 (mirrors the #396 image rule): a later question without activities must NOT inherit an
     # earlier turn's activities.

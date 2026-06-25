@@ -362,3 +362,114 @@ export function DocumentChips({
     </div>
   );
 }
+
+/** A sent document for the transcript (#426): `{ name, text }` reconstructed from the persisted
+ * `meta["documents"]`. Always openable (only `done` docs are ever sent). */
+export interface TranscriptDocument {
+  name: string;
+  text: string;
+}
+
+/** Read-only document chips for a sent message in the transcript (#426): the same composer hover
+ * panel (full extracted text + Copy) and sticky open/Escape/click-away behavior, but with NO remove
+ * control and no status cue — every chip is openable. Mirrors `TranscriptImages`/`TranscriptAudio`. */
+export function TranscriptDocuments({
+  documents,
+}: {
+  documents: TranscriptDocument[];
+}): React.ReactElement | null {
+  const [openId, setOpenId] = useState<number | null>(null);
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  // Click-away + Escape dismiss the open panel (a11y: not hover-only), matching the composer.
+  useEffect(() => {
+    if (openId === null) return;
+    function onDocMouseDown(e: MouseEvent): void {
+      if (rowRef.current && !rowRef.current.contains(e.target as Node)) setOpenId(null);
+    }
+    function onKey(e: KeyboardEvent): void {
+      if (e.key === "Escape") setOpenId(null);
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [openId]);
+
+  if (documents.length === 0) return null;
+
+  return (
+    <div
+      ref={rowRef}
+      data-testid="msg-documents"
+      style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}
+    >
+      {documents.map((doc, i) => {
+        const open = openId === i;
+        // Reuse the composer's TextPanel shape: a `done` document chip with extracted text.
+        const chip: DocumentAttachment = { id: `td-${i}`, name: doc.name, status: "small", text: doc.text };
+        return (
+          <span
+            key={i}
+            data-testid="document-attachment"
+            data-status="sent"
+            tabIndex={0}
+            // Open on hover/focus/click; sticky (no auto-close) so the pointer can reach Copy.
+            onMouseEnter={() => setOpenId(i)}
+            onFocus={() => setOpenId(i)}
+            onClick={() => setOpenId((cur) => (cur === i ? null : i))}
+            style={{
+              position: "relative",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.45rem",
+              maxWidth: "22em",
+              padding: "0.28rem 0.4rem 0.28rem 0.55rem",
+              border: `1px solid ${open ? ACCENT : "#ddd"}`,
+              borderRadius: 14,
+              fontSize: "0.8rem",
+              background: open ? "rgba(74,144,217,0.08)" : "rgba(127,127,127,0.05)",
+              cursor: "pointer",
+              outlineColor: ACCENT,
+            }}
+          >
+            <span style={{ display: "inline-flex", lineHeight: 1 }}>
+              <DocIcon color={GREEN} />
+            </span>
+            <span
+              style={{
+                maxWidth: "9em",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                color: "#333",
+                fontWeight: 500,
+              }}
+              title={doc.name}
+            >
+              {doc.name}
+            </span>
+            <span aria-hidden="true" style={{ color: "#d0d0d0" }}>
+              ·
+            </span>
+            <span
+              style={{
+                color: MUTED,
+                maxWidth: "11em",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                fontStyle: "italic",
+              }}
+            >
+              {snippet(doc.text) || "text"}
+            </span>
+            {open && <TextPanel chip={chip} />}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
