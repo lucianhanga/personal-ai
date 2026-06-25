@@ -5,3 +5,5 @@
 - [Top-bar + composer conventions](feedback_topbar_composer.md) — no token input in local mode, no glyphs (color dots instead), 4-line composer with Enter-to-send / Shift+Enter newline
 - [Usage metrics display](project_usage_metrics.md) — per-turn token+time footer in transcript vs per-chat totals in Context panel; reuse fmt/fmtMs/fill-threshold helpers from ContextMeter.tsx
 - [Panels redesign + tool I/O disclosure](project_panels_redesign.md) — 3-tab sidebar (Context/Inspector/Logs), paired tool-chip ToolIO progressive disclosure, turn-grouped transcript, context explanations; meta.context persistence gap
+- [Audio attachment chips](project_audio_attachment_chips.md) — #406: drag-drop-only audio becomes chips mirroring attachedImages; hover/focus/tap panel + Copy; transcript folds into sent message as [Audio: name] blocks; Summarize dropped
+- [Resource activities in timeline](project_resource_activities.md) — #424: image/doc/audio processing = new `resource` node (teal #0d7d7d, ToolIO disclosure) in ActivityTimeline; live pre-turn cluster + persisted meta.activities at top of turn by ts
