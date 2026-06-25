@@ -406,6 +406,18 @@ _DISPLAY_CONTENT_CAP = 100_000  # the original typed prompt; bounded so it can't
 _INGEST_TEXT_CAP = 128_000
 _MAX_INGEST_DOCS_PER_TURN = 16  # bound the number of large docs ingested in one send
 
+# RAG-pipeline "context prelude" trace items (#437): server-emitted indexing/retrieval/ner steps
+# collected during the pre-agent context-assembly phase, streamed live as trace frames and PREPENDED
+# to the assistant turn's meta["trace"] (one ordered array; live == reload). These are NOT
+# client-supplied (unlike #424 activities), so they ride the trace channel, not meta["activities"].
+# Field caps mirror the activity caps so a turn can't bloat stored history through the trace.
+_PRELUDE_TEXT_CAP = _ACTIVITY_TEXT_CAP  # 200 — a short label, not a transcript
+_PRELUDE_REF_CAP = _ACTIVITY_REF_CAP  # 256 — doc name/id
+_PRELUDE_QUERY_CAP = 512  # the standalone retrieval query, bounded for the trace's disclosure
+_PRELUDE_SOURCE_CAP = _ACTIVITY_REF_CAP  # 256 — a citation source name/id
+_PRELUDE_MAX_CITATIONS = 8  # winners-only compact list for the trace's own disclosure
+_PRELUDE_MS_MAX = _ACTIVITY_MS_MAX  # 24h in ms
+
 
 def _clamp_int(value: Any, lo: int, hi: int, default: int = 0) -> int:
     """Coerce ``value`` to an int clamped to ``[lo, hi]``; non-numeric falls back to ``default``."""
@@ -521,6 +533,92 @@ def _conversation_document_id(conversation_id: str, text: str) -> str:
     """
     digest = hashlib.sha256(f"{conversation_id}\x00{text}".encode()).hexdigest()
     return f"conv-{conversation_id}-{digest[:32]}"
+
+
+def _prelude_now() -> str:
+    """The per-step UTC wall-clock for a prelude trace item — same format as ``_TurnSse._now`` so
+    indexing/retrieval steps stamp identically to the agent steps that follow them (#437). The UI's
+    ``clockFromTs`` reads this ISO string for the per-step clock; ordering is by array position."""
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _indexing_item(ref: str, *, chunks: int, ms: int, error: str | None = None) -> dict[str, Any]:
+    """An ``indexing`` prelude item (#437): one large doc chunked+embedded into the conversation
+    scope this turn (PR4 ingest-at-send). Superset of #424's ``{kind,text,ts}`` item; the renderer
+    composes ``{ref} - {chunks} chunks`` from ``ref``+``chunks`` (``text`` is the short label). On
+    failure carries ``status:"error"`` + ``error``. Server-emitted, but field-capped like the
+    client activities so a turn can't bloat stored history through the trace."""
+    ref = str(ref).strip()[:_PRELUDE_REF_CAP]
+    chunks = _clamp_int(chunks, 0, 1_000_000, default=0)
+    item: dict[str, Any] = {
+        "kind": "indexing",
+        "text": f"Indexed {ref}"[:_PRELUDE_TEXT_CAP],
+        "ts": _prelude_now(),
+        "ref": ref,
+        "chunks": chunks,
+        "ms": _clamp_int(ms, 0, _PRELUDE_MS_MAX, default=0),
+    }
+    if error is not None:
+        item["status"] = "error"
+        item["error"] = str(error).strip()[:_PRELUDE_TEXT_CAP]
+    return item
+
+
+def _retrieval_item(
+    *,
+    query: str,
+    top_k: int,
+    hits: int,
+    scope: str,
+    citations: list[dict[str, Any]],
+    ms: int,
+) -> dict[str, Any]:
+    """A ``retrieval`` prelude item (#437): one per turn when RAG actually ran. Carries the hybrid
+    query, ``top_k``/``hits``/``scope``/``ms`` and a COMPACT winners-only ``{source,score}`` list
+    (distinct from the full ``event: citations`` frame that drives the answer's ``[n]`` markers —
+    same data, projected down + capped). A 0-hit run is emitted deliberately (honest "searched,
+    found nothing"); RAG-off / no-storage emits no item at all (the caller's early return)."""
+    hits = _clamp_int(hits, 0, 1_000_000, default=0)
+    compact: list[dict[str, Any]] = []
+    for c in citations[:_PRELUDE_MAX_CITATIONS]:
+        source = str(c.get("name") or c.get("source_id") or "").strip()[:_PRELUDE_SOURCE_CAP]
+        try:
+            score = round(float(c.get("score", 0.0)), 4)
+        except (TypeError, ValueError):
+            score = 0.0
+        compact.append({"source": source, "score": score})
+    return {
+        "kind": "retrieval",
+        "text": f"Retrieved {hits} passages"[:_PRELUDE_TEXT_CAP],
+        "ts": _prelude_now(),
+        "ms": _clamp_int(ms, 0, _PRELUDE_MS_MAX, default=0),
+        "query": str(query).strip()[:_PRELUDE_QUERY_CAP],
+        "top_k": _clamp_int(top_k, 0, 10_000, default=0),
+        "hits": hits,
+        "scope": scope if scope in ("global", "conversation", "union") else "global",
+        "citations": compact,
+    }
+
+
+def _emit_ner(prelude: list[dict[str, Any]], entities: Any = None) -> None:
+    """The dormant NER hook (#437, Phase 6). Placed in the pre-agent assembly phase where entity
+    extraction will run; returns early (emits NOTHING) until Phase 6 fills ``entities``. When wired,
+    it will append a ``{kind:"ner", text, ts, count, types:[{type,count}]}`` item — same taxonomy,
+    ordering, and persistence; zero changes here. The UI renderer already ignores absent ``ner``."""
+    if not entities:
+        return
+    # Phase 6 will project ``entities`` into the ner item here; intentionally unreachable today.
+    types = entities.get("types") if isinstance(entities, dict) else None
+    count = _clamp_int(entities.get("count") if isinstance(entities, dict) else 0, 0, 1_000_000)
+    prelude.append(
+        {
+            "kind": "ner",
+            "text": f"Extracted {count} entities"[:_PRELUDE_TEXT_CAP],
+            "ts": _prelude_now(),
+            "count": count,
+            "types": types or [],
+        }
+    )
 
 
 def _ingest_docs_from_turn(raw: Any) -> list[tuple[str, str]]:
@@ -1023,6 +1121,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         query: str | None = None,
         *,
         conversation_id: str | None = None,
+        prelude: list[dict[str, Any]] | None = None,
     ) -> tuple[list[ChatMessage], list[dict[str, object]]]:
         """Retrieve cited context for the question (empty if RAG off / no storage). ``query`` is the
         contextualized standalone query when set (option A), else the raw last user message.
@@ -1051,8 +1150,27 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             top_k=req.rag_top_k,
             union_conversation_id=conversation_id,
         )
-        docs = await retriever.ainvoke(query or last_user)
+        # PR4 makes scope = "union" when a conversation is active (global corpus OR this
+        # conversation's tier-2 attachments); a no-conversation request retrieves the global scope.
+        scope = "union" if conversation_id else "global"
+        effective_query = query or last_user
+        started = time.perf_counter()
+        docs = await retriever.ainvoke(effective_query)
+        retrieval_ms = round((time.perf_counter() - started) * 1000)
         if not docs:
+            # 0-hit is a DELIBERATE signal (#437 section 4): emit a retrieval item with hits:0 and
+            # no citations so the timeline shows "searched, found nothing" — do NOT suppress it.
+            if prelude is not None:
+                prelude.append(
+                    _retrieval_item(
+                        query=effective_query,
+                        top_k=req.rag_top_k,
+                        hits=0,
+                        scope=scope,
+                        citations=[],
+                        ms=retrieval_ms,
+                    )
+                )
             return [], []
         # Retrieved text is untrusted DATA, not instructions (prompt-injection guardrail).
         context = "\n\n".join(f"[{i + 1}] {doc.page_content}" for i, doc in enumerate(docs))
@@ -1072,10 +1190,27 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             }
             for i, doc in enumerate(docs)
         ]
+        # The retrieval trace item (#437): a compact winners-only {source,score} projection of the
+        # same citations, for the timeline's own disclosure (distinct from the full answer-bubble
+        # citations frame). Emitted only when RAG actually ran (we got here past the early returns).
+        if prelude is not None:
+            prelude.append(
+                _retrieval_item(
+                    query=effective_query,
+                    top_k=req.rag_top_k,
+                    hits=len(docs),
+                    scope=scope,
+                    citations=citations,
+                    ms=retrieval_ms,
+                )
+            )
         return [system], citations
 
     async def _ingest_turn_attachments(
-        docs: list[tuple[str, str]], *, conversation_id: str
+        docs: list[tuple[str, str]],
+        *,
+        conversation_id: str,
+        prelude: list[dict[str, Any]] | None = None,
     ) -> None:
         """Tier-2 ingest-at-send (#420 PR4): chunk+embed each large attachment into the
         conversation scope, idempotently. For each ``(name, text)``: derive a stable content-hash
@@ -1083,7 +1218,12 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         vectors), else ``ingest_text`` into ``Scope(conversation_id=...)`` and record the document.
         The full text is only chunked into ``vectors`` -- never persisted into the turn's display
         meta. Best-effort: any single doc's failure is logged and skipped; ingest never blocks or
-        fails the turn."""
+        fails the turn.
+
+        ``prelude`` (#437): when given, append one ``indexing`` trace item per doc that was actually
+        ingested this turn (with real ``chunks``+``ms``), so the Activity timeline shows the work.
+        An idempotent SKIP (already ingested) emits NOTHING — no work happened. A failure emits one
+        item with ``status:"error"`` so the timeline shows the doc was attempted, not searched."""
         storage: Storage | None = app.state.storage
         config: CoreConfig = app.state.config
         if storage is None:
@@ -1092,9 +1232,11 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         scope = Scope(conversation_id=conversation_id)
         for name, text in docs:
             document_id = _conversation_document_id(conversation_id, text)
+            started = time.perf_counter()
             try:
                 # Idempotency: a document record with this content-addressed id means the chunks are
                 # already embedded for this conversation -> skip (no duplicate vectors on re-send).
+                # No work done -> no indexing trace item (anti-noise, #437 section 4).
                 if await storage.documents.get(document_id) is not None:
                     continue
                 result = await ingest_text(
@@ -1118,8 +1260,25 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     chunk_count=result.chunk_count,
                     scope=scope,
                 )
-            except Exception:  # noqa: BLE001 - best-effort; a doc that fails to index isn't searched
+                if prelude is not None:
+                    prelude.append(
+                        _indexing_item(
+                            name,
+                            chunks=result.chunk_count,
+                            ms=round((time.perf_counter() - started) * 1000),
+                        )
+                    )
+            except Exception as exc:  # noqa: BLE001 - best-effort; a failed doc isn't searched
                 logger.warning("tier-2 ingest failed for attachment %r", name, exc_info=True)
+                if prelude is not None:
+                    prelude.append(
+                        _indexing_item(
+                            name,
+                            chunks=0,
+                            ms=round((time.perf_counter() - started) * 1000),
+                            error=str(exc),
+                        )
+                    )
 
     async def _assemble_stm(
         req: ChatRequest, provider: ModelProvider, conv: Conversation | None
@@ -1320,12 +1479,20 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             incognito = conv.incognito
             persist_id = req.conversation_id
 
+        # The RAG-pipeline "context prelude" (#437): a small ordered buffer of server-emitted
+        # indexing/retrieval/ner trace items, collected during THIS pre-agent context-assembly
+        # phase. It is replayed live as trace frames before the agent loop, and PREPENDED to the
+        # assistant turn's meta["trace"] so live and reload render the one ordered
+        # indexing -> retrieval -> (ner) -> agent array. Stays empty (and emits nothing new) for
+        # RAG-off / small-doc / legacy turns — fully additive.
+        prelude: list[dict[str, Any]] = []
+
         # Tier-2 ingest-at-send (#420 PR4): BEFORE retrieval, chunk+embed each LARGE attachment
         # whose full text the request carries (documents_full) into THIS conversation's scope,
         # idempotently (a content-hash document id; skip if already ingested). The conversation must
         # exist (the FK cascades the rows on delete), so this only runs for a persisted,
         # non-incognito conversation with RAG on. Best-effort: never blocks the turn -- a failure
-        # degrades to "doc not searched".
+        # degrades to "doc not searched". Each doc actually ingested appends an `indexing` item.
         if (
             persist_id is not None
             and storage is not None
@@ -1338,7 +1505,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 _ingest_docs_from_turn(last_user_msg_in.documents_full) if last_user_msg_in else []
             )
             if ingest_docs:
-                await _ingest_turn_attachments(ingest_docs, conversation_id=persist_id)
+                await _ingest_turn_attachments(
+                    ingest_docs, conversation_id=persist_id, prelude=prelude
+                )
 
         # Contextualize a follow-up into a standalone request (option A) and use it to anchor
         # retrieval/tools; the original question still drives the answer (it stays in the messages).
@@ -1354,8 +1523,11 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             else []
         )
         context_messages, citations = await _retrieve_context(
-            req, query=standalone, conversation_id=persist_id
+            req, query=standalone, conversation_id=persist_id, prelude=prelude
         )
+        # NER hook (#437, Phase 6): the single no-op call site in the assembly phase. Emits NOTHING
+        # today (entities is None); Phase 6 fills it without touching taxonomy/ordering/persistence.
+        _emit_ner(prelude, entities=None)
         memory_messages = await _memory_context(req, incognito, query=standalone)
         stm_messages = await _assemble_stm(req, provider, conv)
         # Reasoning amount: `reasoning` (off/brief/full) overrides `think`; "brief" also nudges the
@@ -1465,6 +1637,13 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 yield f"event: context\ndata: {json.dumps(context_breakdown)}\n\n".encode()
                 if citations:
                     yield f"event: citations\ndata: {json.dumps(citations)}\n\n".encode()
+                # Replay the RAG-pipeline prelude (#437) as trace frames BEFORE the agent loop, so
+                # the timeline streams indexing -> retrieval (-> ner) first, ahead of the agent
+                # steps. Each item rides its own `event: <kind>` frame (the UI routes it into the
+                # same per-turn trace map the agent steps use), and the SAME items are prepended to
+                # the persisted trace below — so live == reload.
+                for item in prelude:
+                    yield f"event: {item['kind']}\ndata: {json.dumps(item)}\n\n".encode()
                 elapsed_ms: int | None = None  # turn wall-clock, set when the answer completes
                 # Shared turn->SSE mapper: accumulates the answer, usage, ordered trace, and whether
                 # the run suspended at a gate (the egress gate forwards the full event set too).
@@ -1522,10 +1701,13 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 except Exception as exc:  # noqa: BLE001 - surface as a structured error event
                     # Persist what happened (partial answer + reasoning/tool trace) so reopening the
                     # chat shows it, then surface the error to the UI. Otherwise the turn vanishes.
-                    if persist_id is not None and storage is not None and (sse.answer or sse.trace):
+                    # Prepend the RAG prelude (#437) so an aborted turn still persists its
+                    # indexing/retrieval steps ahead of whatever agent trace was produced.
+                    err_trace = prelude + sse.trace
+                    if persist_id is not None and storage is not None and (sse.answer or err_trace):
                         meta_err: dict[str, Any] = {"error": str(exc)}
-                        if sse.trace:
-                            meta_err["trace"] = sse.trace
+                        if err_trace:
+                            meta_err["trace"] = err_trace
                         await storage.conversations.add_message(
                             conversation_id=persist_id,
                             role="assistant",
@@ -1543,7 +1725,10 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     return
                 answer = sse.answer
                 usage = sse.usage
-                trace = sse.trace
+                # One ordered trace array (#437): the RAG prelude (indexing -> retrieval -> ner)
+                # prepended to the agent trace, so the persisted meta["trace"] reads — and reloads —
+                # exactly like the live stream replayed it (prelude frames first, then agent steps).
+                trace = prelude + sse.trace
                 # Report token usage / context fill / elapsed time for this turn (meter + totals).
                 elapsed_ms = round((time.perf_counter() - turn_started) * 1000)
                 usage_frame = _usage_frame(usage, provider, elapsed_ms)

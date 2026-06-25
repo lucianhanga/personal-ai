@@ -1208,6 +1208,17 @@ export function Chat({
               }),
             },
           })),
+        // RAG-pipeline prelude (#437): the backend replays indexing/retrieval/ner items as trace
+        // frames BEFORE the agent loop, so appending them in arrival order lands them first in the
+        // per-turn trace — matching the persisted, prepended meta["trace"] (live === reload).
+        (item) =>
+          patchChat(key, (s) => ({
+            ...s,
+            trace: {
+              ...s.trace,
+              [assistantIndex]: appendTrace(s.trace[assistantIndex], item),
+            },
+          })),
       );
       if (persistence) setConversations(await fetchConversations(token));
     } catch (e: unknown) {

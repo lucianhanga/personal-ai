@@ -10,6 +10,7 @@ import {
 } from "./api";
 import type { ResourceActivity } from "./api";
 import { approxTokens, ContextComposition } from "./ContextComposition";
+import { IndexingIO, NerIO, type PipelineState, RetrievalIO } from "./RetrievalIO";
 import { ResourceIO, type ResourceState } from "./ResourceIO";
 import { ToolIO } from "./ToolIO";
 
@@ -24,6 +25,10 @@ const COLOR = {
   context: "#4a90d9", // accent blue
   live: "#b06f00", // amber (in-flight)
   resource: "#0d7d7d", // teal — eager resource-processing (#424); distinct from tool/context/reasoning
+  // RAG-pipeline hues (#437), each AA-verified on white and separable from the above.
+  indexing: "#8a6d00", // deep amber-olive
+  retrieval: "#1558b0", // royal indigo (deeper than context's accent so they stay distinct)
+  ner: "#a21caf", // fuchsia-plum (distinct from tool violet)
 } as const;
 // Muted text a user must READ uses #6b7280 (AA); #888/#999 stay decorative (matches the codebase).
 const READABLE = "#6b7280";
@@ -77,17 +82,22 @@ function clockFromSeconds(ts: number | undefined): string {
 }
 
 // Which filter chips exist; "all" shows everything.
-type Filter = "all" | "tools" | "reasoning" | "context" | "resources";
+type Filter = "all" | "tools" | "reasoning" | "context" | "resources" | "rag";
 const FILTERS: { id: Filter; label: string }[] = [
   { id: "all", label: "All" },
   { id: "tools", label: "Tools" },
   { id: "reasoning", label: "Reasoning" },
   { id: "context", label: "Context" },
   { id: "resources", label: "Resources" },
+  // ONE combined RAG chip (#437): indexing + retrieval + ner are one pipeline to the user, and ner
+  // is dormant — three chips would crowd the row and add a dead control.
+  { id: "rag", label: "RAG" },
 ];
 
-// A node's category, used for filtering and for the spine dot color.
-type NodeKind = "context" | "tool" | "reasoning" | "resource";
+// A node's category, used for filtering and for the spine dot color. The three RAG kinds (#437) are
+// distinct categories (distinct spine dots) but group under the single "rag" filter.
+type NodeKind = "context" | "tool" | "reasoning" | "resource" | "indexing" | "retrieval" | "ner";
+const RAG_KINDS: ReadonlySet<NodeKind> = new Set(["indexing", "retrieval", "ner"]);
 
 // A pre-turn (live) resource activity: a ResourceActivity plus its in-flight lifecycle state (#424).
 // Derived in Chat.tsx from the image/audio/doc chip state machines and threaded down to the timeline.
@@ -118,6 +128,7 @@ function visibleNodes(nodes: TurnNode[], filter: Filter): TurnNode[] {
   if (filter === "tools") return nodes.filter((n) => n.kind === "tool");
   if (filter === "reasoning") return nodes.filter((n) => n.kind === "reasoning");
   if (filter === "resources") return nodes.filter((n) => n.kind === "resource");
+  if (filter === "rag") return nodes.filter((n) => RAG_KINDS.has(n.kind)); // indexing+retrieval+ner
   return nodes.filter((n) => n.kind === "context"); // context
 }
 
@@ -150,6 +161,30 @@ function resourceNode(
           ms={activity.ms}
           error={activity.error}
         />
+      </div>
+    ),
+  };
+}
+
+// A RAG-prelude trace item's lifecycle state (#437). The backend emits one terminal item per step
+// after the work completes (a 0-hit retrieval is `done`, not error), so `error` vs `done` is the
+// whole story; `in-progress` is reserved for forward-compat (the chips support it).
+function pipelineState(item: TraceItem): PipelineState {
+  return item.status === "error" ? "error" : "done";
+}
+
+// Wrap a RAG-prelude chip (indexing/retrieval/ner) as a spine node with its per-step clock. The
+// `kind` is the node category (its own spine dot hue + the combined RAG filter); `chip` is the
+// rendered chip element. Time renders as the small UTC clock above the chip, like the other nodes.
+function pipelineNode(idx: number, k: number, kind: NodeKind, time: string, chip: React.ReactElement): TurnNode {
+  return {
+    key: `tl-${idx}-rag-${kind}-${k}`,
+    kind,
+    dot: kind === "indexing" ? COLOR.indexing : kind === "retrieval" ? COLOR.retrieval : COLOR.ner,
+    render: () => (
+      <div>
+        {time && <div style={{ color: "#999", fontSize: "0.66rem", marginBottom: 1 }}>{time}</div>}
+        {chip}
       </div>
     ),
   };
@@ -265,6 +300,62 @@ export function ActivityTimeline({
         const stepTime = clockFromSeconds(activity.ts) || time;
         nodes.push(resourceNode(idx, k, activity, activityState(activity.status), stepTime));
       });
+    // 0.5 RAG-pipeline prelude (#437): the backend prepends indexing -> retrieval -> ner ahead of
+    //     the agent trace, so these lead the trace array. Emit them here (after the resource inputs,
+    //     before the context node), in array order — they're already ordered by the prepend + ts.
+    //     The main trace walk below skips these kinds. NER renders only when a `ner` item exists
+    //     (dormant until Phase 6 — no item, no chip, no placeholder).
+    items.forEach((t, k) => {
+      if (!RAG_KINDS.has(t.kind as NodeKind)) return;
+      const stepTime = clockFromTs(t.ts) || time;
+      if (t.kind === "indexing") {
+        nodes.push(
+          pipelineNode(
+            idx,
+            k,
+            "indexing",
+            stepTime,
+            <IndexingIO
+              refName={t.ref ?? "document"}
+              chunks={t.chunks}
+              ms={t.ms}
+              state={pipelineState(t)}
+              model={t.model}
+              error={t.error}
+            />,
+          ),
+        );
+      } else if (t.kind === "retrieval") {
+        nodes.push(
+          pipelineNode(
+            idx,
+            k,
+            "retrieval",
+            stepTime,
+            <RetrievalIO
+              query={t.query}
+              topK={t.top_k}
+              hits={t.hits}
+              scope={t.scope}
+              ms={t.ms}
+              citations={t.citations}
+              state={pipelineState(t)}
+            />,
+          ),
+        );
+      } else {
+        // ner — dormant until Phase 6, but render it when an item actually exists.
+        nodes.push(
+          pipelineNode(
+            idx,
+            k,
+            "ner",
+            stepTime,
+            <NerIO count={t.count} types={t.types} state={pipelineState(t)} />,
+          ),
+        );
+      }
+    });
     // 1. Context assembled — first event in the turn's chronology.
     if (context && context.items.length > 0) {
       nodes.push({
@@ -285,6 +376,7 @@ export function ActivityTimeline({
     const consumed = new Set<number>();
     items.forEach((t, k) => {
       if (consumed.has(k)) return;
+      if (RAG_KINDS.has(t.kind as NodeKind)) return; // already emitted in the prelude loop above
       // Each step's OWN wall-clock time (backend `ts`), falling back to the turn clock when absent.
       const stepTime = clockFromTs(t.ts) || time;
       if (t.kind === "tool_call") {

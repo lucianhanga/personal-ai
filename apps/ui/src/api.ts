@@ -30,7 +30,10 @@ export interface TraceItem {
     | "critique"
     | "verification"
     | "draft"
-    | "resource"; // #424 — eager resource-processing (image/doc/audio), a strict superset of the above
+    | "resource" // #424 — eager resource-processing (image/doc/audio), a strict superset of the above
+    | "indexing" // #437 — a large doc chunked+embedded into the conversation scope (RAG prelude)
+    | "retrieval" // #437 — the hybrid query that assembled context (query/hits/scope/citations)
+    | "ner"; // #437 — entity extraction (DORMANT until Phase 6; renderer ignores an absent ner)
   text?: string;
   role?: string | null; // which agent produced it (researcher/critic/verifier) — M8
   verdict?: string | null; // verification outcome (e.g. "pass"/"fail"/"needs-revision") — M8
@@ -47,6 +50,16 @@ export interface TraceItem {
   model?: string | null; // model id; null/absent for non-model work (document parse)
   ms?: number | null; // wall-clock duration of the eager call
   status?: string | null; // "ok" (default) | "error"
+  // RAG-pipeline prelude fields (#437). All additive; absent on legacy/non-RAG turns. `indexing`
+  // reuses `ref`/`ms`/`status`/`error` above and adds `chunks`; `retrieval`/`ner` add the below.
+  chunks?: number; // indexing — how many chunks the doc was split into
+  query?: string; // retrieval — the standalone hybrid query (clipped server-side)
+  top_k?: number; // retrieval — the requested top-k
+  hits?: number; // retrieval — passages returned (0 is a deliberate "searched, found nothing")
+  scope?: "global" | "conversation" | "union"; // retrieval — which corpus was searched
+  citations?: { source: string; score: number }[]; // retrieval — compact winners-only list (<=8)
+  count?: number; // ner — entities extracted (Phase 6)
+  types?: { type: string; count: number }[]; // ner — per-type breakdown (Phase 6)
 }
 
 // The architect's closed resource-action enum (#424). Extend only by adding a member here AND in the
@@ -1011,6 +1024,10 @@ export async function streamChat(
   onContext?: (context: ContextBreakdown) => void,
   onVerification?: (step: { text: string; verdict?: string; ts?: string }) => void,
   onDraft?: (step: { text: string; attempt?: number; ts?: string }) => void,
+  // RAG-pipeline prelude steps (#437): indexing/retrieval/ner items the backend replays as trace
+  // frames before the agent loop. The item IS a TraceItem; the caller appends it into the per-turn
+  // trace so it streams in first (ahead of the agent steps) and matches the persisted meta["trace"].
+  onPrelude?: (item: TraceItem) => void,
 ): Promise<void> {
   // Snake-case the sent-message display field (#426) for the backend's ChatMessageIn. `documents`/
   // `audio` are already single words; only `displayContent` -> `display_content` needs mapping.
@@ -1051,6 +1068,10 @@ export async function streamChat(
     }
     if (event === "context") return onContext?.(parsed as ContextBreakdown);
     if (event === "citations") return onCitations?.(parsed as Citation[]);
+    if (event === "indexing" || event === "retrieval" || event === "ner") {
+      // The whole prelude item rides the frame; route it verbatim into the per-turn trace (#437).
+      return onPrelude?.(parsed as TraceItem);
+    }
     if (event === "tool") return onToolStep?.(parsed as ToolStep);
     if (event === "plan" || event === "critique") {
       const p = parsed as { text?: string; ts?: string };
