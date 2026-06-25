@@ -8,7 +8,25 @@ from typing import Any, Protocol
 
 import asyncpg
 
+from personalai_contracts.ports.storage import Scope
+
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+
+
+def scope_predicate(scope: Scope, *, next_param: int) -> tuple[str, list[Any]]:
+    """Build the scope ``WHERE`` fragment + its bound params for ``vectors``/``documents`` (#420).
+
+    Scope is an *additional* app-layer filter, orthogonal to tenant RLS. ``next_param`` is the next
+    free asyncpg placeholder index ($N); returns ``(sql_fragment, params)`` where any scope value is
+    bound (never string-interpolated). Global (NULL/NULL) needs no params -- its predicate is the
+    constant ``conversation_id IS NULL AND project_id IS NULL``, the anti-bleed guard that keeps
+    conversation/project rows out of a global query.
+    """
+    if scope.is_global:
+        return "conversation_id IS NULL AND project_id IS NULL", []
+    if scope.conversation_id is not None:
+        return f"conversation_id = ${next_param} AND project_id IS NULL", [scope.conversation_id]
+    return f"project_id = ${next_param} AND conversation_id IS NULL", [scope.project_id]
 
 
 class Querier(Protocol):

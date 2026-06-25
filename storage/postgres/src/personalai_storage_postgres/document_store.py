@@ -7,7 +7,8 @@ from datetime import datetime
 
 import asyncpg
 
-from personalai_storage_postgres.db import TENANT_ID_SQL, Querier
+from personalai_contracts.ports.storage import GLOBAL_SCOPE, Scope
+from personalai_storage_postgres.db import TENANT_ID_SQL, Querier, scope_predicate
 
 
 @dataclass(frozen=True)
@@ -29,25 +30,40 @@ class PgDocumentStore:
         self._pool = pool
 
     async def add(
-        self, *, id: str, name: str, mime: str, size_bytes: int, chunk_count: int
+        self,
+        *,
+        id: str,
+        name: str,
+        mime: str,
+        size_bytes: int,
+        chunk_count: int,
+        scope: Scope = GLOBAL_SCOPE,
     ) -> Document:
+        # Scope columns are bound params (6, 7); NULL/NULL = the global corpus.
         row = await self._pool.fetchrow(
-            f"INSERT INTO documents (id, name, mime, size_bytes, chunk_count, tenant_id) "
-            f"VALUES ($1, $2, $3, $4, $5, {TENANT_ID_SQL}) "
+            f"INSERT INTO documents "
+            f"(id, name, mime, size_bytes, chunk_count, tenant_id, conversation_id, project_id) "
+            f"VALUES ($1, $2, $3, $4, $5, {TENANT_ID_SQL}, $6, $7) "
             f"RETURNING id, name, mime, size_bytes, chunk_count, created_at",
             id,
             name,
             mime,
             size_bytes,
             chunk_count,
+            scope.conversation_id,
+            scope.project_id,
         )
         assert row is not None
         return _to_document(row)
 
-    async def list(self) -> list[Document]:
+    async def list(self, *, scope: Scope = GLOBAL_SCOPE) -> list[Document]:
+        # The global default adds `conversation_id IS NULL AND project_id IS NULL` so ephemeral /
+        # project documents never surface in the Settings -> Documents listing (anti-bleed, #420).
+        predicate, params = scope_predicate(scope, next_param=1)
         rows = await self._pool.fetch(
             "SELECT id, name, mime, size_bytes, chunk_count, created_at "
-            "FROM documents ORDER BY created_at DESC"
+            f"FROM documents WHERE {predicate} ORDER BY created_at DESC",
+            *params,
         )
         return [_to_document(r) for r in rows]
 
