@@ -29,6 +29,15 @@ from personalai_core.registries import Registries
 from personalai_core.registry import Registry, RegistryError
 from personalai_core.retrieval import VectorRetriever
 from personalai_core.runaway import RepetitionWatchdog, RunawayConfig
+from personalai_core.sources import (
+    GraphSource,
+    MemorySource,
+    MergeResult,
+    VectorSource,
+    gather_sources,
+    merge_evidence,
+    plan_sources,
+)
 from personalai_core.structured import generate_structured
 
 __version__ = "0.0.0"
@@ -58,6 +67,13 @@ __all__ = [
     "RunawayConfig",
     "ToolGateway",
     "VectorRetriever",
+    "GraphSource",
+    "MemorySource",
+    "MergeResult",
+    "VectorSource",
+    "gather_sources",
+    "merge_evidence",
+    "plan_sources",
     "__version__",
     "consolidate_fact",
     "effective_config",

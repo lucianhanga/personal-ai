@@ -246,6 +246,10 @@ class CoreConfig(StrictModel):
     # Long-term memory: extract durable facts after a turn (skipped for incognito conversations).
     memory_enabled: bool = True
     memory_top_k: int = 5
+    # Multi-source retrieval (#420): the cross-source evidence token budget the merge node fits
+    # the fused vector+memory[+...] evidence to (the first real token budget; a conservative slice
+    # of the 32k window after date/grounding/STM, with a per-source floor). 0 disables trimming.
+    evidence_budget: int = 6000
     # Inject a grounding/anti-hallucination system prompt (ground in context/tools; admit doubt).
     grounding_enabled: bool = True
     # Append-only JSONL audit sink path (survives restart); empty = in-memory only.

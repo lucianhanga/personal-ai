@@ -19,11 +19,15 @@ it must NOT live in ``personalai_core``/``personalai_contracts`` (CISO review #4
 from __future__ import annotations
 
 from personalai_backend.rag.embeddings import ProviderEmbeddings
-from personalai_backend.rag.retriever import HybridVectorStoreRetriever
+from personalai_backend.rag.retriever import (
+    HybridVectorStoreRetriever,
+    VectorItemRetriever,
+)
 from personalai_backend.rag.tracing import disable_langchain_tracing
 
 __all__ = [
     "HybridVectorStoreRetriever",
     "ProviderEmbeddings",
+    "VectorItemRetriever",
     "disable_langchain_tracing",
 ]

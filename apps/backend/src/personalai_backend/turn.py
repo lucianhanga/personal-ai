@@ -17,6 +17,7 @@ from personalai_contracts.ports import (
     ChatMessage,
     GenerationRequest,
     ModelProvider,
+    RetrievalSource,
     Role,
 )
 from personalai_core import RunawayConfig, run_agent, run_graph
@@ -51,6 +52,10 @@ class TurnEvent:
         # The streaming repetition watchdog (#414) aborted a degenerate looping generation. ``text``
         # carries a human-readable reason for the trace ("stopped: the model was repeating itself").
         "repetition_stopped",
+        # Unified multi-source citations from the merge node (#420): ``output`` carries
+        # ``{"citations": [...], "source_plan": {...}}``. The route forwards them over the existing
+        # event: citations frame (now with source_kind/merged_from).
+        "citations",
     ]
     text: str = ""
     phase: str = ""  # "call" | "result" for tool events
@@ -82,6 +87,9 @@ async def run_turn(
     thread_id: str | None = None,
     resume: Any | None = None,
     runaway: RunawayConfig | None = None,
+    sources: Sequence[RetrievalSource] = (),
+    evidence_budget: int = 6000,
+    retrieval_query: str = "",
 ) -> AsyncIterator[TurnEvent]:
     """Drive one turn, yielding ordered TurnEvents (ending with a single ``final``, or an
     ``approval_request`` when the durable human gate suspends the run).
@@ -89,6 +97,12 @@ async def run_turn(
     With ``graph_enabled`` (M8, ADR-0012) the tool path runs through the typed graph, otherwise the
     single-agent loop (``run_agent``). A ``checkpointer`` (+ ``thread_id``) enables the durable
     human gate; ``resume`` continues a previously suspended run.
+
+    Multi-source retrieval (#420): ``sources`` (with ``retrieval_query`` + ``evidence_budget``)
+    routes the graph path through the planner-SourcePlan + gather + merge nodes, so the researcher
+    grounds on fused, deduped, RRF-ranked, budget-fitted evidence and a ``citations`` event carries
+    the unified provenance. Only meaningful with ``graph_enabled``; ignored by the single-agent
+    loop.
     """
     if use_tools:
         agent_events = (
@@ -109,6 +123,9 @@ async def run_turn(
                 prompts=agent_prompts,
                 accuracy_mode=accuracy_mode,
                 runaway=runaway,
+                sources=sources,
+                evidence_budget=evidence_budget,
+                query=retrieval_query,
             )
             if graph_enabled
             else run_agent(
@@ -142,6 +159,10 @@ async def run_turn(
             elif ev.type == "draft":
                 # The researcher's draft answer -> reasoning pane, not the output bubble (#393).
                 yield TurnEvent("draft", text=ev.answer or "", attempt=ev.attempt)
+            elif ev.type == "citations":
+                # Unified multi-source citations from the merge node (#420): forwarded to the route,
+                # which streams them over the existing event: citations frame (source_kind aware).
+                yield TurnEvent("citations", output=ev.output or {})
             elif ev.type == "approval_request":
                 yield TurnEvent("approval_request", output=ev.output or {})
             elif ev.type == "repetition_stopped":

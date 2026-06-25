@@ -947,3 +947,45 @@ def test_assistant_message_persists_tool_steps_meta() -> None:
         assistant = next(m for m in msgs if m["role"] == "assistant")
         trace = assistant["meta"]["trace"]
         assert any(t["kind"] == "tool_call" and t["tool"] == "calculator" for t in trace)
+
+
+def _multisource_client() -> TestClient:
+    # agent_mode="multi" + a fake embed provider so the tools-on graph path builds the multi-source
+    # sources (#420): vector (hybrid retriever over the empty corpus) + memory + the graph stub.
+    config = CoreConfig(
+        auth_token=TOKEN,
+        model_provider="memfake",
+        embed_provider="memfake",
+        database_url=DB_URL,
+        agent_mode="multi",
+    )
+    boot = bootstrap(config=config)
+    boot.registries.model_providers.register("memfake", _MemFake(name="memfake"))
+    return TestClient(create_app(boot))
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_multisource_graph_path_streams_and_persists(monkeypatch: pytest.MonkeyPatch) -> None:
+    # #420: the tools-on, agent_mode=multi path builds the multi-source sources, runs gather/merge,
+    # and still streams + persists a turn. The empty corpus -> empty unified citations (the merge
+    # node runs but finds nothing), proving the path is wired without needing a seeded vector.
+    with _multisource_client() as client:
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        with client.stream(
+            "POST",
+            "/api/v1/chat",
+            headers=AUTH,
+            json={
+                "messages": [{"role": "user", "content": "what do you know?"}],
+                "conversation_id": cid,
+                "use_tools": True,
+                "use_rag": True,
+                "use_memory": True,
+            },
+        ) as resp:
+            assert resp.status_code == 200
+            body = "".join(resp.iter_text())
+        # The multi-source graph emitted a (possibly empty) citations frame and a final.
+        assert "event: citations" in body
+        msgs = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
+        assert any(m["role"] == "assistant" for m in msgs)

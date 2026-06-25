@@ -23,7 +23,13 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 
 from personalai_backend.rag.embeddings import ProviderEmbeddings
-from personalai_contracts.ports import VectorMatch, VectorRepository
+from personalai_contracts.ports import (
+    Citation,
+    RetrievalQuery,
+    RetrievedItem,
+    VectorMatch,
+    VectorRepository,
+)
 from personalai_contracts.ports.storage import GLOBAL_SCOPE, Scope
 
 # A retrieval query is a question, not a document -- cap before embedding (#416/#431). Kept here at
@@ -92,3 +98,38 @@ class HybridVectorStoreRetriever(BaseRetriever):
         raise NotImplementedError(
             "HybridVectorStoreRetriever is async-only; use ainvoke / _aget_relevant_documents"
         )
+
+
+def _document_to_item(doc: Document) -> RetrievedItem:
+    """Adapt a LangChain ``Document`` (carrying our citation metadata) back to a ``RetrievedItem``.
+
+    This is the ADR-0012 boundary where the LangChain engine detail is converted to our own type:
+    the multi-source ``VectorSource`` (core) wraps a :class:`VectorItemRetriever`, never a LangChain
+    object, so nothing above the seam imports ``langchain_*``."""
+    cite = doc.metadata.get("citation", {})
+    return RetrievedItem(
+        content=doc.page_content,
+        score=float(cite.get("score", 0.0)),
+        citation=Citation(source_id=str(cite.get("source_id", "")), locator=cite.get("locator")),
+        metadata={"name": cite.get("name"), "text": doc.page_content},
+    )
+
+
+class VectorItemRetriever:
+    """A thin, non-LangChain adapter: the hybrid retriever as ``retrieve -> RetrievedItem``s.
+
+    The #420 multi-source ``VectorSource`` (in ``personalai_core``) needs a
+    ``retrieve(RetrievalQuery) -> Sequence[RetrievedItem]`` (the existing ``Retriever`` shape), but
+    :class:`HybridVectorStoreRetriever` is a LangChain ``BaseRetriever`` returning ``Document``s.
+    This wraps it and adapts the output to our type at the boundary, keeping LangChain strictly
+    inside the backend (ADR-0012). Scope / RLS / union anti-bleed are unchanged — they live in the
+    wrapped LangChain retriever's ``hybrid_query`` call."""
+
+    name = "vector"
+
+    def __init__(self, inner: HybridVectorStoreRetriever) -> None:
+        self._inner = inner
+
+    async def retrieve(self, query: RetrievalQuery) -> list[RetrievedItem]:
+        docs = await self._inner.ainvoke(query.text)
+        return [_document_to_item(d) for d in docs]
