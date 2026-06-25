@@ -64,6 +64,29 @@ def test_repairs_an_invalid_payload_within_the_budget() -> None:
     assert result is not None and result.verdict == "fail"
 
 
+class _ListThenValid(FakeModelProvider):
+    """First reply is a JSON list (wrong shape, not an object) — e.g. a vision planner returning
+    `[]`; the repair attempt returns valid JSON. Regression for the RepairRequest validation crash:
+    invalid_payload must accept a non-dict so the repair loop feeds the bad output back."""
+
+    def __init__(self) -> None:
+        super().__init__(name="list")
+        self._n = 0
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        self._n += 1
+        if self._n == 1:
+            return GenerationResult(text="[]", model=request.model)
+        return GenerationResult(text='{"verdict": "fail", "reason": "wrong"}', model=request.model)
+
+
+def test_repairs_when_model_returns_a_json_list_not_an_object() -> None:
+    # A model returning a JSON list instead of an object must not crash the repair loop building a
+    # RepairRequest (invalid_payload accepts any JSON, not only a Mapping).
+    result = _run(_ListThenValid())
+    assert result is not None and result.verdict == "fail"
+
+
 class _AlwaysInvalid(FakeModelProvider):
     async def generate(self, request: GenerationRequest) -> GenerationResult:
         return GenerationResult(text="not json at all", model=request.model)
