@@ -958,8 +958,11 @@ export function Chat({
     setDocumentAttachments((cur) => cur.filter((c) => c.id !== id));
   }
 
-  // Only SMALL docs fold into the message; large ones are informational (Tier-2 RAG, #420).
+  // Only SMALL docs fold into the message; large ones are ingested at send (Tier-2 RAG, #436/#420).
   const smallDocs = documentAttachments.filter((d) => d.status === "small");
+  // LARGE docs (over the inline gate) are sent as `documents_full` for conversation-scoped RAG
+  // ingest-at-send: the backend chunks+embeds them before retrieval and answers with citations (#436).
+  const largeDocs = documentAttachments.filter((d) => d.status === "large");
   // Both small AND large docs have extracted text -> both get a transcript chip (#426); only the
   // model-facing fold differs (small folds inline, large doesn't). Errors/extracting are excluded.
   const doneDocs = documentAttachments.filter((d) => d.status === "small" || d.status === "large");
@@ -1007,6 +1010,10 @@ export function Chat({
     // arrays from THIS turn's done attachments. Documents include both small (folded) AND large
     // (not folded) — the chip lets the user read/copy either; only the fold differs.
     const documents = doneDocs.map((d) => ({ name: d.name, text: d.text }));
+    // Tier-2 ingest-at-send (#436): large docs carry their FULL text in `documents_full` so the
+    // backend ingests them into the conversation RAG index before retrieval. The `documents` chip
+    // entry above still keeps the large doc's text for the transcript display chip on reload.
+    const documentsFull = largeDocs.map((d) => ({ name: d.name, text: d.text }));
     const audio = doneAudio.map((a) => ({ name: a.name, transcript: a.transcript }));
     // Allow sending with only an image or only a transcript (no typed text). Block while a chip is
     // still transcribing/describing (the Send button is also disabled).
@@ -1043,6 +1050,7 @@ export function Chat({
       displayContent: typed,
       ...(images.length ? { images, image_descriptions: descriptions } : {}),
       ...(documents.length ? { documents } : {}),
+      ...(documentsFull.length ? { documents_full: documentsFull } : {}),
       ...(audio.length ? { audio } : {}),
       ...(turnActivities.length ? { activities: turnActivities } : {}),
     };

@@ -136,6 +136,11 @@ export interface ChatMessage {
   displayContent?: string;
   documents?: { name: string; text: string }[];
   audio?: { name: string; transcript: string }[];
+  // Tier-2 ingest-at-send (#436, RAG epic #420): the FULL extracted text of LARGE docs (over the
+  // inline gate). The backend chunks+embeds these into the conversation-scoped RAG index BEFORE
+  // retrieval and answers from them with citations. Request-only; snake_case already matches the
+  // backend field, so it passes through wireMessages unchanged. Absent when no large doc is attached.
+  documents_full?: { name: string; text: string }[];
   // Persisted per-assistant-message detail (tool calls + reasoning), shown collapsed in the UI.
   meta?: MessageMeta | null;
   // ISO timestamp set when the message was persisted (GET /conversations/{id}); absent for the

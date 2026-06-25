@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import time
@@ -35,7 +36,7 @@ from personalai_backend import __version__
 from personalai_backend.auth.context import require_context
 from personalai_backend.auth.routes import router as auth_router
 from personalai_backend.composition import Bootstrap, bootstrap
-from personalai_backend.ingestion import chunk_ids, ingest_file
+from personalai_backend.ingestion import chunk_ids, ingest_file, ingest_text
 from personalai_backend.logbuffer import LOG_BUFFER
 from personalai_backend.logbuffer import install as install_log_buffer
 from personalai_backend.mcp_manager import McpManager
@@ -54,6 +55,7 @@ from personalai_contracts.ports import (
     Role,
     ToolCall,
 )
+from personalai_contracts.ports.storage import Scope
 from personalai_contracts.schemas import (
     AgentGraphConfig,
     ErrorInfo,
@@ -157,6 +159,12 @@ class ChatMessageIn(BaseModel):
     display_content: str | None = None
     documents: list[dict[str, Any]] = []
     audio: list[dict[str, Any]] = []
+    # Full extracted text of LARGE attachments for tier-2 ingest-at-send RAG (#420 PR4). Separate
+    # from ``documents`` (the display-capped chip meta): these items are the un-truncated source the
+    # backend chunks + embeds into the conversation scope before retrieval, and are NEVER persisted
+    # to the turn's meta (only the chunks land in ``vectors``). Each item is ``{name, text}``;
+    # request-only, bounded per item at the persist/ingest boundary (~128KB, like /files/extract).
+    documents_full: list[dict[str, Any]] = []
 
 
 class ChatRequest(BaseModel):
@@ -391,6 +399,12 @@ _MAX_ATTACHMENTS_PER_TURN = 32  # bounds the chip strip; mirrors the composer's 
 _ATTACHMENT_NAME_CAP = 256  # a filename, not a path dump
 _ATTACHMENT_TEXT_CAP = 200_000  # extracted text / transcript; bounded but generous for a doc/audio
 _DISPLAY_CONTENT_CAP = 100_000  # the original typed prompt; bounded so it can't bloat the turn
+# Tier-2 ingest-at-send (#420 PR4): the per-attachment full-text cap for the chunk/embed pipeline.
+# Mirrors `/files/extract`'s 128_000 returned-text cap so the UI and ingest agree on the bound; a
+# huge doc is clamped here rather than blowing up the embed call. Distinct from _ATTACHMENT_TEXT_CAP
+# (the display chip meta) -- this text is only ever chunked into vectors, never stored in turn meta.
+_INGEST_TEXT_CAP = 128_000
+_MAX_INGEST_DOCS_PER_TURN = 16  # bound the number of large docs ingested in one send
 
 
 def _clamp_int(value: Any, lo: int, hi: int, default: int = 0) -> int:
@@ -493,6 +507,43 @@ def _sanitize_attachments(raw: Any, text_key: str) -> list[dict[str, str]]:
             continue  # a chip with no name can't be rendered -> drop
         text = str(item.get(text_key, ""))[:_ATTACHMENT_TEXT_CAP]
         out.append({"name": name, text_key: text})
+    return out
+
+
+def _conversation_document_id(conversation_id: str, text: str) -> str:
+    """A STABLE, content-addressed document id for a tier-2 attachment (#420 PR4 idempotency).
+
+    Keyed on (conversation_id, full text) so re-sending the SAME doc in the SAME conversation
+    derives the SAME id -- the ingest path then finds the existing document record and SKIPS
+    re-embedding, so no duplicate vectors accumulate on re-send. The conversation_id is part of the
+    hash so the same file attached to two conversations gets two distinct, separately-scoped indexes
+    (anti-bleed).
+    """
+    digest = hashlib.sha256(f"{conversation_id}\x00{text}".encode()).hexdigest()
+    return f"conv-{conversation_id}-{digest[:32]}"
+
+
+def _ingest_docs_from_turn(raw: Any) -> list[tuple[str, str]]:
+    """Validate the request's ``documents_full`` at the ingest boundary -> ``[(name, text), ...]``.
+
+    Like ``_sanitize_attachments`` this rebuilds each item from an allowlist (only ``name`` +
+    ``text`` survive), bounds the count (``_MAX_INGEST_DOCS_PER_TURN``) and the per-item text
+    (``_INGEST_TEXT_CAP`` ~128KB, matching /files/extract). Items with no name or empty text are
+    dropped. Never raises; the caller treats ingest as best-effort and never blocks the turn on it.
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[tuple[str, str]] = []
+    for item in raw:
+        if len(out) >= _MAX_INGEST_DOCS_PER_TURN:
+            break
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()[:_ATTACHMENT_NAME_CAP]
+        text = str(item.get("text", ""))[:_INGEST_TEXT_CAP]
+        if not name or not text.strip():
+            continue
+        out.append((name, text))
     return out
 
 
@@ -968,10 +1019,19 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         )
 
     async def _retrieve_context(
-        req: ChatRequest, query: str | None = None
+        req: ChatRequest,
+        query: str | None = None,
+        *,
+        conversation_id: str | None = None,
     ) -> tuple[list[ChatMessage], list[dict[str, object]]]:
         """Retrieve cited context for the question (empty if RAG off / no storage). ``query`` is the
-        contextualized standalone query when set (option A), else the raw last user message."""
+        contextualized standalone query when set (option A), else the raw last user message.
+
+        ``conversation_id`` (#420 PR4): when a persisted conversation is active, retrieval covers
+        the UNION of the global corpus AND that conversation's ephemeral tier-2 attachments, so an
+        attached large doc and the Settings -> Documents corpus are both searchable. Anti-bleed is
+        enforced in the storage layer: a doc ingested in conversation A never surfaces for B or for
+        a no-conversation request (which retrieves the global scope only)."""
         storage: Storage | None = app.state.storage
         config: CoreConfig = app.state.config
         last_user = next((m.content for m in reversed(req.messages) if m.role == "user"), None)
@@ -979,15 +1039,17 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             return [], []
         # Hybrid (dense + lexical RRF, k=60) retrieval through the langchain-core BaseRetriever
         # adapter (#420 PR2). Embeddings stay on our ModelProvider seam; storage/RLS/scope stay on
-        # our seam (no langchain-postgres/-ollama). Retrieval stays GLOBAL here -- conversation/
-        # project scoping is PR4 -- so the global scope default is bound (anti-bleed). The #431
-        # query-length cap is applied inside the retriever before embedding.
+        # our seam (no langchain-postgres/-ollama). With an active conversation we retrieve the
+        # global+conversation UNION (#420 PR4); otherwise global only -- both keep anti-bleed (the
+        # union can only match this conversation's rows). The #431 query-length cap is applied
+        # inside the retriever before embedding.
         retriever = HybridVectorStoreRetriever(
             vectors=storage.vectors,
             embeddings=ProviderEmbeddings(
                 _resolve_provider(config.embed_provider), config.embed_model
             ),
             top_k=req.rag_top_k,
+            union_conversation_id=conversation_id,
         )
         docs = await retriever.ainvoke(query or last_user)
         if not docs:
@@ -1011,6 +1073,53 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             for i, doc in enumerate(docs)
         ]
         return [system], citations
+
+    async def _ingest_turn_attachments(
+        docs: list[tuple[str, str]], *, conversation_id: str
+    ) -> None:
+        """Tier-2 ingest-at-send (#420 PR4): chunk+embed each large attachment into the
+        conversation scope, idempotently. For each ``(name, text)``: derive a stable content-hash
+        document id, SKIP if a document record already exists for it (re-send adds no duplicate
+        vectors), else ``ingest_text`` into ``Scope(conversation_id=...)`` and record the document.
+        The full text is only chunked into ``vectors`` -- never persisted into the turn's display
+        meta. Best-effort: any single doc's failure is logged and skipped; ingest never blocks or
+        fails the turn."""
+        storage: Storage | None = app.state.storage
+        config: CoreConfig = app.state.config
+        if storage is None:
+            return
+        embed_provider = _resolve_provider(config.embed_provider)
+        scope = Scope(conversation_id=conversation_id)
+        for name, text in docs:
+            document_id = _conversation_document_id(conversation_id, text)
+            try:
+                # Idempotency: a document record with this content-addressed id means the chunks are
+                # already embedded for this conversation -> skip (no duplicate vectors on re-send).
+                if await storage.documents.get(document_id) is not None:
+                    continue
+                result = await ingest_text(
+                    text=text,
+                    name=name,
+                    document_id=document_id,
+                    embed_model=config.embed_model,
+                    provider=embed_provider,
+                    vectors=storage.vectors,
+                    scope=scope,
+                )
+                # Record the document in the conversation scope so it is GC'd by the PR1 FK cascade
+                # (conversation delete -> documents+vectors rows gone) and so the next re-send finds
+                # it and skips. It is NOT listed by Settings -> Documents (that filters global
+                # scope).
+                await storage.documents.add(
+                    id=result.document_id,
+                    name=result.name,
+                    mime=result.mime,
+                    size_bytes=result.size_bytes,
+                    chunk_count=result.chunk_count,
+                    scope=scope,
+                )
+            except Exception:  # noqa: BLE001 - best-effort; a doc that fails to index isn't searched
+                logger.warning("tier-2 ingest failed for attachment %r", name, exc_info=True)
 
     async def _assemble_stm(
         req: ChatRequest, provider: ModelProvider, conv: Conversation | None
@@ -1211,6 +1320,26 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             incognito = conv.incognito
             persist_id = req.conversation_id
 
+        # Tier-2 ingest-at-send (#420 PR4): BEFORE retrieval, chunk+embed each LARGE attachment
+        # whose full text the request carries (documents_full) into THIS conversation's scope,
+        # idempotently (a content-hash document id; skip if already ingested). The conversation must
+        # exist (the FK cascades the rows on delete), so this only runs for a persisted,
+        # non-incognito conversation with RAG on. Best-effort: never blocks the turn -- a failure
+        # degrades to "doc not searched".
+        if (
+            persist_id is not None
+            and storage is not None
+            and req.use_rag
+            and not incognito
+            and last_user is not None
+        ):
+            last_user_msg_in = next((m for m in reversed(req.messages) if m.role == "user"), None)
+            ingest_docs = (
+                _ingest_docs_from_turn(last_user_msg_in.documents_full) if last_user_msg_in else []
+            )
+            if ingest_docs:
+                await _ingest_turn_attachments(ingest_docs, conversation_id=persist_id)
+
         # Contextualize a follow-up into a standalone request (option A) and use it to anchor
         # retrieval/tools; the original question still drives the answer (it stays in the messages).
         standalone = await _standalone_query(req, provider)
@@ -1224,7 +1353,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             if standalone and standalone != last_user
             else []
         )
-        context_messages, citations = await _retrieve_context(req, query=standalone)
+        context_messages, citations = await _retrieve_context(
+            req, query=standalone, conversation_id=persist_id
+        )
         memory_messages = await _memory_context(req, incognito, query=standalone)
         stm_messages = await _assemble_stm(req, provider, conv)
         # Reasoning amount: `reasoning` (off/brief/full) overrides `think`; "brief" also nudges the

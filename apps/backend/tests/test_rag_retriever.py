@@ -38,6 +38,7 @@ class _RecordingVectors(InMemoryVectorRepository):
         self.last_text: str | None = None
         self.last_scope: Scope | None = None
         self.last_top_k: int | None = None
+        self.last_union_conversation_id: str | None = None
 
     async def hybrid_query(
         self,
@@ -46,10 +47,12 @@ class _RecordingVectors(InMemoryVectorRepository):
         top_k: int = 5,
         *,
         scope: Scope = GLOBAL_SCOPE,
+        union_conversation_id: str | None = None,
     ) -> Sequence[VectorMatch]:
         self.last_text = text
         self.last_scope = scope
         self.last_top_k = top_k
+        self.last_union_conversation_id = union_conversation_id
         return self._matches
 
 

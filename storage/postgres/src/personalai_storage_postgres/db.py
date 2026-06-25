@@ -29,6 +29,29 @@ def scope_predicate(scope: Scope, *, next_param: int) -> tuple[str, list[Any]]:
     return f"project_id = ${next_param} AND conversation_id IS NULL", [scope.project_id]
 
 
+def union_scope_predicate(conversation_id: str, *, next_param: int) -> tuple[str, list[Any]]:
+    """Build the **union** scope ``WHERE`` fragment for "global OR this conversation" (#420 PR4).
+
+    Tier-2 retrieval must search the UNION of the global corpus AND the active conversation's
+    ephemeral attachments, so an attached large doc and the Settings -> Documents corpus are both
+    visible to one question. Returns ``(sql_fragment, [conversation_id])`` where the predicate is::
+
+        ((conversation_id IS NULL AND project_id IS NULL)
+         OR (conversation_id = $N AND project_id IS NULL))
+
+    Anti-bleed holds because the only non-global rows this can match are rows whose
+    ``conversation_id`` equals the bound value: another conversation's rows (different id) and
+    project rows (``conversation_id IS NULL`` but ``project_id`` set, excluded by the global arm's
+    ``project_id IS NULL``) never surface. The conversation id is bound, never interpolated. Tenant
+    RLS is unchanged and orthogonal (enforced on the connection).
+    """
+    return (
+        f"((conversation_id IS NULL AND project_id IS NULL) "
+        f"OR (conversation_id = ${next_param} AND project_id IS NULL))",
+        [conversation_id],
+    )
+
+
 class Querier(Protocol):
     """The query surface the stores use. Satisfied by asyncpg Pool/Connection and by a tenant-bound
     proxy (ADR-0010, P0.5/P2) so RLS-scoped access can be dropped in without changing the stores."""

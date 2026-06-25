@@ -7,8 +7,9 @@ const RED = "#b00020";
 const ACCENT = "#4a90d9";
 const MUTED = "#6b7280";
 
-// `small` = extracted text fits the inline token gate (will fold into the message); `large` = over
-// the gate (NOT folded — shown for read/copy until Tier-2 retrieval lands, #420).
+// `small` = extracted text fits the inline token gate (folds inline into the message); `large` = over
+// the gate (NOT folded — sent as `documents_full` and ingested into the conversation RAG index at
+// send for retrieval-with-citations, Tier-2 ingest-at-send #436/#420).
 export type DocumentStatus = "extracting" | "small" | "large" | "error";
 
 export interface DocumentAttachment {
@@ -215,13 +216,44 @@ function statusCue(chip: DocumentAttachment): { color: string; node: React.React
     case "small":
       return { color: MUTED, node: <span>{snippet(chip.text) || "text"}</span> };
     case "large":
-      return {
-        color: AMBER,
-        node: <span title="Inline only includes the first part; full retrieval (RAG) coming soon.">too large to inline · RAG soon</span>,
-      };
+      return { color: AMBER, node: <span>{snippet(chip.text) || "text"}</span> };
     case "error":
       return { color: RED, node: <span>{chip.error ?? "extraction failed"}</span> };
   }
+}
+
+/** A small pill clarifying how a `done` document reaches the model (#436): a `small` doc is folded
+ * inline into the message ("In message", neutral), a `large` doc is ingested into the conversation
+ * RAG index and retrieved with citations ("Searched in this chat", amber/info). No emoji. */
+function RetrievalBadge({ status }: { status: DocumentStatus }): React.ReactElement | null {
+  if (status !== "small" && status !== "large") return null;
+  const isLarge = status === "large";
+  const color = isLarge ? AMBER : MUTED;
+  const label = isLarge ? "Searched in this chat" : "In message";
+  const title = isLarge
+    ? "Indexed for retrieval — the assistant searches this document and cites it in this chat."
+    : "Folded inline — the full text is included directly in this message.";
+  return (
+    <span
+      data-testid="document-retrieval-badge"
+      data-retrieval={isLarge ? "rag" : "inline"}
+      title={title}
+      style={{
+        flexShrink: 0,
+        fontSize: "0.66rem",
+        fontWeight: 600,
+        lineHeight: 1,
+        whiteSpace: "nowrap",
+        padding: "0.18rem 0.4rem",
+        borderRadius: 8,
+        color,
+        border: `1px solid ${color}`,
+        background: isLarge ? "rgba(176,111,0,0.08)" : "rgba(107,114,128,0.08)",
+      }}
+    >
+      {label}
+    </span>
+  );
 }
 
 /** Removable document attachment chips (drag-drop text extraction, #416). Mirrors AudioChips: a
@@ -327,6 +359,7 @@ export function DocumentChips({
             >
               {cue.node}
             </span>
+            <RetrievalBadge status={chip.status} />
             <button
               data-testid={`remove-document-${chip.id}`}
               onMouseDown={(e) => e.stopPropagation()}

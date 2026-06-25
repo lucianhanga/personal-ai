@@ -67,6 +67,7 @@ class _FakeVectors(InMemoryVectorRepository):
         top_k: int = 5,
         *,
         scope: Scope = GLOBAL_SCOPE,
+        union_conversation_id: str | None = None,
     ) -> Sequence[VectorMatch]:
         return [VectorMatch(id="v1", score=0.5, metadata={"text": "t", "document_id": "d"})]
 

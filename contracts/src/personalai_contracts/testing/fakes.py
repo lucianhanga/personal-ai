@@ -127,13 +127,30 @@ class InMemoryVectorRepository:
         self._records: dict[str, VectorRecord] = {}
         self._scopes: dict[str, Scope] = {}
 
+    def _scope_matches(
+        self, record_id: str, scope: Scope, union_conversation_id: str | None
+    ) -> bool:
+        """Anti-bleed scope filter, in-memory analogue of ``db.scope_predicate`` /
+        ``union_scope_predicate`` (#420). A union retrieval matches the global corpus OR exactly
+        the given conversation; otherwise an exact single-scope match. A conversation A row never
+        matches a global query, a different conversation B, or B's union."""
+        rec_scope = self._scopes.get(record_id, GLOBAL_SCOPE)
+        if union_conversation_id is not None:
+            return rec_scope.is_global or rec_scope.conversation_id == union_conversation_id
+        return rec_scope == scope
+
     async def upsert(self, records: Sequence[VectorRecord], *, scope: Scope = GLOBAL_SCOPE) -> None:
         for record in records:
             self._records[record.id] = record
             self._scopes[record.id] = scope
 
     async def query(
-        self, vector: Sequence[float], top_k: int = 5, *, scope: Scope = GLOBAL_SCOPE
+        self,
+        vector: Sequence[float],
+        top_k: int = 5,
+        *,
+        scope: Scope = GLOBAL_SCOPE,
+        union_conversation_id: str | None = None,
     ) -> Sequence[VectorMatch]:
         scored = [
             VectorMatch(
@@ -142,7 +159,7 @@ class InMemoryVectorRepository:
                 metadata=rec.metadata,
             )
             for rec in self._records.values()
-            if self._scopes.get(rec.id, GLOBAL_SCOPE) == scope
+            if self._scope_matches(rec.id, scope, union_conversation_id)
         ]
         scored.sort(key=lambda m: m.score, reverse=True)
         return scored[:top_k]
@@ -154,13 +171,17 @@ class InMemoryVectorRepository:
         top_k: int = 5,
         *,
         scope: Scope = GLOBAL_SCOPE,
+        union_conversation_id: str | None = None,
     ) -> Sequence[VectorMatch]:
         # In-memory analogue of the Postgres dense+lexical RRF (k=60, #420): a dense arm by
         # dot-product and a lexical arm by case-insensitive token overlap on metadata["text"],
         # fused by Reciprocal Rank Fusion. Keeps the fakes a faithful VectorRepository and lets
-        # pure-Python tests exercise the fusion without a DB. Same scope/anti-bleed filter as query.
+        # pure-Python tests exercise the fusion without a DB. Same scope/anti-bleed filter as query,
+        # including the global+conversation union (#420 PR4).
         in_scope = [
-            rec for rec in self._records.values() if self._scopes.get(rec.id, GLOBAL_SCOPE) == scope
+            rec
+            for rec in self._records.values()
+            if self._scope_matches(rec.id, scope, union_conversation_id)
         ]
         dense = sorted(
             in_scope,
