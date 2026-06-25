@@ -175,7 +175,15 @@ def test_user_message_images_round_trip() -> None:
             "/api/v1/chat",
             headers=AUTH,
             json={
-                "messages": [{"role": "user", "content": "what is this?", "images": [img]}],
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "what is this?",
+                        "images": [img],
+                        # The eager vision description (#419) persists alongside the image.
+                        "image_descriptions": ["a tabby cat"],
+                    }
+                ],
                 "conversation_id": cid,
             },
         ) as resp:
@@ -183,6 +191,9 @@ def test_user_message_images_round_trip() -> None:
         msgs = client.get(f"/api/v1/conversations/{cid}", headers=AUTH).json()["data"]["messages"]
         user = next(m for m in msgs if m["role"] == "user")
         assert user["images"] == [img]
+        assert user["image_descriptions"] == [
+            "a tabby cat"
+        ]  # round-trips for the hover panel (#419)
 
 
 @pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")

@@ -442,6 +442,39 @@ export async function describeImage(
   return body.data?.description ?? "";
 }
 
+export interface ExtractedDocument {
+  name: string;
+  mime: string;
+  text: string;
+  truncated: boolean;
+}
+
+/** Extract text from an uploaded document (PDF/DOCX/txt/md) for a per-question attachment (#416).
+ * No storage/vectorization — small docs are folded into the message; large ones are gated (#420). */
+export async function extractDocument(
+  token: string,
+  file: File,
+  signal?: AbortSignal,
+): Promise<ExtractedDocument> {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  const res = await fetch(`${API_BASE}/api/v1/files/extract`, {
+    method: "POST",
+    headers: authHeaders(token),
+    credentials: CREDS,
+    body: form,
+    signal,
+  });
+  if (!res.ok) throw new Error(`extract failed: ${res.status}`);
+  const body = (await res.json()) as {
+    ok?: boolean;
+    error?: { message?: string };
+    data?: ExtractedDocument;
+  };
+  if (body.ok === false || !body.data) throw new Error(body.error?.message ?? "extract failed");
+  return body.data;
+}
+
 /** List ingested documents. */
 export async function fetchFiles(token: string): Promise<DocumentInfo[]> {
   const res = await fetch(`${API_BASE}/api/v1/files`, { headers: authHeaders(token), credentials: CREDS });

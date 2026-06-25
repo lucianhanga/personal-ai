@@ -621,6 +621,146 @@ test("removing an image chip aborts its in-flight description (#419)", async () 
   expect(abortSignal?.aborted).toBe(true);
 });
 
+// --- document attachments (Phase 1 inline-fold tier, #416/#420) ---------------------------------
+
+// Drop a document file onto the composer dropzone (drag-drop, like audio/images).
+function dropDoc(file: File): void {
+  fireEvent.drop(screen.getByTestId("composer-dropzone"), {
+    dataTransfer: { files: [file], types: ["Files"] },
+  });
+}
+
+test("dropping a small document extracts it and folds the text into the message (#416)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  vi.spyOn(api, "extractDocument").mockResolvedValue({
+    name: "notes.txt",
+    mime: "text/plain",
+    text: "the quick brown fox",
+    truncated: false,
+  });
+  const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
+    onDelta("ok");
+  });
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+
+  dropDoc(new File(["the quick brown fox"], "notes.txt", { type: "text/plain" }));
+
+  // The chip lands in the `small` state (under the inline token gate).
+  await waitFor(() =>
+    expect(screen.getByTestId("document-attachment")).toHaveAttribute("data-status", "small"),
+  );
+
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "summarize this" } });
+  fireEvent.click(screen.getByTestId("send"));
+
+  await waitFor(() => expect(stream).toHaveBeenCalled());
+  const sent = stream.mock.calls[0][0].messages;
+  const last = sent[sent.length - 1];
+  expect(last.content).toBe("summarize this\n\n[Document: notes.txt]\nthe quick brown fox");
+  // The chip row clears after a successful send.
+  await waitFor(() => expect(screen.queryByTestId("document-attachment")).toBeNull());
+});
+
+test("a large document yields a `large` chip and is NOT folded into the message (#416)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  // Over the 6000-token inline gate (~4 chars/token -> > 24000 chars).
+  const big = "lorem ipsum ".repeat(3000);
+  vi.spyOn(api, "extractDocument").mockResolvedValue({
+    name: "report.pdf",
+    mime: "application/pdf",
+    text: big,
+    truncated: false,
+  });
+  const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
+    onDelta("ok");
+  });
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+
+  dropDoc(new File(["x"], "report.pdf", { type: "application/pdf" }));
+  await waitFor(() =>
+    expect(screen.getByTestId("document-attachment")).toHaveAttribute("data-status", "large"),
+  );
+  expect(screen.getByTestId("document-attachment")).toHaveTextContent(/too large/i);
+
+  // The full text is still reachable for read/copy via the panel.
+  fireEvent.focus(screen.getByTestId("document-attachment"));
+  expect(await screen.findByTestId("document-panel")).toHaveTextContent("lorem ipsum");
+
+  // A large doc does not block sending, but its text is NOT folded into the message.
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "what is this?" } });
+  fireEvent.click(screen.getByTestId("send"));
+  await waitFor(() => expect(stream).toHaveBeenCalled());
+  const last = stream.mock.calls[0][0].messages.at(-1);
+  expect(last?.content).toBe("what is this?");
+  expect(last?.content).not.toContain("[Document:");
+});
+
+test("an unsupported / failed extraction yields an error chip (#416)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  // A recognized document extension that the backend rejects (e.g. an encrypted/corrupt PDF).
+  vi.spyOn(api, "extractDocument").mockRejectedValue(new Error("unsupported file type"));
+
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("composer-dropzone")).toBeInTheDocument());
+
+  dropDoc(new File(["x"], "broken.pdf", { type: "application/pdf" }));
+  await waitFor(() =>
+    expect(screen.getByTestId("document-attachment")).toHaveAttribute("data-status", "error"),
+  );
+  expect(screen.getByTestId("document-attachment")).toHaveTextContent(/unsupported/i);
+});
+
+test("the send button is blocked while a document is still extracting (#416)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  // Never-resolving extract so the chip stays `extracting`.
+  vi.spyOn(api, "extractDocument").mockReturnValue(new Promise(() => {}));
+
+  render(<Chat token="demo" />);
+  await waitFor(() =>
+    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
+  );
+
+  dropDoc(new File(["x"], "slow.txt", { type: "text/plain" }));
+  await waitFor(() =>
+    expect(screen.getByTestId("document-attachment")).toHaveAttribute("data-status", "extracting"),
+  );
+
+  fireEvent.change(screen.getByTestId("composer"), { target: { value: "ready?" } });
+  // Send is disabled until extraction settles, so the message cannot leave with a pending doc.
+  expect(screen.getByTestId("send")).toBeDisabled();
+});
+
+test("removing a document chip aborts its in-flight extraction (#416)", async () => {
+  mockProviders();
+  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
+  let abortSignal: AbortSignal | undefined;
+  vi.spyOn(api, "extractDocument").mockImplementation((_t, _f, signal) => {
+    abortSignal = signal;
+    return new Promise(() => {});
+  });
+  render(<Chat token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("composer-dropzone")).toBeInTheDocument());
+
+  dropDoc(new File(["x"], "slow.txt", { type: "text/plain" }));
+  await waitFor(() => expect(screen.getByTestId("document-attachment")).toBeInTheDocument());
+  const remove = screen.getByTestId("document-attachments").querySelector("button");
+  fireEvent.click(remove!);
+  expect(screen.queryByTestId("document-attachments")).toBeNull();
+  expect(abortSignal?.aborted).toBe(true);
+});
+
 test("shows a drag-and-drop hint and no Image button (#324)", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
