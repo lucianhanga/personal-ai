@@ -150,6 +150,15 @@ class PgFolderStore:
             detail,
         )
 
+    async def set_enabled(self, source_id: str, enabled: bool) -> None:
+        """Pause/resume a source (#456). `enabled` is the durable "should this be synced" flag,
+        distinct from the transient `status`; the watcher/resync honor it."""
+        await self._pool.execute(
+            "UPDATE folder_sources SET enabled = $2, updated_at = now() WHERE id = $1",
+            source_id,
+            enabled,
+        )
+
     async def begin_scan(self, source_id: str) -> int:
         """Bump the mark-and-sweep watermark, mark the source scanning, return the generation."""
         row = await self._pool.fetchrow(

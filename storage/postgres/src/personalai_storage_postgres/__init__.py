@@ -9,6 +9,7 @@ from personalai_storage_postgres.conversation_store import (
 from personalai_storage_postgres.db import apply_migrations, create_pool
 from personalai_storage_postgres.document_store import Document, PgDocumentStore
 from personalai_storage_postgres.folder_store import (
+    FileStatus,
     FolderExistsError,
     FolderFile,
     FolderSource,
@@ -33,6 +34,7 @@ __all__ = [
     "Conversation",
     "Document",
     "FolderExistsError",
+    "FileStatus",
     "FolderFile",
     "FolderSource",
     "Message",
