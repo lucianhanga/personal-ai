@@ -26,6 +26,7 @@ _ENV_FIELDS = {
     "OLLAMA_HOST": "ollama_host",
     "OLLAMA_NUM_CTX": "ollama_num_ctx",
     "OLLAMA_KEEP_ALIVE": "ollama_keep_alive",
+    "OLLAMA_TIMEOUT": "ollama_timeout",
     "OLLAMA_TEMPERATURE": "ollama_temperature",
     "OLLAMA_TOP_P": "ollama_top_p",
     "OLLAMA_TOP_K": "ollama_top_k",
@@ -112,6 +113,7 @@ _INT_FIELDS = {
     "web_search_max_results",
 }
 _FLOAT_FIELDS = {
+    "ollama_timeout",
     "ollama_temperature",
     "ollama_top_p",
     "ollama_repeat_penalty",
@@ -160,6 +162,11 @@ class CoreConfig(StrictModel):
     # How long Ollama keeps the model resident after a request ("30m", "1h", "-1" = never unload).
     # Keeps a large model warm between turns so it isn't cold-reloaded (slow on big models).
     ollama_keep_alive: str = "30m"
+    # HTTP client timeout (seconds) for the Ollama API. Generous by default: a COLD load of a large
+    # model (e.g. the 35B MoE default) can take well over 120s to return its first token on a shared
+    # GPU, which used to surface as httpx.ReadTimeout and silently drop best-effort NER. Streaming
+    # resets the read clock per chunk, so this mainly bounds time-to-first-token.
+    ollama_timeout: float = 600.0
     # Default sampling sent to Ollama when a request doesn't override it. Tuned for grounded agent
     # work on Qwen3 (its docs: temp 0.7 / top_p 0.8 / top_k 20 for non-thinking; greedy temp 0 is
     # discouraged). Lower top_p than the model's 0.95 default keeps it closer to retrieved context.

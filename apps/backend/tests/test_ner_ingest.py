@@ -115,3 +115,39 @@ def test_index_extract_dedup_idempotent_and_purge(monkeypatch: pytest.MonkeyPatc
         await pool.close()
 
     _run(run)
+
+
+def test_failed_extraction_keeps_prior_entities(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Data-safety (#464): a FAILED/timed-out extraction must NOT purge a document's existing
+    # entities (the purge used to run before extraction, so a timeout wiped the KAG). A raising
+    # extractor leaves the prior entities exactly as they were.
+    async def run() -> None:
+        pool = await create_pool(DB_URL)
+        await apply_migrations(pool)
+        tid = await _new_tenant(pool)
+        current_security.set(SecurityContext(subject_id="test", tenant_id=tid))
+        store = PgEntityStore(TenantQuerier(pool))
+        provider = FakeModelProvider()
+        doc = "doc-ner-safety"
+
+        async def _ok_extract(text: str, *, provider: Any, model: str) -> ExtractedEntities:
+            return _EXTRACTED
+
+        monkeypatch.setattr(entity_indexing, "extract_entities", _ok_extract)
+        await index_document_entities(
+            text="...", document_id=doc, store=store, provider=provider, model="m"
+        )
+        assert {e.name for e in await store.entities_for_document(doc)} == {"Alice", "Acme"}
+
+        async def _boom_extract(text: str, *, provider: Any, model: str) -> ExtractedEntities:
+            raise TimeoutError("model cold-load exceeded the client timeout")
+
+        monkeypatch.setattr(entity_indexing, "extract_entities", _boom_extract)
+        # Best-effort: this must swallow the error AND leave the prior entities intact (no purge).
+        await index_document_entities(
+            text="...", document_id=doc, store=store, provider=provider, model="m"
+        )
+        assert {e.name for e in await store.entities_for_document(doc)} == {"Alice", "Acme"}
+        await pool.close()
+
+    _run(run)
