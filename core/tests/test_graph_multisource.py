@@ -38,6 +38,12 @@ def _drain(**kwargs: object) -> list[AgentEvent]:
     return asyncio.run(_run())
 
 
+def _content(events: list[AgentEvent]) -> list[AgentEvent]:
+    """Drop the generic ``stage`` progress heartbeats (#465) -- UI chrome at every node entry, not
+    part of the pinned content sequence."""
+    return [e for e in events if e.type != "stage"]
+
+
 class _StaticSource:
     def __init__(self, name: str, kind: str, items: list[Evidence]) -> None:
         self.name = name
@@ -85,7 +91,7 @@ def test_no_sources_is_exactly_todays_pipeline() -> None:
         gateway=_gateway(),
         tools=[],
     )
-    assert [e.type for e in events] == ["plan", "draft", "critique", "answer", "final"]
+    assert [e.type for e in _content(events)] == ["plan", "draft", "critique", "answer", "final"]
 
 
 def test_multisource_emits_citations_with_source_kind() -> None:
@@ -185,7 +191,7 @@ def test_multisource_grounds_researcher_and_still_finalizes() -> None:
         sources=[_vector_source(), _memory_source()],
         query="q",
     )
-    types = [e.type for e in events]
+    types = [e.type for e in _content(events)]
     assert types[0] == "plan"
     assert types[-1] == "final"
     assert "citations" in types and "draft" in types

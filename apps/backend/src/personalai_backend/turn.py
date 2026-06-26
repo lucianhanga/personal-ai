@@ -61,6 +61,10 @@ class TurnEvent:
         # ``{"status", "query", "sources", "counts", "hits"}``. The route streams a transient
         # event: retrieval frame (NOT persisted) so the gap shows progress.
         "retrieval",
+        # Generic stage heartbeat (#465): the graph emits one at each node's entry. ``output``
+        # carries ``{"name", "label", "status": "running"}``. The route streams a transient
+        # event: stage frame (NOT persisted) so a busy/waiting node never reads as blocked.
+        "stage",
     ]
     text: str = ""
     phase: str = ""  # "call" | "result" for tool events
@@ -172,6 +176,10 @@ async def run_turn(
                 # Live retrieval progress (#462): the gather node's running/done frames in the
                 # planner->researcher gap. Forwarded to the route as a transient event: retrieval.
                 yield TurnEvent("retrieval", output=ev.output or {})
+            elif ev.type == "stage":
+                # Generic stage heartbeat (#465): node-entry "working" frame. Transient, not
+                # persisted -- the route streams it so the UI always shows progress.
+                yield TurnEvent("stage", output=ev.output or {})
             elif ev.type == "approval_request":
                 yield TurnEvent("approval_request", output=ev.output or {})
             elif ev.type == "repetition_stopped":

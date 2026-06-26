@@ -30,7 +30,6 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
-from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from personalai_contracts.ports import (
@@ -123,21 +122,14 @@ TOOL_USING_AGENTS: frozenset[str] = frozenset({"researcher"})
 # Default system prompt per agent. Exposed (not private) so the backend can echo them to the UI as
 # the editable defaults (#290), exactly like CoreConfig defaults for settings. A tenant's saved
 # override replaces the default for that agent; an empty/unset override falls back to these.
-class Plan(BaseModel):
-    """The planner's STRUCTURED output (#461). Emitting a typed list of steps (not free text) makes
-    answering the request structurally impossible -- the model cannot smuggle a prose answer into a
-    schema-constrained ``steps`` array. The researcher executes the steps and writes the answer."""
-
-    steps: list[str]
-
-
 DEFAULT_AGENT_PROMPTS: dict[str, str] = {
     "planner": (
-        "You are the planner. A researcher agent with web search and other tools will carry out "
-        "your plan, so assume live data IS reachable. Output ONLY a short list of 1-3 plan steps "
-        "(what to look up, which tools to use) for the researcher to follow. Do NOT answer the "
-        "request, state any conclusion or result, or claim a lack of tools or data access -- you "
-        "plan, the researcher answers."
+        "You are the planner for a research team. A researcher agent with web search and other "
+        "tools will carry out your plan, so assume live data IS reachable. Lay down a CLEAR, "
+        "concise plan for the researcher and the rest of the team: number the steps, say what to "
+        "look up and which tools to use, and note what a good answer must cover. Keep it tight (a "
+        "handful of steps). The researcher executes your plan and writes the final answer for the "
+        "user."
     ),
     "researcher": (
         "You are the researcher. Carry out the plan to answer the user's request, calling the "
@@ -298,6 +290,13 @@ async def _stream_text(
     return text
 
 
+def _emit_stage(writer: Callable[[AgentEvent], None], name: str, label: str) -> None:
+    """Emit a generic in-progress heartbeat for a graph node (#465). The UI shows ``label`` as a
+    live "working" indicator so a busy/waiting node never reads as frozen; it is superseded by the
+    next stage or by the node's real streamed output."""
+    writer(AgentEvent(type="stage", output={"name": name, "label": label, "status": "running"}))
+
+
 def _build_graph(
     *,
     messages: Sequence[ChatMessage],
@@ -337,40 +336,24 @@ def _build_graph(
 
     async def planner(state: GraphState) -> dict[str, Any]:
         writer = get_stream_writer()
-        # Structured plan (#461): emit a typed ``Plan`` so the model CANNOT leak a prose answer into
-        # a free-text plan. Feed only the last user request + a final recency-anchor (the strongest
-        # pull on the model), not the whole history, so it plans rather than answers. Fail-closed:
-        # if structured output is unavailable, fall back to the free-text plan (degrade, not break).
-        plan_result = await generate_structured(
-            provider=provider,
-            model=model,
-            messages=[
-                ChatMessage(Role.SYSTEM, agent_prompts["planner"]),
-                ChatMessage(Role.USER, _last_user_text(messages)),
-                ChatMessage(
-                    Role.SYSTEM,
-                    "Output ONLY the plan steps now -- no answer, no result. The researcher runs "
-                    "the plan and answers the user.",
-                ),
-            ],
-            schema=Plan,
+        _emit_stage(writer, "planner", "Planning")
+        # Stream a clear free-text plan token-by-token (#465). The planner LAYS DOWN a clear plan
+        # for the researcher and the rest of the team -- clarity matters more than hiding results,
+        # so even if a step sketches an expected finding that is fine. Streaming restores instant,
+        # per-token output and kills the dead gap the blocking structured-plan call (#461) created:
+        # nothing showed until the whole plan was generated, and it never streamed.
+        plan = await _stream_text(
+            provider,
+            model,
+            [ChatMessage(Role.SYSTEM, agent_prompts["planner"]), *messages],
+            lambda d: writer(AgentEvent(type="plan", text=d)),
         )
-        if plan_result is not None and plan_result.steps:
-            plan = "\n".join(f"{i}. {step}" for i, step in enumerate(plan_result.steps, 1))
-            writer(AgentEvent(type="plan", text=plan))
-        else:
-            plan = await _stream_text(
-                provider,
-                model,
-                [ChatMessage(Role.SYSTEM, agent_prompts["planner"]), *messages],
-                lambda d: writer(AgentEvent(type="plan", text=d)),
-            )
         out: dict[str, Any] = {"plan": plan}
         if multi_source:
-            # Widen the planner to ALSO emit a structured SourcePlan (#420): vector+memory are
-            # floored on (zero regression); the model only gates expensive/optional sources. One
-            # bounded structured call (same pattern as the verifier's Verdict) — fails closed to
-            # the floor.
+            # Source routing (#420) runs a bounded structured call with no visible output -- emit a
+            # stage so this gap reads as "selecting sources", not blocked. vector+memory are floored
+            # on (zero regression); the model only gates expensive/optional sources.
+            _emit_stage(writer, "sources", "Selecting sources")
             chosen, plan_obj = await plan_sources(
                 query=query or _last_user_text(messages),
                 sources=sources,
@@ -445,6 +428,7 @@ def _build_graph(
         # vector source). Produces the ordered, budget-fitted Evidence the researcher grounds on
         # (rendered to a serializable grounded block) and the unified citation rows
         # (source_kind/merged_from) the backend streams over event: citations.
+        _emit_stage(get_stream_writer(), "merge", "Merging context")
         gathered = state.get("gathered") or {}
         per_source = {
             name: [deserialize_evidence(raw) for raw in items] for name, items in gathered.items()
@@ -489,6 +473,7 @@ def _build_graph(
         # hit BOTH gates). When there is no checkpointer (e.g. automated runs) the gate cannot
         # suspend, so a block degrades to today's behavior inline (retry denied -> egress error).
         writer = get_stream_writer()
+        _emit_stage(writer, "researcher", "Researching")
 
         answer, usage = "", {}
         evidence: list[str] = []
@@ -647,6 +632,7 @@ def _build_graph(
             ChatMessage(Role.USER, f"Draft answer to review:\n\n{answer}"),
         ]
         writer = get_stream_writer()
+        _emit_stage(writer, "critic", "Reviewing")
         # The critique streams to the reasoning trace only — it must NOT modify the answer. The
         # finalized answer stays the agents' result; their review/discussion shows in the panel.
         critique = (
@@ -664,6 +650,7 @@ def _build_graph(
     async def verifier(state: GraphState) -> dict[str, Any]:
         # LLM-judge tier of the ladder (accurate mode only): a STRUCTURED verdict via
         # generate_structured (schema-validated, bounded, fail-closed) so routing is deterministic.
+        _emit_stage(get_stream_writer(), "verifier", "Verifying")
         answer = state.get("answer", "")
         judged = await generate_structured(
             provider=provider,
@@ -704,6 +691,7 @@ def _build_graph(
 
     async def finalize(state: GraphState) -> dict[str, Any]:
         writer = get_stream_writer()
+        _emit_stage(writer, "finalize", "Finalizing")
         answer = state.get("answer", "")
         # The OUTPUT bubble fills ONLY here (#393): emit the accepted answer as a single `answer`
         # event (reusing the existing answer->delta->bubble path) BEFORE the terminal `final`. The

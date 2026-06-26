@@ -415,6 +415,13 @@ export function ActivityTimeline({
         nodes.push(labelNode(idx, k, COLOR.critic, label, stepTime, "timeline-critique"));
         return;
       }
+      if (t.kind === "stage") {
+        // Generic stage heartbeat (#465): a transient amber "working" label (cleared when the turn
+        // settles) so the Activity pane also shows a busy/model-waiting node as in progress, not
+        // blocked.
+        nodes.push(labelNode(idx, k, COLOR.live, `${t.label ?? "Working"}…`, stepTime, "timeline-stage"));
+        return;
+      }
       if (t.kind === "verification") {
         const pass = t.verdict === "pass";
         const label = `Verify${t.verdict ? ` (${t.verdict})` : ""}`;

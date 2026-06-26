@@ -970,6 +970,22 @@ class _TurnSse:
                 "live": True,
             }
             return f"event: retrieval\ndata: {json.dumps(payload)}\n\n".encode()
+        if ev.kind == "stage":
+            # Generic stage heartbeat (#465): a node-entry "working" frame (planning / selecting
+            # sources / researching / reviewing / finalizing) so the UI always shows progress and a
+            # busy or model-waiting node never reads as blocked. Stream-only — INTENTIONALLY NOT
+            # appended to self.trace (pure progress chrome; the durable per-node steps are the
+            # plan/draft/critique/answer events themselves).
+            out = dict(ev.output or {})
+            payload = {
+                "kind": "stage",
+                "name": str(out.get("name") or ""),
+                "label": str(out.get("label") or ""),
+                "status": "running",
+                "ts": self._now(),
+                "live": True,
+            }
+            return f"event: stage\ndata: {json.dumps(payload)}\n\n".encode()
         if ev.kind == "approval_request":
             # The run is durably checkpointed; surface the (whitelisted) request with the run_id.
             self.suspended = True
@@ -2546,6 +2562,10 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                         trace.append({"kind": "repetition_stopped", "text": ev.text})
                     elif ev.kind == "retrieval":
                         # Live retrieval progress (#462) is stream-only (chat + Activity pane); this
+                        # non-streaming path has no live consumer and never persists it.
+                        pass
+                    elif ev.kind == "stage":
+                        # Generic stage heartbeat (#465) is stream-only progress chrome; this
                         # non-streaming path has no live consumer and never persists it.
                         pass
                     else:  # final

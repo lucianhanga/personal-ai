@@ -98,6 +98,19 @@ test("live retrieval progress (#462): running shows 'Retrieving…', done shows 
   expect(screen.getByTestId("details-researcher")).toHaveTextContent("Researcher");
 });
 
+test("stage heartbeat (#465): a live node-entry frame shows an amber 'Working: <label>…' row", () => {
+  render(
+    <MessageDetails
+      defaultOpen
+      trace={[
+        { kind: "plan", text: "gather then answer" },
+        { kind: "stage", live: true, name: "researcher", label: "Researching", status: "running" },
+      ]}
+    />,
+  );
+  expect(screen.getByTestId("details-stage")).toHaveTextContent("Working: Researching…");
+});
+
 test("persisted per-source retrieval item labels its source kind", () => {
   render(
     <MessageDetails

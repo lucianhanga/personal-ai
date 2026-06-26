@@ -368,8 +368,25 @@ export function appendTrace(list: TraceItem[] | undefined, item: TraceItem): Tra
       return next;
     }
   }
+  // Generic stage heartbeat (#465): one live "working" row that updates in place as the graph
+  // advances (Planning -> Selecting sources -> Researching -> Reviewing -> Finalizing), so a busy
+  // or model-waiting node never reads as blocked. A later stage REPLACES the prior one; the row is
+  // cleared by `clearLiveStage` when the turn settles (it is progress chrome, never persisted).
+  if (item.kind === "stage" && item.live) {
+    const idx = next.findIndex((t) => t.kind === "stage" && t.live);
+    if (idx >= 0) {
+      next[idx] = item;
+      return next;
+    }
+  }
   next.push(item);
   return next;
+}
+
+/** Drop the transient live `stage` heartbeat (#465) from a turn's trace once it settles, so the
+ * last node's caption ("Finalizing") does not linger after the answer arrives. */
+function clearLiveStage(trace: TraceItem[] | undefined): TraceItem[] {
+  return (trace ?? []).filter((t) => !(t.kind === "stage" && t.live));
 }
 
 export function Chat({
@@ -1408,7 +1425,14 @@ export function Chat({
     } finally {
       streamAbortRef.current.delete(key);
       runIdRef.current.delete(key);
-      patchChat(key, (s) => ({ ...s, busy: false, stopping: false }));
+      // Settle the turn and drop the transient live `stage` heartbeat (#465) so the last node's
+      // caption does not linger after the answer arrives.
+      patchChat(key, (s) => ({
+        ...s,
+        busy: false,
+        stopping: false,
+        trace: { ...s.trace, [assistantIndex]: clearLiveStage(s.trace[assistantIndex]) },
+      }));
     }
   }
 

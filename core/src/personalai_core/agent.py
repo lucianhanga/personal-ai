@@ -163,6 +163,13 @@ class AgentEvent:
         # the backend can stream a transient progress frame (chat + Activity pane) that settles to
         # the durable per-source retrieval items the merge node's citations produce.
         "retrieval",
+        # Generic stage heartbeat (#465): emitted at the entry of each graph node (planning,
+        # selecting sources, researching, reviewing, finalizing) so the UI ALWAYS shows that
+        # something is in progress -- never a frozen gap while a node is busy or waiting on the
+        # model. ``output`` carries ``{"name": "<node>", "label": "<human label>", "status":
+        # "running"}``; it is progress chrome (superseded by the next stage / real content), not
+        # persisted content.
+        "stage",
     ]
     tool: str | None = None
     args: Mapping[str, Any] | None = None

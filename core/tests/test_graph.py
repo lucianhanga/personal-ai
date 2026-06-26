@@ -56,6 +56,13 @@ def _drain(**kwargs: object) -> list[AgentEvent]:
     return asyncio.run(_run())
 
 
+def _content(events: list[AgentEvent]) -> list[AgentEvent]:
+    """Drop the generic ``stage`` progress heartbeats (#465). They are UI chrome emitted at every
+    node entry (so nothing reads as blocked) and are not part of the content event sequence these
+    tests pin."""
+    return [e for e in events if e.type != "stage"]
+
+
 def test_planner_researcher_critic_pipeline() -> None:
     # FakeModelProvider echoes the last message, so every node produces non-empty text.
     events = _drain(
@@ -67,12 +74,33 @@ def test_planner_researcher_critic_pipeline() -> None:
     )
     # The researcher's answer is a `draft` (reasoning pane), not the output `answer`; the accepted
     # answer is emitted by finalize as `answer` then `final` (#393).
-    assert [e.type for e in events] == ["plan", "draft", "critique", "answer", "final"]
-    assert events[0].text  # planner produced a plan
-    assert events[1].answer and events[1].attempt == 1  # researcher's draft, labeled attempt 1
-    assert events[2].text  # critic produced a critique
-    assert events[3].answer == events[4].answer  # finalize's output answer == the final
-    assert events[3].answer == events[1].answer  # which equals the accepted draft
+    content = _content(events)
+    assert [e.type for e in content] == ["plan", "draft", "critique", "answer", "final"]
+    assert content[0].text  # planner produced a plan
+    assert content[1].answer and content[1].attempt == 1  # researcher's draft, labeled attempt 1
+    assert content[2].text  # critic produced a critique
+    assert content[3].answer == content[4].answer  # finalize's output answer == the final
+    assert content[3].answer == content[1].answer  # which equals the accepted draft
+
+
+def test_stage_heartbeats_emitted_at_each_node() -> None:
+    # Every node emits a `stage` running heartbeat at entry (#465) so the UI never shows a frozen
+    # gap. Standard path (no sources / no verifier): planner -> researcher -> critic -> finalize.
+    events = _drain(
+        messages=[ChatMessage(Role.USER, "hi")],
+        provider=FakeModelProvider(),
+        model="m",
+        gateway=_gateway(),
+        tools=[],
+    )
+    stages = [e for e in events if e.type == "stage"]
+    assert [e.output and e.output["name"] for e in stages] == [
+        "planner",
+        "researcher",
+        "critic",
+        "finalize",
+    ]
+    assert all(e.output and e.output["status"] == "running" and e.output["label"] for e in stages)
 
 
 class _Empty(FakeModelProvider):
@@ -91,10 +119,11 @@ def test_empty_plan_skips_injection_and_streams_no_answer() -> None:
         tools=[],
     )
     # An empty planner streams nothing (no plan step); the critic falls back to "Looks sound.",
-    # and the terminal final still flows.
-    assert [e.type for e in events] == ["critique", "final"]
-    assert events[0].text == "Looks sound."
-    assert events[-1].usage == {}
+    # and the terminal final still flows. (Stage heartbeats still fire -- filtered out here.)
+    content = _content(events)
+    assert [e.type for e in content] == ["critique", "final"]
+    assert content[0].text == "Looks sound."
+    assert content[-1].usage == {}
 
 
 class _ToolThenAnswer(FakeModelProvider):
@@ -129,12 +158,13 @@ def test_researcher_tool_steps_flow_and_usage_reaches_final() -> None:
         approved=True,
         max_iterations=4,
     )
-    kinds = [e.type for e in events]
+    content = _content(events)
+    kinds = [e.type for e in content]
     # Researcher streams tool steps then a `draft` (not `answer`); finalize emits `answer`+`final`.
     assert kinds == ["plan", "tool_call", "tool_result", "draft", "critique", "answer", "final"]
-    assert events[1].tool == "echo"
-    assert events[2].ok is True
-    assert events[-1].usage == {"total_tokens": 7}  # usage from run_agent's final reaches the end
+    assert content[1].tool == "echo"
+    assert content[2].ok is True
+    assert content[-1].usage == {"total_tokens": 7}  # usage from run_agent's final reaches the end
 
 
 class _ToolThenRecord(FakeModelProvider):
@@ -370,7 +400,7 @@ def test_human_gate_suspends_then_resumes_durably() -> None:
         "thread_id": "run-1",
     }
 
-    first = _drain(**common)
+    first = _content(_drain(**common))
     # The proposed answer is a `draft` (reasoning pane); the gate suspends BEFORE finalize, so the
     # output `answer` is not emitted until after approval (#393).
     assert [e.type for e in first] == ["plan", "draft", "critique", "approval_request"]
@@ -378,6 +408,6 @@ def test_human_gate_suspends_then_resumes_durably() -> None:
     assert first[-1].output["reason"] == "approve_answer"
 
     # Resume with the human's decision -> finalize emits the output `answer` then a single `final`.
-    second = _drain(**common, resume="approve")
+    second = _content(_drain(**common, resume="approve"))
     assert [e.type for e in second] == ["answer", "final"]
     assert second[-1].answer

@@ -194,6 +194,23 @@ test("falls back to live trace from the trace map when meta.trace is absent", ()
   expect(plan).not.toHaveTextContent("do the thing");
 });
 
+test("stage heartbeat (#465): a live node-entry frame renders an amber 'working' label node", () => {
+  const messages: ChatMessage[] = [
+    { role: "user", content: "q" },
+    { role: "assistant", content: "a", created_at: "2020-01-01T00:00:00Z" },
+  ];
+  render(
+    <ActivityTimeline
+      messages={messages}
+      trace={{ 1: [{ kind: "stage", live: true, name: "researcher", label: "Researching" }] }}
+      contexts={{}}
+      liveUsage={null}
+      busy={true}
+    />,
+  );
+  expect(screen.getByTestId("timeline-stage")).toHaveTextContent("Researching");
+});
+
 test("egress-blocked tool keeps the Allow affordance via ToolIO", () => {
   const onAllowHost = vi.fn();
   const messages: ChatMessage[] = [

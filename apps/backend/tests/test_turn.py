@@ -82,6 +82,21 @@ def test_multi_agent_draft_to_trace_output_answer_from_finalize() -> None:
     assert answer and answer == drafts[-1].text  # output answer == the accepted draft
 
 
+def test_multi_agent_emits_stage_heartbeats() -> None:
+    # #465: every graph node emits a `stage` running heartbeat at entry so the route can stream a
+    # transient progress frame -- a busy/model-waiting node never reads as blocked. Standard path:
+    # planner -> researcher -> critic -> finalize.
+    events = _multi_events()
+    stages = [e for e in events if e.kind == "stage"]
+    assert [e.output and e.output["name"] for e in stages] == [
+        "planner",
+        "researcher",
+        "critic",
+        "finalize",
+    ]
+    assert all(e.output and e.output["status"] == "running" and e.output["label"] for e in stages)
+
+
 class _RecordingProvider(FakeModelProvider):
     """Captures the system prompts of the first model call so we can assert what was injected."""
 

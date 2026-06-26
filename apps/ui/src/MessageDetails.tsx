@@ -341,6 +341,20 @@ export function MessageDetails({
                 </div>
               );
             }
+            if (t.kind === "stage") {
+              // Generic stage heartbeat (#465): a transient amber "working" row (Planning… /
+              // Selecting sources… / Researching… / Reviewing… / Finalizing…) so a busy or
+              // model-waiting node never reads as blocked. Cleared when the turn settles.
+              return (
+                <div
+                  key={k}
+                  data-testid="details-stage"
+                  style={rowStyle("stage", { color: TRACE.warn })}
+                >
+                  <Tag color={TRACE.warn}>Working</Tag>: {t.label ?? "In progress"}…
+                </div>
+              );
+            }
             if (t.kind === "retrieval") {
               // Live retrieval progress (#462): the gather node's running -> done frame during the
               // planner->researcher gap, shown here so the chat transcript (not just the Activity

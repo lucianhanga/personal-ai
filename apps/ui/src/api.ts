@@ -33,7 +33,8 @@ export interface TraceItem {
     | "resource" // #424 — eager resource-processing (image/doc/audio), a strict superset of the above
     | "indexing" // #437 — a large doc chunked+embedded into the conversation scope (RAG prelude)
     | "retrieval" // #437 — the hybrid query that assembled context (query/hits/scope/citations)
-    | "ner"; // #437 — entity extraction (DORMANT until Phase 6; renderer ignores an absent ner)
+    | "ner" // #437 — entity extraction (DORMANT until Phase 6; renderer ignores an absent ner)
+    | "stage"; // #465 — a transient node-entry "working" heartbeat (planning/researching/...), live
   text?: string;
   role?: string | null; // which agent produced it (researcher/critic/verifier) — M8
   verdict?: string | null; // verification outcome (e.g. "pass"/"fail"/"needs-revision") — M8
@@ -68,7 +69,12 @@ export interface TraceItem {
   sources?: string[]; // retrieval (live) — the source kinds being queried, in plan order
   counts?: Record<string, number>; // retrieval (live, done) — hits per source kind
   source_kind?: string; // retrieval (persisted, per-source) — which source kind this item is for
-  live?: boolean; // retrieval — true for the transient running/done progress frame
+  live?: boolean; // retrieval/stage — true for a transient progress frame (superseded, not persisted)
+  // Generic stage heartbeat (#465; kind === "stage"). Emitted at each graph node's entry so the UI
+  // always shows progress and a busy/model-waiting node never reads as blocked. `name` is the node
+  // ("planner"/"researcher"/...); `label` is the human caption ("Planning"/"Researching"/...).
+  name?: string; // stage — the graph node id
+  label?: string; // stage — the human-readable caption shown in the live indicator
 }
 
 // The architect's closed resource-action enum (#424). Extend only by adding a member here AND in the
@@ -1167,8 +1173,10 @@ export async function streamChat(
     }
     if (event === "context") return onContext?.(parsed as ContextBreakdown);
     if (event === "citations") return onCitations?.(parsed as Citation[]);
-    if (event === "indexing" || event === "retrieval" || event === "ner") {
+    if (event === "indexing" || event === "retrieval" || event === "ner" || event === "stage") {
       // The whole prelude item rides the frame; route it verbatim into the per-turn trace (#437).
+      // `stage` (#465) is a transient live heartbeat handled by the same trace path (replaced in
+      // place by appendTrace, cleared when the turn settles).
       return onPrelude?.(parsed as TraceItem);
     }
     if (event === "tool") return onToolStep?.(parsed as ToolStep);
