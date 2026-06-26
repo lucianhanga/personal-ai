@@ -161,7 +161,10 @@ class FolderSyncManager:
 
         async def _index(text: str, document_id: str) -> None:
             await index_document_entities(
-                text, document_id, store=entities, provider=chat_provider,
+                text,
+                document_id,
+                store=entities,
+                provider=chat_provider,
                 model=self._config.default_model,
             )
 

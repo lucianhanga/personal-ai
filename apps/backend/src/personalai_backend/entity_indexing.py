@@ -49,9 +49,7 @@ async def index_document_entities(
         ids_by_norm: dict[str, str] = {}  # normalized name -> entity id (to resolve relations)
         for (etype, norm), (display, count) in grouped.items():
             entity_id = await store.upsert_entity(type=etype, name=display, occurrences=count)
-            await store.add_mention(
-                entity_id=entity_id, document_id=document_id, occurrences=count
-            )
+            await store.add_mention(entity_id=entity_id, document_id=document_id, occurrences=count)
             ids_by_norm[norm] = entity_id
 
         for rel in extracted.relations:

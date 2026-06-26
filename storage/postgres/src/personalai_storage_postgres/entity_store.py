@@ -52,9 +52,7 @@ class PgEntityStore:
         assert row is not None
         return str(row["id"])
 
-    async def add_mention(
-        self, *, entity_id: str, document_id: str, occurrences: int = 1
-    ) -> None:
+    async def add_mention(self, *, entity_id: str, document_id: str, occurrences: int = 1) -> None:
         """Link an entity to a document (the M:N mention)."""
         await self._pool.execute(
             "INSERT INTO entity_documents (tenant_id, entity_id, document_id, occurrences) "

@@ -34,9 +34,7 @@ class _ConstantNer(FakeModelProvider):
     """Returns the SAME entity every call -> windows merge to a single entity."""
 
     async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
-        payload = json.dumps(
-            {"entities": [{"type": "org", "name": "M-Net"}], "relations": []}
-        )
+        payload = json.dumps({"entities": [{"type": "org", "name": "M-Net"}], "relations": []})
         yield GenerationChunk(delta=payload)
         yield GenerationChunk(done=True, finish_reason="stop")
 
@@ -52,9 +50,7 @@ def test_whole_document_covered_via_windows() -> None:
     # Longer than one window -> multiple overlapping passes, each contributing a distinct entity.
     text = "x" * 9000
     prov = _PerWindowNer()
-    res = asyncio.run(
-        extract_entities(text, provider=prov, model="m", window=4000, overlap=250)
-    )
+    res = asyncio.run(extract_entities(text, provider=prov, model="m", window=4000, overlap=250))
     assert prov.calls >= 2
     assert len(res.entities) == prov.calls  # every window's entity is kept
 
