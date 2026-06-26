@@ -66,10 +66,16 @@ class PgDocumentStore:
         assert row is not None
         return _to_document(row)
 
-    async def list(self, *, scope: Scope = GLOBAL_SCOPE) -> list[Document]:
+    async def list(
+        self, *, scope: Scope = GLOBAL_SCOPE, manual_only: bool = False
+    ) -> list[Document]:
         # The global default adds `conversation_id IS NULL AND project_id IS NULL` so ephemeral /
         # project documents never surface in the Settings -> Documents listing (anti-bleed, #420).
+        # ``manual_only`` further restricts to manual uploads (manual_pin=true) so folder-synced
+        # docs (manual_pin=false) do NOT appear in the "Individual uploads" list (#451).
         predicate, params = scope_predicate(scope, next_param=1)
+        if manual_only:
+            predicate += " AND manual_pin = true"
         rows = await self._pool.fetch(
             f"SELECT {_COLS} FROM documents WHERE {predicate} ORDER BY created_at DESC",
             *params,

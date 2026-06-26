@@ -2800,7 +2800,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 "chunk_count": d.chunk_count,
                 "created_at": d.created_at.isoformat(),
             }
-            for d in await storage.documents.list()
+            # manual_only: the "Individual uploads" list shows only manually-uploaded docs, never
+            # folder-synced ones (those live under their folder source in the tree) (#451).
+            for d in await storage.documents.list(manual_only=True)
         ]
         return StructuredResult(ok=True, data={"files": docs})
 

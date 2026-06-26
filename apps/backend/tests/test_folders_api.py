@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+import uuid
 from collections.abc import Sequence as Seq
 from typing import Any
 
@@ -82,8 +83,11 @@ def _wait_synced(
 
 
 def test_register_indexes_then_list_detail_delete_purges(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    (tmp_path / "a.txt").write_text("Lisbon is the capital of Portugal. " * 5)
-    (tmp_path / "b.txt").write_text("Bucharest is the capital of Romania. " * 5)
+    # Unique content per run so the content-hash document id is unique -> the purge assertion is not
+    # confounded by a doc the same content left referenced from a prior run (content-hash dedup).
+    uniq = uuid.uuid4().hex
+    (tmp_path / "a.txt").write_text(f"Lisbon is the capital of Portugal. {uniq} " * 5)
+    (tmp_path / "b.txt").write_text(f"Bucharest is the capital of Romania. {uniq} " * 5)
     with TestClient(create_app(_boot())) as client:
         # Register -> 200, initial sync kicked in the background.
         reg = client.post(
@@ -100,10 +104,11 @@ def test_register_indexes_then_list_detail_delete_purges(tmp_path) -> None:  # t
         assert set(rels) == {"a.txt", "b.txt"}
         assert all(f["status"] == "synced" and f["document_id"] for f in rels.values())
 
-        # The folder's docs surface in the global Settings -> Documents listing.
+        # Folder-synced docs do NOT appear in the "Individual uploads" list (#451) -- they live in
+        # the folder tree above, not the manual-uploads list.
         files_now = client.get("/api/v1/files", headers=AUTH).json()["data"]["files"]
         doc_ids = {rels["a.txt"]["document_id"], rels["b.txt"]["document_id"]}
-        assert doc_ids <= {f["id"] for f in files_now}
+        assert not (doc_ids & {f["id"] for f in files_now})
 
         # List shows the source + counts.
         listing = client.get("/api/v1/folders", headers=AUTH).json()["data"]["folders"]
