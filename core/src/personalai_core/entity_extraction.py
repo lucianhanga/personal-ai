@@ -5,10 +5,18 @@ relations) found in a document's text. Structured output makes the result a type
 prose, and a fail-closed ``generate_structured`` returns nothing rather than guessing -- so a model
 that refuses or drifts simply yields no entities, never a crash.
 
+Aggressive collection (#465): the KAG is only as good as what NER captures, so we extract over the
+*whole* document, not just its head. The text is split into overlapping windows and each window is
+extracted independently, then the per-window results are merged and de-duplicated on the canonical
+``(type, normalized-name)`` key. Smaller windows keep the model's attention high (recall drops on a
+large blob), the overlap stops an entity straddling a boundary from being missed, and the prompt asks
+for an *exhaustive* sweep rather than a conservative top-few. A vendor/sender that only appears on
+page 3 of an invoice is now captured -- which is what makes corpus-wide enumeration ("how many M-Net
+invoices") work. ``max_windows`` bounds the cost on very large documents.
+
 Local-model note: on the Qwen3 MoE (``...a3b``) the ``think=False`` + JSON-format combination emits
 markdown prose instead of JSON, so for that arch we prepend a ``/no_think`` system line (which makes
-thinking run silently and restores valid JSON). Entities cluster near a document's start, so we cap
-the text to ``max_chars`` for the first pass; full per-chunk extraction is a future refinement.
+thinking run silently and restores valid JSON).
 """
 
 from __future__ import annotations
@@ -46,13 +54,23 @@ class ExtractedEntities(BaseModel):
 
 
 _NER_PROMPT = (
-    "You are a named-entity extractor. From the user's document text, extract the REAL named "
-    "entities actually mentioned -- people, organizations, locations, dates, products, events -- "
-    "and the simple relations between them. Do NOT invent entities that are not in the text. Use a "
-    "type from this exact set: person, org, location, date, product, event, other. Each relation "
-    "is a short predicate (e.g. 'works_at', 'located_in') between two entity names you also "
-    "returned. Return ONLY the structured result."
+    "You are a thorough named-entity extractor. Extract EVERY named entity actually present in the "
+    "text -- be exhaustive, do not stop at the few most obvious ones. Capture all: people; "
+    "organizations and companies (including vendors, senders, recipients, and issuers -- e.g. the "
+    "company named on an invoice or letterhead, wherever on the page it appears); locations; dates; "
+    "products and line items; and events. Also capture salient identifiers and amounts (invoice / "
+    "order / reference numbers, totals, monetary amounts) as type 'other'. Do NOT invent entities "
+    "that are not in the text. Use a type from this EXACT set: person, org, location, date, "
+    "product, event, other. Each relation is a short predicate (e.g. 'works_at', 'issued_by', "
+    "'located_in') between two entity names you also returned. Return ONLY the structured result."
 )
+
+# Whole-document coverage. Windows are deliberately small (recall drops when a model must scan a
+# huge blob), overlap stops a boundary-straddling entity from being lost, and max_windows caps the
+# number of LLM passes on a very large document.
+_WINDOW_CHARS = 4000
+_OVERLAP_CHARS = 250
+_MAX_WINDOWS = 12
 
 
 def _is_moe(model: str) -> bool:
@@ -60,20 +78,66 @@ def _is_moe(model: str) -> bool:
     return "a3b" in model
 
 
-async def extract_entities(
-    text: str, *, provider: ModelProvider, model: str, max_chars: int = 6000
-) -> ExtractedEntities:
-    """Extract entities + relations from ``text`` (capped to ``max_chars``). Best-effort: returns an
-    empty result if there is no text or the model fails to produce valid structured output."""
-    capped = text.strip()[:max_chars]
-    if not capped:
-        return ExtractedEntities()
+def _windows(text: str, window: int, overlap: int, max_windows: int) -> list[str]:
+    """Split ``text`` into overlapping windows, bounded by ``max_windows`` (the tail of an
+    over-long document is dropped rather than ballooning the LLM-pass count)."""
+    if len(text) <= window:
+        return [text]
+    step = max(1, window - overlap)
+    out: list[str] = []
+    start = 0
+    while start < len(text) and len(out) < max_windows:
+        out.append(text[start : start + window])
+        start += step
+    return out
+
+
+async def _extract_window(text: str, *, provider: ModelProvider, model: str) -> ExtractedEntities:
     messages: list[ChatMessage] = []
     if _is_moe(model):
         messages.append(ChatMessage(Role.SYSTEM, "/no_think"))
     messages.append(ChatMessage(Role.SYSTEM, _NER_PROMPT))
-    messages.append(ChatMessage(Role.USER, capped))
+    messages.append(ChatMessage(Role.USER, text))
     result = await generate_structured(
         provider=provider, model=model, messages=messages, schema=ExtractedEntities
     )
     return result if result is not None else ExtractedEntities()
+
+
+async def extract_entities(
+    text: str,
+    *,
+    provider: ModelProvider,
+    model: str,
+    window: int = _WINDOW_CHARS,
+    overlap: int = _OVERLAP_CHARS,
+    max_windows: int = _MAX_WINDOWS,
+) -> ExtractedEntities:
+    """Extract entities + relations from the WHOLE of ``text`` via overlapping windows, merged and
+    de-duplicated. Best-effort: returns an empty result if there is no text; a window that fails to
+    produce valid structured output contributes nothing rather than aborting the document."""
+    cleaned = text.strip()
+    if not cleaned:
+        return ExtractedEntities()
+
+    merged_entities: dict[tuple[str, str], ExtractedEntity] = {}
+    merged_relations: dict[tuple[str, str, str], ExtractedRelation] = {}
+    for window_text in _windows(cleaned, window, overlap, max_windows):
+        result = await _extract_window(window_text, provider=provider, model=model)
+        for ent in result.entities:
+            norm = " ".join(ent.name.strip().lower().split())
+            if norm:
+                merged_entities.setdefault((ent.type, norm), ent)
+        for rel in result.relations:
+            key = (
+                rel.src.strip().lower(),
+                rel.relation.strip().lower(),
+                rel.dst.strip().lower(),
+            )
+            if all(key):
+                merged_relations.setdefault(key, rel)
+
+    return ExtractedEntities(
+        entities=list(merged_entities.values()),
+        relations=list(merged_relations.values()),
+    )
