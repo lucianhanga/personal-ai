@@ -7,6 +7,7 @@ Postgres pool are handled by the endpoint/lifespan.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 from personalai_contracts.ports import ModelProvider, VectorRecord, VectorRepository
@@ -147,3 +148,13 @@ async def ingest_text(
 def chunk_ids(document_id: str, chunk_count: int) -> list[str]:
     """Deterministic vector ids for a document's chunks (used to delete a document's vectors)."""
     return [f"{document_id}:{index}" for index in range(chunk_count)]
+
+
+def content_document_id(content: bytes) -> str:
+    """Content-addressed global document id for a folder-synced file (#456).
+
+    Same bytes -> same id, so the same file appearing in two watched folders dedups to ONE vector
+    set (the chunk/embed step is idempotent on this id). Distinct from manual uploads' uuid ids, so
+    a folder file and a manual upload of identical content stay separate records (and the manual one
+    keeps ``manual_pin=true``)."""
+    return "global-" + hashlib.sha256(content).hexdigest()
