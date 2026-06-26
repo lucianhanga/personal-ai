@@ -170,9 +170,9 @@ def test_turnsse_map_retrieval_is_live_progress_and_not_persisted() -> None:
 
 
 def test_turnsse_map_stage_is_live_progress_and_not_persisted() -> None:
-    # Generic stage heartbeat (#465): a node-entry "working" frame maps to a transient `event: stage`
-    # SSE frame (marked `live`) for the chat + Activity pane, and is INTENTIONALLY never folded into
-    # the persisted trace -- it is pure progress chrome.
+    # Generic stage heartbeat (#465): a node-entry "working" frame maps to a transient
+    # `event: stage` SSE frame (marked `live`) for the chat + Activity pane, and is INTENTIONALLY
+    # never folded into the persisted trace -- it is pure progress chrome.
     import json
 
     from personalai_backend.app import _TurnSse
@@ -180,7 +180,9 @@ def test_turnsse_map_stage_is_live_progress_and_not_persisted() -> None:
 
     sse = _TurnSse(run_id=None)
     frame = sse.map(
-        TurnEvent("stage", output={"name": "researcher", "label": "Researching", "status": "running"})
+        TurnEvent(
+            "stage", output={"name": "researcher", "label": "Researching", "status": "running"}
+        )
     )
     assert frame is not None
     head, _, data = frame.decode().partition("data: ")

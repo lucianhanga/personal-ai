@@ -38,7 +38,13 @@ from personalai_backend.auth.routes import router as auth_router
 from personalai_backend.composition import Bootstrap, bootstrap
 from personalai_backend.entity_indexing import index_document_entities
 from personalai_backend.folder_scan import canonical_root
-from personalai_backend.folder_sync import EntityIndexer, purge_orphans, sync_source
+from personalai_backend.folder_sync import (
+    EntityIndexer,
+    assert_local_provider,
+    purge_orphans,
+    reextract_source_entities,
+    sync_source,
+)
 from personalai_backend.ingestion import chunk_ids, ingest_text
 from personalai_backend.logbuffer import LOG_BUFFER
 from personalai_backend.logbuffer import install as install_log_buffer
@@ -2958,6 +2964,36 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         app.state.bg_tasks.add(task)
         task.add_done_callback(app.state.bg_tasks.discard)
 
+    def _schedule_folder_reextract(sources: Sequence[FolderSource]) -> None:
+        """Background NER re-extraction (#464) over the already-synced files of one or more folder
+        sources, off the request. Re-parses each file and re-runs the idempotent entity indexer so
+        the KAG reflects the current extractor. Fail-closed local-only: the NER chat provider is
+        asserted loopback (a headless task cannot mediate the egress gate), like the sync path."""
+        storage: Storage | None = app.state.storage
+        config: CoreConfig = app.state.config
+        if storage is None:  # pragma: no cover - only scheduled when storage is available
+            return
+        sec = current_security.get()
+        # NER chat provider must be loopback (fail-closed; a headless task can't mediate egress).
+        assert_local_provider(_resolve_provider(config.model_provider))
+        indexer = _make_entity_indexer(storage, config)
+
+        async def _run() -> None:
+            if sec is not None:
+                current_security.set(sec)
+            for source in sources:
+                try:
+                    n = await reextract_source_entities(
+                        storage.folders, source=source, entity_indexer=indexer
+                    )
+                    logger.info("reextract: %s files re-extracted for folder %s", n, source.id)
+                except Exception as exc:  # noqa: BLE001 - best-effort; one source can't fail others
+                    logger.warning("reextract failed for %s: %s", source.id, exc)
+
+        task = asyncio.create_task(_run())
+        app.state.bg_tasks.add(task)
+        task.add_done_callback(app.state.bg_tasks.discard)
+
     @app.post(
         "/api/v1/folders", response_model=StructuredResult, dependencies=[Depends(require_context)]
     )
@@ -3073,6 +3109,36 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             )
         _schedule_folder_sync(src)
         return StructuredResult(ok=True, data={"id": source_id, "status": "scanning"})
+
+    @app.post(
+        "/api/v1/folders/reextract",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def reextract_all_folders() -> StructuredResult:
+        """Re-run NER over EVERY configured folder source's already-synced files (#464), in the
+        background. Use after the entity extractor changes (e.g. the aggressive whole-document
+        sweep) to refresh the KAG without re-embedding. Declared before the ``{source_id}`` route
+        so the static path is not captured as an id."""
+        storage = _require_storage()
+        sources = await storage.folders.list_sources()
+        _schedule_folder_reextract(sources)
+        return StructuredResult(ok=True, data={"sources": len(sources), "status": "reextracting"})
+
+    @app.post(
+        "/api/v1/folders/{source_id}/reextract",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def reextract_folder(source_id: str) -> StructuredResult:
+        """Re-run NER over ONE folder source's already-synced files (#464), in the background."""
+        storage = _require_storage()
+        _ensure_folder_uuid(source_id)
+        src = await storage.folders.get_source(source_id)
+        if src is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="folder not found")
+        _schedule_folder_reextract([src])
+        return StructuredResult(ok=True, data={"id": source_id, "status": "reextracting"})
 
     async def _set_folder_paused(source_id: str, paused: bool) -> StructuredResult:
         storage = _require_storage()

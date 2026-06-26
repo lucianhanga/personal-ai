@@ -9,10 +9,10 @@ Aggressive collection (#465): the KAG is only as good as what NER captures, so w
 *whole* document, not just its head. The text is split into overlapping windows and each window is
 extracted independently, then the per-window results are merged and de-duplicated on the canonical
 ``(type, normalized-name)`` key. Smaller windows keep the model's attention high (recall drops on a
-large blob), the overlap stops an entity straddling a boundary from being missed, and the prompt asks
-for an *exhaustive* sweep rather than a conservative top-few. A vendor/sender that only appears on
-page 3 of an invoice is now captured -- which is what makes corpus-wide enumeration ("how many M-Net
-invoices") work. ``max_windows`` bounds the cost on very large documents.
+large blob), the overlap stops an entity straddling a boundary from being missed, and the prompt
+asks for an *exhaustive* sweep rather than a conservative top-few. A vendor/sender that appears only
+on page 3 of an invoice is now captured -- which is what makes corpus-wide enumeration ("how many
+M-Net invoices") work. ``max_windows`` bounds the cost on very large documents.
 
 Local-model note: on the Qwen3 MoE (``...a3b``) the ``think=False`` + JSON-format combination emits
 markdown prose instead of JSON, so for that arch we prepend a ``/no_think`` system line (which makes
@@ -57,8 +57,8 @@ _NER_PROMPT = (
     "You are a thorough named-entity extractor. Extract EVERY named entity actually present in the "
     "text -- be exhaustive, do not stop at the few most obvious ones. Capture all: people; "
     "organizations and companies (including vendors, senders, recipients, and issuers -- e.g. the "
-    "company named on an invoice or letterhead, wherever on the page it appears); locations; dates; "
-    "products and line items; and events. Also capture salient identifiers and amounts (invoice / "
+    "company named on an invoice or letterhead, wherever it appears); locations; dates; products "
+    "and line items; and events. Also capture salient identifiers and amounts (invoice / "
     "order / reference numbers, totals, monetary amounts) as type 'other'. Do NOT invent entities "
     "that are not in the text. Use a type from this EXACT set: person, org, location, date, "
     "product, event, other. Each relation is a short predicate (e.g. 'works_at', 'issued_by', "
