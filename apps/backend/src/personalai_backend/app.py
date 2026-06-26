@@ -1087,7 +1087,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         cl = request.headers.get("content-length")
         if cl and cl.isdigit() and int(cl) > app.state.config.max_request_bytes:
             return JSONResponse(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                 content=StructuredResult(
                     ok=False,
                     error=ErrorInfo(code="E_TOO_LARGE", message="request body too large"),
@@ -2499,7 +2499,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         content = await file.read(config.max_upload_bytes + 1)
         if len(content) > config.max_upload_bytes:
             raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                 detail=f"file exceeds {config.max_upload_bytes} bytes",
             )
         provider = _resolve_provider(config.embed_provider)
@@ -2545,7 +2545,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         audio = await file.read(config.max_upload_bytes + 1)
         if len(audio) > config.max_upload_bytes:
             raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                 detail=f"audio exceeds {config.max_upload_bytes} bytes",
             )
         transcriber = _build_transcriber(config)
@@ -2589,7 +2589,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         data = await file.read(config.max_upload_bytes + 1)
         if len(data) > config.max_upload_bytes:
             raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                 detail=f"image exceeds {config.max_upload_bytes} bytes",
             )
         provider = _resolve_provider(config.model_provider)
@@ -2654,7 +2654,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         content = await file.read(config.max_upload_bytes + 1)
         if len(content) > config.max_upload_bytes:
             raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                 detail=f"file exceeds {config.max_upload_bytes} bytes",
             )
         t0 = time.perf_counter()
