@@ -49,10 +49,21 @@ async def generate_structured[T: BaseModel](
     """
     json_schema = schema.model_json_schema()
     convo = list(messages)
+    # Qwen3 MoE (qwen35moe arch, e.g. "...a3b") ignores Ollama's `format` when `think=False` is ALSO
+    # sent -> it emits prose, and generate_structured fail-closes to None (this broke the
+    # verifier + source-router in accurate mode). Verified fix (#461, empirical): for the MoE, OMIT
+    # `think` (None) so `format` is honored, and prepend the inline `/no_think` directive so no
+    # reasoning trace leaks. Dense models honor `think=False`+`format`, so this is gated to MoE.
+    is_moe = "a3b" in model.lower()
+    think_param = None if is_moe else False
+    if is_moe:
+        convo.insert(0, ChatMessage(Role.SYSTEM, "/no_think"))
     for attempt in range(1, max_attempts + 1):
         raw = await _generate_text(
             provider,
-            GenerationRequest(messages=convo, model=model, json_schema=json_schema, think=False),
+            GenerationRequest(
+                messages=convo, model=model, json_schema=json_schema, think=think_param
+            ),
         )
         errors: list[str]
         try:

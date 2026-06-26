@@ -95,3 +95,41 @@ class _AlwaysInvalid(FakeModelProvider):
 def test_fails_closed_when_repair_is_exhausted() -> None:
     # Every attempt is unparseable -> None (the caller must not act on an unvalidated payload).
     assert _run(_AlwaysInvalid()) is None
+
+
+class _Recorder(FakeModelProvider):
+    """Records each GenerationRequest so the MoE structured-output workaround can be asserted."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.requests: list[GenerationRequest] = []
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        self.requests.append(request)
+        return GenerationResult(text='{"verdict": "pass", "reason": "ok"}', model=request.model)
+
+
+def _structured_for(model: str) -> _Recorder:
+    rec = _Recorder()
+
+    async def go() -> None:
+        await generate_structured(
+            provider=rec, model=model, messages=[ChatMessage(Role.USER, "x")], schema=_Verdict
+        )
+
+    asyncio.run(go())
+    return rec
+
+
+def test_moe_omits_think_and_prepends_no_think(model: str = "qwen3.6:35b-a3b") -> None:
+    # #461: on the MoE arch, `think=False`+`format` is silently ignored (prose). The fix omits
+    # `think` (so `format` is honored) and prepends "/no_think" (so no reasoning trace leaks).
+    req = _structured_for(model).requests[0]
+    assert req.think is None
+    assert req.messages[0].role == Role.SYSTEM and req.messages[0].content == "/no_think"
+
+
+def test_dense_model_keeps_think_false_and_no_prefix() -> None:
+    req = _structured_for("qwen3:14b").requests[0]
+    assert req.think is False
+    assert not (req.messages[0].role == Role.SYSTEM and req.messages[0].content == "/no_think")
