@@ -1049,14 +1049,24 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 RegisteredTool(FORGET_MEMORY_MANIFEST, ForgetMemoryTool(memories, _embed_one)),
                 overwrite=True,
             )
+            # Live folder-sync watcher (#456): observe registered folder roots and keep the global
+            # corpus in sync. DB-authoritative (crash-safe via reconcile); local-provider-only.
+            from personalai_backend.folder_watch import FolderSyncManager
+
+            app.state.folder_manager = FolderSyncManager(pool, boot.config, _resolve_provider)
+            await app.state.folder_manager.start()
         except Exception as exc:  # noqa: BLE001 - storage is optional; degrade gracefully
             logger.warning("storage unavailable (file/RAG features disabled): %s", exc)
             app.state.storage = None
+            app.state.folder_manager = None
         # Connect configured MCP servers and register their tools behind the gateway (best-effort).
         await app.state.mcp_manager.start()
         try:
             yield
         finally:
+            # Stop the folder watcher first so no new sync work is scheduled during teardown (#456).
+            if app.state.folder_manager is not None:
+                await app.state.folder_manager.stop()
             # Let in-flight background work (e.g. memory extraction) finish before tearing down.
             if app.state.bg_tasks:
                 await asyncio.gather(*app.state.bg_tasks, return_exceptions=True)
@@ -1083,6 +1093,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     app.state.config = boot.config
     app.state.storage = None  # set on startup if a database is reachable
     app.state.tenant_db = None  # set on startup if a database is reachable (M8.1c checkpointer)
+    app.state.folder_manager = None  # live folder-sync watcher (#456); set on startup with storage
     app.state.mcp_manager = McpManager(
         boot.registries,
         _mcp_config_path(boot.config),
