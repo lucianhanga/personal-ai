@@ -451,6 +451,20 @@ test("(#437) indexing + retrieval render before the context node, in array order
   expect(screen.getByTestId("timeline-retrieval")).toBeInTheDocument();
 });
 
+test("(#462) live retrieval progress: status 'running' renders an in-progress 'Retrieving…' chip", () => {
+  const running: TraceItem = {
+    kind: "retrieval",
+    ts: "2020-01-01T00:00:04Z",
+    status: "running",
+    live: true,
+    sources: ["vector", "memory"],
+  };
+  renderTimeline({ messages: ragTurn([running]), contexts: {} });
+  const chip = screen.getByTestId("timeline-retrieval");
+  expect(chip).toHaveAttribute("data-status", "in-progress");
+  expect(chip).toHaveTextContent("Retrieving…");
+});
+
 test("(#437) indexing Tier-2 shows chunks + duration; success has no error", () => {
   renderTimeline({ messages: ragTurn([RAG_INDEXING]), contexts: {} });
   const chip = screen.getByTestId("timeline-indexing");

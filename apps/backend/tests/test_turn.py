@@ -184,6 +184,15 @@ def test_run_turn_multisource_forwards_unified_citations() -> None:
     seen = {c["source_kind"] for c in cites}
     assert seen == {SOURCE_KIND_VECTOR, SOURCE_KIND_MEMORY}
     assert all("merged_from" in c for c in cites)
+    # Live retrieval progress (#462): the gather node's running/done frames are forwarded as
+    # `retrieval` TurnEvents ahead of the citations, so the route can stream the planner->researcher
+    # gap as live progress.
+    retrievals = [e for e in events if e.kind == "retrieval"]
+    assert [e.output and e.output["status"] for e in retrievals] == ["running", "done"]
+    assert kinds.index("retrieval") < kinds.index("citations")
+    done = retrievals[1]
+    assert done.output is not None
+    assert done.output["counts"] == {"vector": 1, "memory": 1} and done.output["hits"] == 2
 
 
 def test_single_agent_with_tools_gets_a_tool_use_nudge() -> None:

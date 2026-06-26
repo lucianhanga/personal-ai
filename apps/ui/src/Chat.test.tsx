@@ -1,12 +1,40 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 
-import { Chat, formatDuration, micErrorMessage, transcribeErrorMessage } from "./Chat";
+import { appendTrace, Chat, formatDuration, micErrorMessage, transcribeErrorMessage } from "./Chat";
 import * as api from "./api";
+import type { TraceItem } from "./api";
 
 afterEach(() => {
   vi.restoreAllMocks();
   sessionStorage.clear();
+});
+
+test("appendTrace supersedes the live retrieval frame in place (running -> done), #462", () => {
+  const plan: TraceItem = { kind: "plan", text: "gather" };
+  const running: TraceItem = { kind: "retrieval", status: "running", live: true, sources: ["vector"] };
+  const done: TraceItem = { kind: "retrieval", status: "ok", live: true, hits: 4 };
+
+  const afterRunning = appendTrace([plan], running);
+  expect(afterRunning).toHaveLength(2);
+
+  // The done frame replaces the running one in place rather than stacking a second retrieval row.
+  const afterDone = appendTrace(afterRunning, done);
+  expect(afterDone).toHaveLength(2);
+  expect(afterDone[1]).toEqual(done);
+
+  // A subsequent agent step appends normally (no supersede of non-retrieval kinds).
+  const afterReasoning = appendTrace(afterDone, { kind: "reasoning", text: "grounding" });
+  expect(afterReasoning.map((t) => t.kind)).toEqual(["plan", "retrieval", "reasoning"]);
+});
+
+test("appendTrace does not supersede persisted per-source retrieval items (no `live`), #462", () => {
+  // The durable per-source items (each tagged source_kind, streamed only on reload) must stack, not
+  // collapse into one row.
+  const vector: TraceItem = { kind: "retrieval", hits: 4, source_kind: "vector" };
+  const memory: TraceItem = { kind: "retrieval", hits: 2, source_kind: "memory" };
+  const out = appendTrace([vector], memory);
+  expect(out).toHaveLength(2);
 });
 
 const DRAFT_KEY = "personalai_composer_draft";

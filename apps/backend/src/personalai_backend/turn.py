@@ -56,6 +56,11 @@ class TurnEvent:
         # ``{"citations": [...], "source_plan": {...}}``. The route forwards them over the existing
         # event: citations frame (now with source_kind/merged_from).
         "citations",
+        # Live retrieval progress (#462): the graph's gather node emits running/done while it fans
+        # out over the planner-selected sources. ``output`` carries
+        # ``{"status", "query", "sources", "counts", "hits"}``. The route streams a transient
+        # event: retrieval frame (NOT persisted) so the gap shows progress.
+        "retrieval",
     ]
     text: str = ""
     phase: str = ""  # "call" | "result" for tool events
@@ -163,6 +168,10 @@ async def run_turn(
                 # Unified multi-source citations from the merge node (#420): forwarded to the route,
                 # which streams them over the existing event: citations frame (source_kind aware).
                 yield TurnEvent("citations", output=ev.output or {})
+            elif ev.type == "retrieval":
+                # Live retrieval progress (#462): the gather node's running/done frames in the
+                # planner->researcher gap. Forwarded to the route as a transient event: retrieval.
+                yield TurnEvent("retrieval", output=ev.output or {})
             elif ev.type == "approval_request":
                 yield TurnEvent("approval_request", output=ev.output or {})
             elif ev.type == "repetition_stopped":

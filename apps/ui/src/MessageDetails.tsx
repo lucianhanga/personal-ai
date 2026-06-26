@@ -13,7 +13,20 @@ const TRACE = {
   critic: AGENT_FG.critic,
   ok: "#1a7f37", // green
   err: "#b00020", // red
+  retrieval: "#1558b0", // royal indigo — matches the Activity-pane retrieval chip (#462)
+  warn: "#b06f00", // amber — in-progress retrieval
 } as const;
+
+// Friendly labels for the multi-source fan-out's source kinds (#462), so the chat-side retrieval
+// line reads "Documents, Memory" rather than the internal "vector, memory".
+const SOURCE_LABEL: Record<string, string> = {
+  vector: "Documents",
+  memory: "Memory",
+  graph: "Knowledge graph",
+};
+function sourceLabel(name: string): string {
+  return SOURCE_LABEL[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
+}
 
 // Very faded per-agent backgrounds so each contributor's lines are easy to delimit in the trace.
 const TRACE_BG: Record<string, string> = {
@@ -24,6 +37,7 @@ const TRACE_BG: Record<string, string> = {
   tool_result: "#f6f0fe",
   verification: AGENT_BG.planner,
   draft: "#fff7d6", // a highlighter-style tint so the proposed (draft) answer stands out (#393)
+  retrieval: "#eef4fc", // faint indigo wash for the context-retrieval line (#462)
 };
 
 function rowStyle(kind: string, extra?: React.CSSProperties): React.CSSProperties {
@@ -46,7 +60,10 @@ function Tag({ color, children }: { color: string; children: React.ReactNode }):
 // another agent's step (planner/critic/verifier). Used to label the researcher's block like the
 // other agents (it only appears in the multi-agent graph, where those boundary steps exist).
 const RESEARCHER_KINDS = new Set(["reasoning", "tool_call", "tool_result", "draft"]);
-const AGENT_BLOCK_KINDS = new Set(["plan", "critique", "verification"]);
+// `retrieval` (#462) is a boundary too: the gather node's context-assembly line sits between the
+// planner's plan and the researcher's first step, so a researcher block that follows it still gets
+// its "Researcher" header.
+const AGENT_BLOCK_KINDS = new Set(["plan", "critique", "verification", "retrieval"]);
 
 /** Insert a synthetic "researcher header" marker before each researcher block (multi-agent only). */
 function withResearcherHeaders(items: TraceItem[]): (TraceItem | { kind: "researcher_header" })[] {
@@ -321,6 +338,32 @@ export function MessageDetails({
                     Verify{t.verdict ? ` (${t.verdict})` : ""}
                   </Tag>
                   {t.text ? `: ${t.text}` : ""}
+                </div>
+              );
+            }
+            if (t.kind === "retrieval") {
+              // Live retrieval progress (#462): the gather node's running -> done frame during the
+              // planner->researcher gap, shown here so the chat transcript (not just the Activity
+              // pane) reflects context being assembled. Running shows an amber "Retrieving…" line;
+              // done settles to the hit count. Persisted per-source items (with `source_kind`) also
+              // land here on reload and render their own labelled count.
+              const running = t.status === "running";
+              const n = t.hits ?? 0;
+              const srcs = (t.sources ?? []).map(sourceLabel).filter(Boolean).join(", ");
+              const label = running
+                ? srcs
+                  ? `Retrieving context from ${srcs}…`
+                  : "Retrieving context…"
+                : t.source_kind
+                  ? `Retrieved ${n} passage${n === 1 ? "" : "s"} (${sourceLabel(t.source_kind)})`
+                  : `Retrieved ${n} passage${n === 1 ? "" : "s"}`;
+              return (
+                <div
+                  key={k}
+                  data-testid="details-retrieval"
+                  style={rowStyle("retrieval", { color: running ? TRACE.warn : undefined })}
+                >
+                  <Tag color={running ? TRACE.warn : TRACE.retrieval}>Context</Tag>: {label}
                 </div>
               );
             }

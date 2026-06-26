@@ -397,11 +397,40 @@ def _build_graph(
         names = list(plan.get("sources", [])) or list(_sources_by_name)
         selected = [_sources_by_name[n] for n in names if n in _sources_by_name]
         retrieval_query = query or _last_user_text(messages)
+        # Live retrieval progress (#462): the fan-out below runs in the otherwise-silent gap between
+        # the planner's plan and the researcher's first token. Emit a transient "running" frame (and
+        # then a "done" frame with per-source hit counts) so the chat + Activity pane show context
+        # being assembled. These are progress-only — the durable per-source retrieval items come
+        # from the merge node's unified citations after the run, so we do NOT persist these frames.
+        writer = get_stream_writer()
+        writer(
+            AgentEvent(
+                type="retrieval",
+                output={
+                    "status": "running",
+                    "query": retrieval_query,
+                    "sources": [s.name for s in selected],
+                },
+            )
+        )
         per_source = await gather_sources(
             sources=selected,
             query=retrieval_query,
             token_budget=evidence_budget,
             ctx=state.get("context"),
+        )
+        counts = {name: len(evidence) for name, evidence in per_source.items()}
+        writer(
+            AgentEvent(
+                type="retrieval",
+                output={
+                    "status": "done",
+                    "query": retrieval_query,
+                    "sources": list(counts.keys()),
+                    "counts": counts,
+                    "hits": sum(counts.values()),
+                },
+            )
         )
         return {
             "gathered": {

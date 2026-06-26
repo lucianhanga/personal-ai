@@ -70,6 +70,44 @@ test("single-agent reasoning has no Researcher header (no planner/critic boundar
   expect(screen.queryByTestId("details-researcher")).toBeNull();
 });
 
+test("live retrieval progress (#462): running shows 'Retrieving…', done shows the hit count", () => {
+  const { rerender } = render(
+    <MessageDetails
+      defaultOpen
+      trace={[
+        { kind: "plan", text: "gather then answer" },
+        // The gather node's running frame: amber "Retrieving context from …" line.
+        { kind: "retrieval", status: "running", live: true, sources: ["vector", "memory"] },
+      ]}
+    />,
+  );
+  const row = screen.getByTestId("details-retrieval");
+  expect(row).toHaveTextContent("Retrieving context from Documents, Memory");
+  // The retrieval line is a boundary, so the researcher block that follows still gets its header.
+  rerender(
+    <MessageDetails
+      defaultOpen
+      trace={[
+        { kind: "plan", text: "gather then answer" },
+        { kind: "retrieval", status: "ok", live: true, hits: 4 },
+        { kind: "reasoning", text: "grounding on the evidence" },
+      ]}
+    />,
+  );
+  expect(screen.getByTestId("details-retrieval")).toHaveTextContent("Retrieved 4 passages");
+  expect(screen.getByTestId("details-researcher")).toHaveTextContent("Researcher");
+});
+
+test("persisted per-source retrieval item labels its source kind", () => {
+  render(
+    <MessageDetails
+      defaultOpen
+      trace={[{ kind: "retrieval", hits: 1, source_kind: "vector" }]}
+    />,
+  );
+  expect(screen.getByTestId("details-retrieval")).toHaveTextContent("Retrieved 1 passage (Documents)");
+});
+
 
 test("shows a 'jump to latest' affordance only when the user has scrolled up", () => {
   render(<MessageDetails steps={STEPS} thinking="x" defaultOpen />);

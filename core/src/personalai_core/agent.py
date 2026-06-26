@@ -157,6 +157,12 @@ class AgentEvent:
         # ``{"citations": [...], "source_plan": {...}}`` so the backend can stream the cross-source
         # provenance (source_kind/merged_from) over its existing event: citations frame.
         "citations",
+        # Live retrieval progress (#462): the graph's gather node fans out over the planner-selected
+        # sources (RAG/KAG/memory/...) in the planner->researcher gap. ``output`` carries
+        # ``{"status": "running"|"done", "query", "sources", "counts": {name: hits}, "hits"}`` so
+        # the backend can stream a transient progress frame (chat + Activity pane) that settles to
+        # the durable per-source retrieval items the merge node's citations produce.
+        "retrieval",
     ]
     tool: str | None = None
     args: Mapping[str, Any] | None = None

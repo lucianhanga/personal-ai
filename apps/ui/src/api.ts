@@ -60,6 +60,15 @@ export interface TraceItem {
   citations?: { source: string; score: number }[]; // retrieval — compact winners-only list (<=8)
   count?: number; // ner — entities extracted (Phase 6)
   types?: { type: string; count: number }[]; // ner — per-type breakdown (Phase 6)
+  // Live retrieval progress (#462). The graph's gather node streams a transient running -> done
+  // `retrieval` frame during the planner->researcher gap (status: "running" then "ok"); `live`
+  // marks it stream-only (superseded in place, never persisted). `sources`/`counts` describe the
+  // multi-source fan-out (e.g. {"vector": 4, "memory": 2}). `source_kind` tags the durable
+  // per-source items (#420) so the live frame and the persisted ones never collide.
+  sources?: string[]; // retrieval (live) — the source kinds being queried, in plan order
+  counts?: Record<string, number>; // retrieval (live, done) — hits per source kind
+  source_kind?: string; // retrieval (persisted, per-source) — which source kind this item is for
+  live?: boolean; // retrieval — true for the transient running/done progress frame
 }
 
 // The architect's closed resource-action enum (#424). Extend only by adding a member here AND in the

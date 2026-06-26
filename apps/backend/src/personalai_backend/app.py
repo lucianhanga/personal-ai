@@ -949,6 +949,27 @@ class _TurnSse:
             cites = list(out.get("citations", []))
             self.citations = cites
             return f"event: citations\ndata: {json.dumps(cites)}\n\n".encode()
+        if ev.kind == "retrieval":
+            # Live retrieval progress (#462): the graph's gather node fans out over the
+            # planner-selected sources (RAG/KAG/memory/...) in the otherwise-silent planner->
+            # researcher gap. Stream a transient running/done frame as a `retrieval` TraceItem so
+            # the chat + Activity pane show context being assembled. INTENTIONALLY NOT appended to
+            # self.trace: the durable per-source retrieval items are derived post-merge from the
+            # unified citations (`_per_source_retrieval_items`) and folded into the prelude — so
+            # keeping this out of the persisted trace avoids a duplicate retrieval row on reload.
+            out = dict(ev.output or {})
+            status = "error" if out.get("status") == "error" else out.get("status") or "running"
+            payload = {
+                "kind": "retrieval",
+                "status": "running" if status == "running" else "ok",
+                "ts": self._now(),
+                "query": str(out.get("query") or "")[:_PRELUDE_QUERY_CAP],
+                "sources": list(out.get("sources") or []),
+                "counts": dict(out.get("counts") or {}),
+                "hits": _clamp_int(out.get("hits"), 0, 1_000_000, default=0),
+                "live": True,
+            }
+            return f"event: retrieval\ndata: {json.dumps(payload)}\n\n".encode()
         if ev.kind == "approval_request":
             # The run is durably checkpointed; surface the (whitelisted) request with the run_id.
             self.suspended = True
@@ -2523,6 +2544,10 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                         # The watchdog aborted a looping generation (#414): record the marker in the
                         # trace; the partial answer rides the following `final`'s `answer` events.
                         trace.append({"kind": "repetition_stopped", "text": ev.text})
+                    elif ev.kind == "retrieval":
+                        # Live retrieval progress (#462) is stream-only (chat + Activity pane); this
+                        # non-streaming path has no live consumer and never persists it.
+                        pass
                     else:  # final
                         if ev.usage:
                             usage = ev.usage

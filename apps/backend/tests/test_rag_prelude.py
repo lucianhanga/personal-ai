@@ -123,3 +123,47 @@ def test_emit_ner_phase6_shape_when_entities_supplied() -> None:
     assert ner["text"] == "Extracted 7 entities"
     assert ner["count"] == 7
     assert ner["types"] == [{"type": "PERSON", "count": 3}]
+
+
+def test_turnsse_map_retrieval_is_live_progress_and_not_persisted() -> None:
+    # Live retrieval progress (#462): the gather node's running/done frames map to a transient
+    # `event: retrieval` SSE frame (status running -> ok, marked `live`) for the chat + Activity
+    # pane, and are INTENTIONALLY never folded into the persisted trace -- the durable per-source
+    # retrieval items are derived post-merge from the unified citations.
+    import json
+
+    from personalai_backend.app import _TurnSse
+    from personalai_backend.turn import TurnEvent
+
+    sse = _TurnSse(run_id=None)
+    running = sse.map(
+        TurnEvent(
+            "retrieval",
+            output={"status": "running", "query": "q", "sources": ["vector", "memory"]},
+        )
+    )
+    assert running is not None
+    head, _, data = running.decode().partition("data: ")
+    assert head.strip() == "event: retrieval"
+    payload = json.loads(data)
+    assert payload["kind"] == "retrieval"
+    assert payload["status"] == "running" and payload["live"] is True
+    assert payload["sources"] == ["vector", "memory"]
+    assert sse.trace == []  # progress-only: nothing persisted
+
+    done = sse.map(
+        TurnEvent(
+            "retrieval",
+            output={
+                "status": "done",
+                "query": "q",
+                "counts": {"vector": 3, "memory": 1},
+                "hits": 4,
+            },
+        )
+    )
+    assert done is not None
+    dp = json.loads(done.decode().partition("data: ")[2])
+    assert dp["status"] == "ok"  # terminal frame normalizes to the "ok" convention
+    assert dp["hits"] == 4 and dp["counts"] == {"vector": 3, "memory": 1}
+    assert sse.trace == []  # still nothing persisted

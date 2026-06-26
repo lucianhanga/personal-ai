@@ -112,6 +112,33 @@ def test_multisource_emits_citations_with_source_kind() -> None:
     assert "vector" in plan["sources"] and "memory" in plan["sources"]
 
 
+def test_multisource_emits_retrieval_progress_running_then_done() -> None:
+    # Live retrieval progress (#462): the gather node brackets its fan-out with a `retrieval`
+    # running frame (before) and a done frame (after, with per-source hit counts), so the otherwise
+    # silent planner->researcher gap shows context being assembled. Both precede the merge node's
+    # `citations` event and the researcher's draft.
+    events = _drain(
+        messages=[ChatMessage(Role.USER, "what do you know")],
+        provider=FakeModelProvider(),
+        model="m",
+        gateway=_gateway(),
+        tools=[],
+        sources=[_vector_source(), _memory_source()],
+        query="what do you know",
+    )
+    retrievals = [e for e in events if e.type == "retrieval"]
+    assert [e.output["status"] for e in retrievals if e.output] == ["running", "done"]
+    running, done = retrievals
+    assert running.output is not None and done.output is not None
+    # The running frame names the sources being queried; the done frame carries per-source counts.
+    assert set(running.output["sources"]) == {"vector", "memory"}
+    assert done.output["counts"] == {"vector": 1, "memory": 1}
+    assert done.output["hits"] == 2
+    # Progress brackets the fan-out, landing before the merge's citations and the researcher draft.
+    types = [e.type for e in events]
+    assert types.index("retrieval") < types.index("citations") < types.index("draft")
+
+
 def test_multisource_derives_query_from_last_user_message() -> None:
     # No explicit query -> planner/gather derive it from the last user message (_last_user_text).
     events = _drain(

@@ -350,14 +350,25 @@ function withUsage(s: ChatState, u: UsageInfo): ChatState {
 const STREAMING_KINDS = new Set(["reasoning", "plan", "critique"]);
 
 /** Append a trace item in order, merging consecutive streamed deltas (reasoning/plan/critique). */
-function appendTrace(list: TraceItem[] | undefined, item: TraceItem): TraceItem[] {
+export function appendTrace(list: TraceItem[] | undefined, item: TraceItem): TraceItem[] {
   const next = [...(list ?? [])];
   const last = next[next.length - 1];
   if (STREAMING_KINDS.has(item.kind) && last?.kind === item.kind) {
     next[next.length - 1] = { ...last, text: (last.text ?? "") + (item.text ?? "") };
-  } else {
-    next.push(item);
+    return next;
   }
+  // Live retrieval progress (#462): the gather node streams a transient running -> done `retrieval`
+  // frame (marked `live`) during the planner->researcher gap. A later live frame REPLACES the prior
+  // one in place so the chip settles (running -> done) instead of stacking. The durable per-source
+  // items (each tagged `source_kind`, streamed only on reload) are distinct and never superseded.
+  if (item.kind === "retrieval" && item.live) {
+    const idx = next.findIndex((t) => t.kind === "retrieval" && t.live);
+    if (idx >= 0) {
+      next[idx] = item;
+      return next;
+    }
+  }
+  next.push(item);
   return next;
 }
 

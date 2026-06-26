@@ -167,11 +167,15 @@ function resourceNode(
   };
 }
 
-// A RAG-prelude trace item's lifecycle state (#437). The backend emits one terminal item per step
-// after the work completes (a 0-hit retrieval is `done`, not error), so `error` vs `done` is the
-// whole story; `in-progress` is reserved for forward-compat (the chips support it).
+// A RAG-prelude trace item's lifecycle state (#437). Persisted items are terminal (a 0-hit
+// retrieval is `done`, not error), so for them `error` vs `done` is the whole story. The live
+// retrieval progress frame (#462) carries `status: "running"` while the gather node fans out over
+// the planner-selected sources — map it to `in-progress` so the chip shows "Retrieving…" until the
+// `done` frame supersedes it.
 function pipelineState(item: TraceItem): PipelineState {
-  return item.status === "error" ? "error" : "done";
+  if (item.status === "error") return "error";
+  if (item.status === "running") return "in-progress";
+  return "done";
 }
 
 // Wrap a RAG-prelude chip (indexing/retrieval/ner) as a spine node with its per-step clock. The
