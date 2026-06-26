@@ -28,6 +28,10 @@ If the database is unreachable the app still runs for plain chat; file/RAG/histo
 
 **UI:** the **Documents** panel → pick a `.txt`, `.md`, `.pdf`, or `.docx`. It is parsed, chunked,
 embedded, and stored; it appears in the list with a chunk count, and **Use my documents** turns on.
+A **scanned / image-only PDF** (no text layer) is **OCR'd on-device** so it indexes like any other
+document. To keep whole **folders** continuously indexed (instead of one-off uploads), and to browse
+the **knowledge graph** of entities across your corpus, see
+[Documents & folders](./documents-and-folders.md).
 
 **API:**
 ```bash

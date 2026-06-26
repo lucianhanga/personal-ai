@@ -24,7 +24,11 @@ the M9 multimodal trio (vision · STT · TTS). The MV3 browser extension (**M10*
 What it does today:
 
 - **Streaming chat** over local Ollama or remote OpenAI-compatible models.
-- **Chat with your documents** — pgvector RAG with inline citations.
+- **Chat with your documents** — pgvector hybrid RAG with inline citations; **scanned PDFs are OCR'd
+  on-device** (RapidOCR), and large attachments are indexed and retrieved, not dumped into the prompt.
+- **Continuously-synced folders** — point Settings → Documents at local folders and they stay indexed
+  as files change (add / edit / delete), fully on-device. A **knowledge graph** of the named entities
+  across your corpus is built alongside the vector index and browsable in the UI.
 - **Memory** you control — long-term + short-term, viewable / editable / erasable.
 - **Tool / MCP gateway**, security-first — permissions, egress allowlist, append-only audit.
 - **Single- or multi-agent** modes (planner → researcher → critic) with durable
@@ -101,8 +105,11 @@ Both modes share the same security seams:
 - **Two durable human-in-the-loop gates** — an **answer-approval gate** and a **blocking
   egress-approval gate** (ADR-0013) that pause the run durably when a tool reaches a
   non-allowlisted host (allow-once / allow-always / deny / inspect).
-- **RAG + memory** — pgvector retrieval over your ingested documents (with citations) plus per-chat
-  short-term and cross-chat long-term memory feed the prompt each turn.
+- **RAG + memory** — pgvector hybrid retrieval over your ingested documents (with citations) plus
+  per-chat short-term and cross-chat long-term memory feed the prompt each turn. Documents arrive via
+  uploads or **continuously-synced local folders** (on-device OCR for scans), and a **knowledge
+  graph** of their entities is built alongside the vector index. See
+  [Documents & folders](./docs/guides/documents-and-folders.md).
 
 Full diagram and rationale: [architecture report](./docs/architecture/PersonalAI-Architecture-Research.md).
 
@@ -133,6 +140,7 @@ The complete provenance register (maintainer, license, maturity, security notes)
 | [Local chat](./docs/guides/local-chat.md) | Run streaming chat over local Ollama models. |
 | [Remote providers](./docs/guides/remote-providers.md) | Use a remote OpenAI-compatible provider (opt-in). |
 | [Files + RAG](./docs/guides/files-and-rag.md) | Chat with your documents (ingestion → pgvector RAG). |
+| [Documents & folders](./docs/guides/documents-and-folders.md) | Continuously-synced folders, on-device OCR, and the entity knowledge graph. |
 | [Memory](./docs/guides/memory.md) | Short-term and long-term memory (view/edit/erase). |
 | [Tools](./docs/guides/tools.md) | Built-in tools and the gateway. |
 | [Agent loop](./docs/guides/agent.md) | Single- and multi-agent modes. |

@@ -61,9 +61,33 @@ Authentication above). `/health` and `/version` stay unversioned and public.
 
 | Method | Path | Response | Notes |
 |---|---|---|---|
-| POST | `/api/v1/files` | `StructuredResult` | Upload a file (txt/md/pdf/docx) → parse/chunk/embed/store. |
+| POST | `/api/v1/files` | `StructuredResult` | Upload a file (txt/md/pdf/docx) → parse/chunk/embed/store. Scanned PDFs are OCR'd on-device; global documents also get named-entity extraction. |
 | GET | `/api/v1/files` | `StructuredResult` | List ingested documents. |
-| DELETE | `/api/v1/files/{document_id}` | `StructuredResult` | Delete a document and its vectors. |
+| DELETE | `/api/v1/files/{document_id}` | `StructuredResult` | Delete a document, its vectors, and its entity mentions. |
+| POST | `/api/v1/files/extract` | `StructuredResult` | Extract text from an uploaded doc (no storage) for the per-question attachment flow. Data includes `ocr` (bool) + `pages` when a scanned PDF was OCR'd. |
+| POST | `/api/v1/conversations/{id}/documents` | `StructuredResult` | Tier-2 ingest-at-attach: index a large attachment into the conversation's RAG scope (idempotent by content hash). |
+
+### Folder sources (Documents v2)
+
+Continuously-synced local folders → the global RAG corpus. All require_context; background sync is local-provider-only / fail-closed.
+
+| Method | Path | Response | Notes |
+|---|---|---|---|
+| POST | `/api/v1/folders` | `StructuredResult` | Register a folder. Body `{path, label?, recursive?, include_globs?, exclude_globs?, max_file_mb?}`; validates the absolute path (errors `E_FOLDER_NOT_FOUND`/`E_FOLDER_NOT_A_DIR`/`E_FOLDER_EXISTS`) and kicks the initial sync. |
+| GET | `/api/v1/folders` | `StructuredResult` | List folder sources + per-source status counts. |
+| GET | `/api/v1/folders/{id}` | `StructuredResult` | Source + paginated per-file status (`?status=&after=&limit=`). |
+| DELETE | `/api/v1/folders/{id}` | `StructuredResult` | Remove a source and purge its indexed chunks + entities (reports `purged_documents`). |
+| POST | `/api/v1/folders/{id}/resync` | `StructuredResult` | Force a full reconciliation (`E_FOLDER_PAUSED` if paused). |
+| POST | `/api/v1/folders/{id}/pause` · `/resume` | `StructuredResult` | Stop / start watching + syncing. |
+| GET | `/api/v1/folders/{id}/events` | `text/event-stream` (SSE) | Live progress: `progress` frames (`{id,status,counts}`) until idle, then a terminal `done`. |
+
+### Entities (knowledge graph)
+
+| Method | Path | Response | Notes |
+|---|---|---|---|
+| GET | `/api/v1/entities` | `StructuredResult` | List entities (`?type=&q=&limit=`); `q` is a fuzzy name search. |
+| GET | `/api/v1/entities/{id}` | `StructuredResult` | An entity + its source `documents` + graph `edges` (`{relation, dst_entity_id}`). |
+| GET | `/api/v1/documents/{document_id}/entities` | `StructuredResult` | Entities extracted from one document. |
 
 ### Conversations
 

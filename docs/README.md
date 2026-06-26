@@ -14,6 +14,8 @@ Start here:
   providers (OpenAI/Azure/vLLM/...) with egress + secrets controls.
 - **[Files + RAG (M3)](./guides/files-and-rag.md)** — ingest documents, chat with citations, and
   persistent conversation history (PostgreSQL + pgvector).
+- **[Documents & folders (Documents v2)](./guides/documents-and-folders.md)** — continuously-synced
+  local folders, on-device OCR for scanned PDFs, and the browsable knowledge graph of your entities.
 - **[Memory (M4)](./guides/memory.md)** — short-term per-chat summary + cross-chat long-term memory
   you can visualize, edit, and erase; incognito chats.
 - **[Tools (M5)](./guides/tools.md)** — the Tool/MCP gateway: permissions, egress allowlist,
