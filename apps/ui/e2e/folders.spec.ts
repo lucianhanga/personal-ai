@@ -204,3 +204,96 @@ test("a register error (E_FOLDER_NOT_FOUND) shows inline; the card is not added"
   await expect(page.getByTestId("folder-add-error")).toContainText("does not exist");
   await expect(page.getByTestId("folder-card")).toHaveCount(0);
 });
+
+// --- pass 2: expand a card -> nested directory tree drill-down -----------------------------------
+
+test("expand a folder card -> the nested file tree renders; expand a subdirectory -> a file row", async ({
+  page,
+}) => {
+  await bootRoutes(page);
+
+  // Seed the list with one folder (idle, a couple synced + one error) so the card is present.
+  const seeded = JSON.parse(folderOut("idle", { synced: 2, error: 1 }));
+  await page.route("**/api/v1/folders", (r) =>
+    json(r, JSON.stringify({ ok: true, data: { folders: [seeded] } })),
+  );
+  // The card's live SSE stream: a single terminal frame keeps counts stable.
+  await page.route("**/api/v1/folders/*/events", (r) =>
+    r.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: 'event: done\ndata: {"id":"f1","status":"idle","counts":{"synced":2,"error":1}}\n\n',
+    }),
+  );
+  // The drill-down detail: a nested directory plus one error file.
+  const DETAIL = {
+    ok: true,
+    data: {
+      source: seeded,
+      total: 3,
+      files: [
+        {
+          rel_path: "reports/2024/q3.pdf",
+          status: "synced",
+          document_id: "doc-1",
+          size_bytes: 2048,
+          error_code: null,
+          error_detail: null,
+          indexed_at: "2026-06-20T00:00:00Z",
+        },
+        {
+          rel_path: "reports/2024/q4.pdf",
+          status: "error",
+          document_id: null,
+          size_bytes: 1024,
+          error_code: "E_PARSE",
+          error_detail: "unreadable PDF",
+          indexed_at: null,
+        },
+        {
+          rel_path: "readme.md",
+          status: "synced",
+          document_id: "doc-2",
+          size_bytes: 64,
+          error_code: null,
+          error_detail: null,
+          indexed_at: "2026-06-20T00:00:00Z",
+        },
+      ],
+    },
+  };
+  await page.route("**/api/v1/folders/*", (r) => json(r, JSON.stringify(DETAIL)));
+
+  await page.goto("/");
+  await expect(page.getByTestId("model-select")).toHaveValue("qwen3-vl:8b");
+  await page.getByTestId("nav-settings").click();
+
+  const card = page.getByTestId("folder-card");
+  await expect(card).toBeVisible();
+
+  // Expand the card -> the detail (Files tab) loads.
+  await page.getByTestId("folder-expand-toggle").click();
+  await expect(page.getByTestId("folder-detail")).toBeVisible();
+  // An error file exists -> the filter defaults to Errors.
+  await expect(page.getByTestId("filter-errors")).toHaveAttribute("aria-pressed", "true");
+
+  // Switch to All so the tree uses manual expand/collapse (collapsed by default).
+  await page.getByTestId("filter-all").click();
+  await expect(page.getByText("q3.pdf")).toHaveCount(0);
+
+  // Expand the "reports" directory -> its "2024" subdirectory appears.
+  await page.getByTestId("dir-toggle").filter({ hasText: "reports" }).click();
+  await expect(page.getByText("2024")).toBeVisible();
+
+  // Expand the "2024" subdirectory -> the file rows render with their status pills.
+  await page.getByTestId("dir-toggle").filter({ hasText: "2024" }).click();
+  const errorRow = page.locator('[data-testid="file-row"][data-status="error"]');
+  await expect(errorRow).toBeVisible();
+  await expect(errorRow).toContainText("q4.pdf");
+  await expect(errorRow.getByTestId("file-status")).toHaveText("Error");
+  await expect(errorRow.getByTestId("file-error")).toContainText("E_PARSE");
+
+  // The Entities tab is the P3 placeholder.
+  await page.getByTestId("folder-detail-tab-entities").click();
+  await expect(page.getByTestId("folder-entities-empty")).toContainText("knowledge-graph extraction");
+});

@@ -9,6 +9,7 @@ import {
   type FolderSource,
   type FolderStatus,
 } from "./api";
+import { FolderDetail } from "./FolderDetail";
 import { RemoveFolderDialog } from "./RemoveFolderDialog";
 
 // Color code (project convention + #458 rule): green idle/synced, amber scanning/in-progress, red
@@ -59,6 +60,8 @@ export function FolderSourceCard({
   const [actionError, setActionError] = useState<string | null>(null);
   const [resyncNotice, setResyncNotice] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  // Drill-down (#458 pass 2): FolderDetail mounts only when expanded, lazy-fetching the file list.
+  const [expanded, setExpanded] = useState(false);
 
   // Reconcile with the authoritative prop when the parent hands a new folder object (e.g. after the
   // list refresh that follows an add). SSE/optimistic updates ride on top between these resets.
@@ -170,6 +173,25 @@ export function FolderSourceCard({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        <button
+          data-testid="folder-expand-toggle"
+          type="button"
+          aria-expanded={expanded}
+          aria-label={expanded ? `Collapse ${name}` : `Expand ${name}`}
+          onClick={() => setExpanded((v) => !v)}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            color: MUTED,
+            fontSize: "0.8rem",
+            padding: 0,
+            lineHeight: 1,
+            flex: "0 0 auto",
+          }}
+        >
+          <span aria-hidden>{expanded ? "▾" : "▸"}</span>
+        </button>
         <strong
           style={{
             fontSize: "0.9rem",
@@ -309,6 +331,9 @@ export function FolderSourceCard({
           Remove
         </button>
       </div>
+
+      {/* Lazy drill-down: mounts (and fetches) only on first expand; unmounts on collapse. */}
+      {expanded && <FolderDetail folder={folder} token={token} liveCounts={counts} />}
 
       {dialogOpen && (
         <RemoveFolderDialog

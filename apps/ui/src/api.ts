@@ -1250,6 +1250,37 @@ export interface FolderError {
   message: string;
 }
 
+// Per-file lifecycle status (the drill-down, #458 pass 2). Same vocabulary as the bucket counts.
+export type FolderFileStatus =
+  | "pending"
+  | "indexing"
+  | "synced"
+  | "stale"
+  | "error"
+  | "deleted";
+
+// One watched file under a folder source. `rel_path` is a POSIX path that CAN be nested
+// (e.g. "reports/2024/q3.pdf") — the detail UI derives a directory tree from these. The backend does
+// NOT store per-stage pipeline meta (no model/ms), so the UI shows only these honest facts.
+export interface FolderFileOut {
+  rel_path: string;
+  status: FolderFileStatus;
+  document_id: string | null; // the global document id when indexed (links to the doc), else null
+  size_bytes: number | null;
+  error_code: string | null;
+  error_detail: string | null;
+  indexed_at: string | null; // ISO timestamp of the last successful index, else null
+}
+
+// A page of a folder source's detail: the source itself plus a keyset page of its files (paginated on
+// `rel_path`, lexicographic — so a directory's files are contiguous). `total` is the full file count
+// when the backend reports it (so the UI can show "X of Y loaded"), else null.
+export interface FolderDetail {
+  source: FolderSource;
+  files: FolderFileOut[];
+  total: number | null;
+}
+
 // register / resync return a discriminated result rather than throwing, so the caller can render the
 // specific structured error (bad path, already-registered, paused) inline instead of a generic toast.
 export type RegisterFolderResult =
@@ -1279,6 +1310,36 @@ export async function fetchFolders(token: string): Promise<FolderSource[]> {
   if (!res.ok) throw new Error(`folders request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { folders?: FolderSource[] } };
   return body.data?.folders ?? [];
+}
+
+/** Fetch one folder source's detail + a keyset page of its files (#458 pass 2). `after` is the last
+ * `rel_path` from the previous page (keyset cursor); `status` narrows server-side; `limit` <= 200.
+ * `total` is read best-effort from whichever count field the backend supplies (else null). */
+export async function fetchFolderDetail(
+  token: string,
+  id: string,
+  opts: { status?: FolderFileStatus; after?: string; limit?: number } = {},
+): Promise<FolderDetail> {
+  const url = new URL(`${API_BASE}/api/v1/folders/${encodeURIComponent(id)}`);
+  if (opts.status) url.searchParams.set("status", opts.status);
+  if (opts.after) url.searchParams.set("after", opts.after);
+  if (opts.limit != null) url.searchParams.set("limit", String(Math.min(opts.limit, 200)));
+  const res = await fetch(url, { headers: authHeaders(token), credentials: CREDS });
+  if (!res.ok) throw new Error(`folder detail failed: ${res.status}`);
+  const body = (await res.json()) as {
+    data?: {
+      source?: FolderSource;
+      files?: FolderFileOut[];
+      // The backend may report the full count under any of these keys; read defensively.
+      total?: number;
+      total_files?: number;
+      file_count?: number;
+    };
+  };
+  const data = body.data;
+  if (!data?.source) throw new Error("folder detail failed");
+  const total = data.total ?? data.total_files ?? data.file_count ?? null;
+  return { source: data.source, files: data.files ?? [], total };
 }
 
 /** Register a folder source. Returns a discriminated result so the form can surface the structured
