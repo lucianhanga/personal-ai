@@ -53,6 +53,18 @@ def test_ocr_pdf_recovers_text_from_image_only_pdf() -> None:
     assert "WORLD" in recovered
 
 
+def test_parse_document_reports_ocr_metadata() -> None:
+    # The OCR path sets ocr=True + pages so the UI can show a truthful "OCR'd N pages" stage (#450).
+    if not ocr_available():
+        pytest.skip("OCR dependencies not installed")
+    from personalai_modality_files import parse_document
+
+    parsed = parse_document(_image_only_pdf("HELLO WORLD"), "scan.pdf")
+    assert parsed.ocr is True
+    assert parsed.pages == 1
+    assert parsed.text.strip() != ""
+
+
 def test_ocr_pdf_raises_when_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     # Slim install: a failed pypdfium2 import -> OcrUnavailableError, not a raw ImportError.
     import builtins

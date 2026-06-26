@@ -408,11 +408,22 @@ _MAX_ACTIVITIES_PER_TURN = 24
 _ACTIVITY_TEXT_CAP = 200  # a short label, not a transcript
 _ACTIVITY_REF_CAP = 256  # resource name/id
 _ACTIVITY_MODEL_CAP = 128
+_ACTIVITY_NOTE_CAP = 80
 _ACTIVITY_MS_MAX = 86_400_000  # 24h in ms
 _ACTIVITY_USAGE_MAX = 10_000_000
-# The architect's closed action enum (#424). Widen this in lockstep if the taxonomy adds actions,
-# or new actions are silently dropped here.
-_ACTIVITY_ACTIONS = frozenset({"image_described", "document_extracted", "audio_transcribed"})
+# The architect's closed action enum (#424), widened for the document-pipeline stages (#450):
+# OCR -> extract -> vectorize -> index, each surfaced as a resource activity. Widen this in lockstep
+# if the taxonomy adds actions, or new actions are silently dropped here.
+_ACTIVITY_ACTIONS = frozenset(
+    {
+        "image_described",
+        "document_extracted",
+        "document_ocred",
+        "document_vectorized",
+        "document_indexed",
+        "audio_transcribed",
+    }
+)
 
 # Sent-message attachment display data (#426): like activities above, these are client-supplied at
 # submit, land verbatim in stored history, and are read back into the transcript. They DO carry user
@@ -487,6 +498,10 @@ def _sanitize_activities(raw: Any) -> list[dict[str, Any]]:
         model = item.get("model")
         if model is not None:
             clean["model"] = str(model)[:_ACTIVITY_MODEL_CAP]
+        note = item.get("note")
+        if note is not None:
+            # Per-stage meta detail (#450), e.g. "35 pages" / "50 chunks" / "this chat".
+            clean["note"] = str(note).strip()[:_ACTIVITY_NOTE_CAP]
         if "ms" in item and item.get("ms") is not None:
             clean["ms"] = _clamp_int(item.get("ms"), 0, _ACTIVITY_MS_MAX, default=0)
         status_val = item.get("status")
@@ -2703,6 +2718,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             text = text[:extract_cap]
         # Document extraction is a local CPU parse — no model (#424). ``model``/``usage`` are
         # honestly null; ``ms`` is the parse wall-clock so the activity still shows a duration.
+        # ``ocr``/``pages`` let the UI surface a truthful "OCR'd N pages" pipeline step (#450).
         return StructuredResult(
             ok=True,
             data={
@@ -2713,6 +2729,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 "model": None,
                 "ms": ms,
                 "usage": None,
+                "ocr": parsed.ocr,
+                "pages": parsed.pages,
             },
         )
 
@@ -2912,6 +2930,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             )
         name, text = docs[0]
         document_id = _conversation_document_id(conversation_id, text)
+        t0 = time.perf_counter()
         try:
             chunks = await _ingest_attachment_doc(
                 storage, config, conversation_id=conversation_id, name=name, text=text
@@ -2919,14 +2938,18 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         except Exception as exc:  # noqa: BLE001 - surface ingest failure to the client (not a turn)
             logger.warning("eager tier-2 ingest failed for %r", name, exc_info=True)
             return StructuredResult(ok=False, error=ErrorInfo(code="E_INGEST", message=str(exc)))
+        ms = round((time.perf_counter() - t0) * 1000)
         # chunks is None when the doc was already indexed (idempotent) — report it as indexed either
-        # way so the UI's chip lands in the same "indexed" state on a re-attach.
+        # way so the chip lands in the same "indexed" state on re-attach. embed_model + ms feed the
+        # "Vectorized N chunks" pipeline step in the activity timeline (#450).
         return StructuredResult(
             ok=True,
             data={
                 "document_id": document_id,
                 "chunk_count": chunks,
                 "already_indexed": chunks is None,
+                "embed_model": config.embed_model,
+                "ms": ms,
             },
         )
 

@@ -388,8 +388,12 @@ test("the Activity panel shows resource + indexing/retrieval steps and a RAG fil
   await expect(
     page.locator('[data-testid="document-attachment"][data-status="large"]'),
   ).toBeVisible();
-  // Live pre-turn resource node (the eager document extract) is visible before sending.
-  await expect(page.getByTestId("timeline-resource")).toContainText("Extracted document — report.pdf");
+  // Live pre-turn document pipeline (#450): extract -> vectorize -> index, each its own resource
+  // node, all visible before sending (the large doc is eagerly ingested at attach).
+  const res = page.getByTestId("timeline-resource");
+  await expect(res.filter({ hasText: "Extracted document — report.pdf" })).toBeVisible();
+  await expect(res.filter({ hasText: "Vectorized document — report.pdf" })).toBeVisible();
+  await expect(res.filter({ hasText: "Indexed document — report.pdf" })).toBeVisible();
 
   await page.getByTestId("composer").fill("what is this");
   await page.getByTestId("send").click();

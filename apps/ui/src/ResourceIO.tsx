@@ -18,6 +18,9 @@ export type ResourceState = "in-progress" | "done" | "error";
 const ACTION_VERB: Record<ResourceAction, string> = {
   image_described: "Described image",
   document_extracted: "Extracted document",
+  document_ocred: "OCR'd document",
+  document_vectorized: "Vectorized document",
+  document_indexed: "Indexed document",
   audio_transcribed: "Transcribed audio",
 };
 
@@ -65,6 +68,7 @@ export function ResourceIO({
   state,
   model,
   ms,
+  note,
   error,
 }: {
   action: ResourceAction;
@@ -72,6 +76,7 @@ export function ResourceIO({
   state: ResourceState;
   model?: string | null;
   ms?: number | null;
+  note?: string | null;
   error?: string | null;
 }): React.ReactElement {
   const [open, setOpen] = useState<boolean>(false);
@@ -122,6 +127,11 @@ export function ResourceIO({
             </div>
           ) : state === "in-progress" ? (
             <div style={{ color: READABLE, fontSize: "0.78rem" }}>working…</div>
+          ) : null}
+          {note ? (
+            <div data-testid="resourceio-note" style={{ color: READABLE, fontSize: "0.78rem" }}>
+              <strong style={{ fontWeight: 600 }}>Detail:</strong> {note}
+            </div>
           ) : null}
           {ms != null && (
             <div style={{ color: READABLE, fontSize: "0.78rem" }}>

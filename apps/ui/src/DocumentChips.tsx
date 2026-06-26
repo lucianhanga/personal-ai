@@ -32,6 +32,13 @@ export interface DocumentAttachment {
   // when attached. `ragState` tracks that so the badge is truthful: "indexing" while embedding,
   // "indexed" once done, "failed" if ingest errored. Undefined until eager ingest starts.
   ragState?: "indexing" | "indexed" | "failed";
+  // #450 document-pipeline metadata, surfaced as Activity stages (OCR -> extract -> vectorize ->
+  // index). `ocr`/`pages` come from extraction; `chunks`/`embedModel`/`vectorizeMs` from eager ingest.
+  ocr?: boolean;
+  pages?: number | null;
+  chunks?: number | null;
+  embedModel?: string | null;
+  vectorizeMs?: number | null;
 }
 
 /** First ~40 chars of the extracted text as a one-line snippet for the chip face. */

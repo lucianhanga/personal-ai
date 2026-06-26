@@ -188,6 +188,9 @@ export function activityTsFromId(id: string): number {
 const ACTIVITY_VERB: Record<ResourceAction, string> = {
   image_described: "Described image",
   document_extracted: "Extracted document",
+  document_ocred: "OCR'd document",
+  document_vectorized: "Vectorized document",
+  document_indexed: "Indexed document",
   audio_transcribed: "Transcribed audio",
 };
 
@@ -198,6 +201,7 @@ function makeActivity(
   model: string | null | undefined,
   ms: number | null | undefined,
   error?: string,
+  note?: string | null,
 ): ResourceActivity {
   return {
     kind: "resource",
@@ -207,6 +211,7 @@ function makeActivity(
     ts: activityTsFromId(id),
     model: model ?? null,
     ms: ms ?? null,
+    ...(note ? { note } : {}),
     ...(error ? { status: "error", error } : {}),
   };
 }
@@ -978,18 +983,24 @@ export function Chat({
   // when it is attached, so it is searchable before the question is sent. Best-effort — on failure
   // the chip falls back to "Indexes on send" and the send-time path ingests it idempotently anyway.
   async function eagerIngestDocument(id: string, name: string, text: string): Promise<void> {
-    const setRag = (ragState: DocumentAttachment["ragState"]): void =>
-      setDocumentAttachments((cur) => cur.map((c) => (c.id === id ? { ...c, ragState } : c)));
+    const patch = (fields: Partial<DocumentAttachment>): void =>
+      setDocumentAttachments((cur) => cur.map((c) => (c.id === id ? { ...c, ...fields } : c)));
     try {
       const convId = await ensureConversation(name);
       if (convId === null) {
-        setRag("failed"); // no persistence (no DB) — it indexes at send if ever persisted
+        patch({ ragState: "failed" }); // no persistence (no DB) — it indexes at send if persisted
         return;
       }
-      await ingestConversationDocument(token, convId, name, text);
-      setRag("indexed");
+      const res = await ingestConversationDocument(token, convId, name, text);
+      // Capture the vectorize meta for the pipeline activity (#450): chunk count + embed model + ms.
+      patch({
+        ragState: "indexed",
+        chunks: res.chunk_count ?? null,
+        embedModel: res.embed_model ?? null,
+        vectorizeMs: res.ms ?? null,
+      });
     } catch {
-      setRag("failed");
+      patch({ ragState: "failed" });
     }
   }
 
@@ -1025,6 +1036,8 @@ export function Chat({
                     status,
                     text: doc.text,
                     ms: doc.ms,
+                    ocr: doc.ocr ?? false,
+                    pages: doc.pages ?? null,
                     // Eager ingest-at-attach (#420): a large doc starts indexing immediately.
                     ...(status === "large" ? { ragState: "indexing" as const } : {}),
                   }
@@ -1074,10 +1087,49 @@ export function Chat({
       ...makeActivity(a.id, "audio_transcribed", a.name, a.model, a.ms, a.error),
       state: a.status === "transcribing" ? "in-progress" : a.status === "error" ? "error" : "done",
     })),
-    ...documentAttachments.map((d): LiveActivity => ({
-      ...makeActivity(d.id, "document_extracted", d.name, null, d.ms, d.error),
-      state: d.status === "extracting" ? "in-progress" : d.status === "error" ? "error" : "done",
-    })),
+    // Document pipeline (#450): each attachment expands into its prep stages so the user sees the
+    // whole flow — OCR (scanned) or Extract (text layer), then Vectorize + Index for large docs that
+    // are eagerly ingested into the chat's RAG scope. Each stage carries its own meta (pages/chunks).
+    ...documentAttachments.flatMap((d): LiveActivity[] => {
+      const stages: LiveActivity[] = [
+        {
+          // Stage 1 — extraction: OCR'd (scanned PDF) OR text-layer extracted (mutually exclusive).
+          ...makeActivity(
+            d.id,
+            d.ocr ? "document_ocred" : "document_extracted",
+            d.name,
+            d.ocr ? "RapidOCR" : null,
+            d.ms,
+            d.error,
+            d.ocr && d.pages ? `${d.pages} pages` : undefined,
+          ),
+          state: d.status === "extracting" ? "in-progress" : d.status === "error" ? "error" : "done",
+        },
+      ];
+      // Stages 2 & 3 — vectorize + index: only large docs are eagerly ingested (#420).
+      if (d.status === "large") {
+        stages.push({
+          ...makeActivity(
+            `${d.id}~vec`,
+            "document_vectorized",
+            d.name,
+            d.embedModel,
+            d.vectorizeMs,
+            d.ragState === "failed" ? "indexing failed" : undefined,
+            d.chunks != null ? `${d.chunks} chunks` : undefined,
+          ),
+          state:
+            d.ragState === "failed" ? "error" : d.ragState === "indexed" ? "done" : "in-progress",
+        });
+        if (d.ragState === "indexed") {
+          stages.push({
+            ...makeActivity(`${d.id}~idx`, "document_indexed", d.name, null, null, undefined, "this chat"),
+            state: "done",
+          });
+        }
+      }
+      return stages;
+    }),
   ];
 
   async function send(): Promise<void> {

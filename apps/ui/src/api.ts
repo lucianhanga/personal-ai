@@ -64,7 +64,15 @@ export interface TraceItem {
 
 // The architect's closed resource-action enum (#424). Extend only by adding a member here AND in the
 // backend `_ACTIVITY_ACTIONS` allowlist, or new actions are silently dropped at the persist boundary.
-export type ResourceAction = "image_described" | "document_extracted" | "audio_transcribed";
+// #424 base actions + the #450 document-pipeline stages (OCR -> extract -> vectorize -> index),
+// each surfaced as a resource activity so the user sees the full prep pipeline for an attachment.
+export type ResourceAction =
+  | "image_described"
+  | "document_extracted"
+  | "document_ocred"
+  | "document_vectorized"
+  | "document_indexed"
+  | "audio_transcribed";
 
 /** A pre-turn resource-processing activity (#424): image describe / document extract / audio
  * transcribe. Buffered client-side as the user prepares a message, then persisted on the user turn's
@@ -75,8 +83,9 @@ export interface ResourceActivity {
   text: string; // human label, e.g. "Described image — cat.jpg"
   ref: string; // resource name/id (filename)
   ts: number; // UTC seconds (the persist boundary clamps far-future/garbage)
-  model?: string | null; // model id (image/audio); null for document parse
+  model?: string | null; // model id (image/audio/embed); null for document parse
   ms?: number | null; // eager-call wall-clock in ms
+  note?: string | null; // #450: per-stage meta detail, e.g. "35 pages" / "50 chunks" / "this chat"
   status?: "ok" | "error"; // defaults to "ok"
   error?: string | null; // message when status === "error"
 }
@@ -553,6 +562,10 @@ export interface ExtractedDocument {
   // wall-clock so the resource activity can still show a duration. Optional for back-compat.
   model?: string | null;
   ms?: number | null;
+  // #450: `ocr` is true when the text came from the OCR fallback (a scanned / image-only PDF) and
+  // `pages` is the PDF page count — so the pipeline activity can show a truthful "OCR'd N pages" step.
+  ocr?: boolean;
+  pages?: number | null;
 }
 
 /** Extract text from an uploaded document (PDF/DOCX/txt/md) for a per-question attachment (#416).
@@ -622,12 +635,20 @@ export async function createConversation(
  * scope when it is attached, before any question is sent — so it is searchable immediately. The
  * backend is idempotent by content-hash, so the later ingest-at-send for the same doc skips.
  */
+export interface IngestedDocument {
+  document_id: string;
+  chunk_count: number | null;
+  already_indexed: boolean;
+  embed_model?: string | null; // #450: embedding model, for the "Vectorized" pipeline activity
+  ms?: number | null; // #450: chunk+embed wall-clock
+}
+
 export async function ingestConversationDocument(
   token: string,
   conversationId: string,
   name: string,
   text: string,
-): Promise<{ document_id: string; chunk_count: number | null; already_indexed: boolean }> {
+): Promise<IngestedDocument> {
   const res = await fetch(`${API_BASE}/api/v1/conversations/${conversationId}/documents`, {
     method: "POST",
     credentials: CREDS,
@@ -637,7 +658,7 @@ export async function ingestConversationDocument(
   if (!res.ok) throw new Error(`document ingest failed: ${res.status}`);
   const body = (await res.json()) as {
     ok?: boolean;
-    data?: { document_id: string; chunk_count: number | null; already_indexed: boolean };
+    data?: IngestedDocument;
     error?: { message?: string };
   };
   if (!body.ok || !body.data) throw new Error(body.error?.message ?? "document ingest failed");

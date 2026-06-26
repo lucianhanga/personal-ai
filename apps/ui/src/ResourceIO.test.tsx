@@ -88,3 +88,25 @@ test("duration formats minutes for long runs", () => {
   fireEvent.click(screen.getByTestId("resourceio-summary"));
   expect(screen.getByTestId("resourceio-detail")).toHaveTextContent("Duration: 2m 5s");
 });
+
+test("the document pipeline stages render their verbs + per-stage detail note (#450)", () => {
+  // OCR stage: verb + the "N pages" detail.
+  const { rerender } = render(
+    <ResourceIO action="document_ocred" refName="scan.pdf" state="done" model="RapidOCR" ms={22000} note="35 pages" />,
+  );
+  expect(screen.getByTestId("resourceio-summary")).toHaveTextContent("OCR'd document — scan.pdf");
+  fireEvent.click(screen.getByTestId("resourceio-summary"));
+  expect(screen.getByTestId("resourceio-note")).toHaveTextContent("Detail: 35 pages");
+
+  // Vectorize stage: verb + the "N chunks" detail + embed model.
+  rerender(
+    <ResourceIO action="document_vectorized" refName="scan.pdf" state="done" model="qwen3-embedding:0.6b" ms={1200} note="50 chunks" />,
+  );
+  expect(screen.getByTestId("resourceio-summary")).toHaveTextContent("Vectorized document — scan.pdf");
+  expect(screen.getByTestId("resourceio-note")).toHaveTextContent("Detail: 50 chunks");
+
+  // Index stage: verb + scope detail.
+  rerender(<ResourceIO action="document_indexed" refName="scan.pdf" state="done" note="this chat" />);
+  expect(screen.getByTestId("resourceio-summary")).toHaveTextContent("Indexed document — scan.pdf");
+  expect(screen.getByTestId("resourceio-note")).toHaveTextContent("Detail: this chat");
+});

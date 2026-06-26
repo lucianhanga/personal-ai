@@ -16,10 +16,17 @@ _TEXT_EXTS = {".txt": "text/plain", ".md": "text/markdown", ".markdown": "text/m
 
 @dataclass(frozen=True)
 class ParsedDocument:
-    """Extracted text plus the detected MIME type."""
+    """Extracted text plus the detected MIME type.
+
+    ``ocr`` is True when the text came from the OCR fallback (a scanned / image-only PDF, #450)
+    rather than an embedded text layer; ``pages`` is the PDF page count when known. Both let the UI
+    surface a truthful "OCR'd N pages" step in the document pipeline activity timeline.
+    """
 
     text: str
     mime: str
+    ocr: bool = False
+    pages: int | None = None
 
 
 class UnsupportedFileTypeError(Exception):
@@ -41,7 +48,9 @@ def parse_document(content: bytes, filename: str, *, enable_ocr: bool = True) ->
         from pypdf import PdfReader
 
         reader = PdfReader(io.BytesIO(content))
+        pages = len(reader.pages)
         text = "\n\n".join((page.extract_text() or "") for page in reader.pages)
+        ocr_used = False
         if not text.strip() and enable_ocr:
             # No text layer: a scanned / image-only PDF. OCR it when available (#450); otherwise
             # leave the text empty so the caller shows the "no text found" empty state.
@@ -49,7 +58,8 @@ def parse_document(content: bytes, filename: str, *, enable_ocr: bool = True) ->
 
             if ocr_available():
                 text = ocr_pdf(content)
-        return ParsedDocument(text=text, mime="application/pdf")
+                ocr_used = bool(text.strip())
+        return ParsedDocument(text=text, mime="application/pdf", ocr=ocr_used, pages=pages)
     if ext == ".docx":
         import docx
 

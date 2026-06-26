@@ -64,7 +64,26 @@ async def _chunk_embed_store(
         for index, vector in enumerate(embeddings.vectors)
     ]
     await vectors.upsert(records, scope=scope)
+    await _maybe_extract_entities(text, scope=scope, provider=provider)
     return len(chunks)
+
+
+async def _maybe_extract_entities(text: str, *, scope: Scope, provider: ModelProvider) -> None:
+    """NER seam (#420 Phase 6 / KAG): extract named entities and feed the entity-aggregation /
+    knowledge-graph layer.
+
+    Scope-gated by design: NER runs ONLY for the **durable global corpus** (Settings -> Documents,
+    ``scope.is_global``), where entities accumulate across documents and have a consumer. It is
+    SKIPPED for ephemeral conversation/project-scoped attachments (tier-2), whose entities have no
+    durable destination — so reusing this shared pipeline for a global ingest automatically gets
+    NER, while an attachment ingest does not. Currently a deliberate no-op (the real LLM-NER pass +
+    entity store is the deferred Phase 6 work; tracked separately)."""
+    if not scope.is_global:
+        return
+    # Phase 6: run an LLM-NER pass over `text` via `provider`, persist the entities, and feed the
+    # aggregation/KAG GraphSource. Intentionally a no-op for now — placement guarantees that when
+    # it is, every global ingest path (Settings -> Documents) flows through it.
+    return
 
 
 async def ingest_file(

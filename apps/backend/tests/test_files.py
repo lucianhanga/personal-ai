@@ -366,6 +366,9 @@ def test_eager_ingest_attachment_endpoint() -> None:
         assert first.json()["ok"] is True
         assert data["chunk_count"] > 0
         assert data["already_indexed"] is False
+        # Vectorize meta for the pipeline activity (#450): embed model + a duration.
+        assert data["embed_model"]
+        assert data["ms"] >= 0
 
         # Idempotent: the same content re-posted skips re-embedding (no duplicate vectors).
         again = client.post(
