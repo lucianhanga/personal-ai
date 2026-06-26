@@ -334,6 +334,15 @@ class ConversationTruncate(BaseModel):
     from_message_id: int
 
 
+class AttachmentIngest(BaseModel):
+    """Request body for tier-2 ingest-at-attach (#420): chunk+embed a large attachment into a
+    conversation's RAG scope eagerly (when the file is attached, before any question is sent) so the
+    doc is searchable immediately. Idempotent by content-hash; the send-time path then skips."""
+
+    name: str
+    text: str
+
+
 class MemoryUpdate(BaseModel):
     """Request body for editing a memory."""
 
@@ -399,11 +408,22 @@ _MAX_ACTIVITIES_PER_TURN = 24
 _ACTIVITY_TEXT_CAP = 200  # a short label, not a transcript
 _ACTIVITY_REF_CAP = 256  # resource name/id
 _ACTIVITY_MODEL_CAP = 128
+_ACTIVITY_NOTE_CAP = 80
 _ACTIVITY_MS_MAX = 86_400_000  # 24h in ms
 _ACTIVITY_USAGE_MAX = 10_000_000
-# The architect's closed action enum (#424). Widen this in lockstep if the taxonomy adds actions,
-# or new actions are silently dropped here.
-_ACTIVITY_ACTIONS = frozenset({"image_described", "document_extracted", "audio_transcribed"})
+# The architect's closed action enum (#424), widened for the document-pipeline stages (#450):
+# OCR -> extract -> vectorize -> index, each surfaced as a resource activity. Widen this in lockstep
+# if the taxonomy adds actions, or new actions are silently dropped here.
+_ACTIVITY_ACTIONS = frozenset(
+    {
+        "image_described",
+        "document_extracted",
+        "document_ocred",
+        "document_vectorized",
+        "document_indexed",
+        "audio_transcribed",
+    }
+)
 
 # Sent-message attachment display data (#426): like activities above, these are client-supplied at
 # submit, land verbatim in stored history, and are read back into the transcript. They DO carry user
@@ -478,6 +498,10 @@ def _sanitize_activities(raw: Any) -> list[dict[str, Any]]:
         model = item.get("model")
         if model is not None:
             clean["model"] = str(model)[:_ACTIVITY_MODEL_CAP]
+        note = item.get("note")
+        if note is not None:
+            # Per-stage meta detail (#450), e.g. "35 pages" / "50 chunks" / "this chat".
+            clean["note"] = str(note).strip()[:_ACTIVITY_NOTE_CAP]
         if "ms" in item and item.get("ms") is not None:
             clean["ms"] = _clamp_int(item.get("ms"), 0, _ACTIVITY_MS_MAX, default=0)
         status_val = item.get("status")
@@ -1352,6 +1376,46 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         sources.append(GraphSource())
         return sources
 
+    async def _ingest_attachment_doc(
+        storage: Storage,
+        config: CoreConfig,
+        *,
+        conversation_id: str,
+        name: str,
+        text: str,
+    ) -> int | None:
+        """Idempotently chunk+embed ONE large attachment into ``conversation_id``'s scope.
+
+        Returns the chunk count if it was ingested on THIS call, or ``None`` if a document with the
+        same content-addressed id already exists (idempotent skip — no duplicate vectors). Shared by
+        tier-2 ingest-at-attach (the eager endpoint, #420) and ingest-at-send (chat) so each derives
+        the SAME ``_conversation_document_id`` and never double-embeds the same file."""
+        document_id = _conversation_document_id(conversation_id, text)
+        if await storage.documents.get(document_id) is not None:
+            return None
+        embed_provider = _resolve_provider(config.embed_provider)
+        scope = Scope(conversation_id=conversation_id)
+        result = await ingest_text(
+            text=text,
+            name=name,
+            document_id=document_id,
+            embed_model=config.embed_model,
+            provider=embed_provider,
+            vectors=storage.vectors,
+            scope=scope,
+        )
+        # Record the document in the conversation scope so the PR1 FK cascade GCs it on conversation
+        # delete and the next re-send/ingest finds it and skips. Not in Settings -> Documents.
+        await storage.documents.add(
+            id=result.document_id,
+            name=result.name,
+            mime=result.mime,
+            size_bytes=result.size_bytes,
+            chunk_count=result.chunk_count,
+            scope=scope,
+        )
+        return result.chunk_count
+
     async def _ingest_turn_attachments(
         docs: list[tuple[str, str]],
         *,
@@ -1374,43 +1438,21 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         config: CoreConfig = app.state.config
         if storage is None:
             return
-        embed_provider = _resolve_provider(config.embed_provider)
-        scope = Scope(conversation_id=conversation_id)
         for name, text in docs:
-            document_id = _conversation_document_id(conversation_id, text)
             started = time.perf_counter()
             try:
-                # Idempotency: a document record with this content-addressed id means the chunks are
-                # already embedded for this conversation -> skip (no duplicate vectors on re-send).
-                # No work done -> no indexing trace item (anti-noise, #437 section 4).
-                if await storage.documents.get(document_id) is not None:
+                # Idempotent skip when the same content-addressed doc is already indexed (e.g. it
+                # was ingested eagerly at attach, #420) -> chunks is None -> no work, no trace item.
+                chunks = await _ingest_attachment_doc(
+                    storage, config, conversation_id=conversation_id, name=name, text=text
+                )
+                if chunks is None:
                     continue
-                result = await ingest_text(
-                    text=text,
-                    name=name,
-                    document_id=document_id,
-                    embed_model=config.embed_model,
-                    provider=embed_provider,
-                    vectors=storage.vectors,
-                    scope=scope,
-                )
-                # Record the document in the conversation scope so it is GC'd by the PR1 FK cascade
-                # (conversation delete -> documents+vectors rows gone) and so the next re-send finds
-                # it and skips. It is NOT listed by Settings -> Documents (that filters global
-                # scope).
-                await storage.documents.add(
-                    id=result.document_id,
-                    name=result.name,
-                    mime=result.mime,
-                    size_bytes=result.size_bytes,
-                    chunk_count=result.chunk_count,
-                    scope=scope,
-                )
                 if prelude is not None:
                     prelude.append(
                         _indexing_item(
                             name,
-                            chunks=result.chunk_count,
+                            chunks=chunks,
                             ms=round((time.perf_counter() - started) * 1000),
                         )
                     )
@@ -2659,7 +2701,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             )
         t0 = time.perf_counter()
         try:
-            parsed = parse_document(content, file.filename or "document")
+            # Threaded: a scanned PDF falls back to CPU-bound OCR (#450), which would otherwise
+            # block the event loop for the whole document (~0.6s/page).
+            parsed = await asyncio.to_thread(parse_document, content, file.filename or "document")
         except UnsupportedFileTypeError as exc:
             return StructuredResult(
                 ok=False, error=ErrorInfo(code="E_UNSUPPORTED_FILE", message=str(exc))
@@ -2674,6 +2718,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             text = text[:extract_cap]
         # Document extraction is a local CPU parse — no model (#424). ``model``/``usage`` are
         # honestly null; ``ms`` is the parse wall-clock so the activity still shows a duration.
+        # ``ocr``/``pages`` let the UI surface a truthful "OCR'd N pages" pipeline step (#450).
         return StructuredResult(
             ok=True,
             data={
@@ -2684,6 +2729,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 "model": None,
                 "ms": ms,
                 "usage": None,
+                "ocr": parsed.ocr,
+                "pages": parsed.pages,
             },
         )
 
@@ -2856,6 +2903,53 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 "conversation_id": conversation_id,
                 "from_message_id": body.from_message_id,
                 "deleted_count": len(deleted),
+            },
+        )
+
+    @app.post(
+        "/api/v1/conversations/{conversation_id}/documents",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def ingest_conversation_document(
+        conversation_id: str, body: AttachmentIngest
+    ) -> StructuredResult:
+        # Tier-2 ingest-at-attach (#420): index a large attachment into THIS conversation's RAG
+        # scope immediately, before any question is sent, so the doc is searchable right away (the
+        # chip can show a truthful "Indexed" state). Idempotent by content-hash id — a re-attach or
+        # the later ingest-at-send finds the existing record and skips. Tenant/RLS safety mirrors
+        # truncate: the conversation must exist under the caller's tenant (RLS), else 404.
+        storage = _require_storage()
+        config: CoreConfig = app.state.config
+        if await storage.conversations.get(conversation_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation")
+        docs = _ingest_docs_from_turn([{"name": body.name, "text": body.text}])
+        if not docs:
+            return StructuredResult(
+                ok=False, error=ErrorInfo(code="E_EMPTY_DOC", message="no text to ingest")
+            )
+        name, text = docs[0]
+        document_id = _conversation_document_id(conversation_id, text)
+        t0 = time.perf_counter()
+        try:
+            chunks = await _ingest_attachment_doc(
+                storage, config, conversation_id=conversation_id, name=name, text=text
+            )
+        except Exception as exc:  # noqa: BLE001 - surface ingest failure to the client (not a turn)
+            logger.warning("eager tier-2 ingest failed for %r", name, exc_info=True)
+            return StructuredResult(ok=False, error=ErrorInfo(code="E_INGEST", message=str(exc)))
+        ms = round((time.perf_counter() - t0) * 1000)
+        # chunks is None when the doc was already indexed (idempotent) — report it as indexed either
+        # way so the chip lands in the same "indexed" state on re-attach. embed_model + ms feed the
+        # "Vectorized N chunks" pipeline step in the activity timeline (#450).
+        return StructuredResult(
+            ok=True,
+            data={
+                "document_id": document_id,
+                "chunk_count": chunks,
+                "already_indexed": chunks is None,
+                "embed_model": config.embed_model,
+                "ms": ms,
             },
         )
 

@@ -159,6 +159,7 @@ function resourceNode(
           state={state}
           model={activity.model}
           ms={activity.ms}
+          note={activity.note}
           error={activity.error}
         />
       </div>

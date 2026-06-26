@@ -742,6 +742,17 @@ test("a large document is sent in documents_full for RAG ingest, not folded inli
     text: big,
     truncated: false,
   });
+  // Eager ingest-at-attach (#420): persistence on + a conversation create + the ingest call all
+  // succeed, so the large doc reaches the truthful "indexed" badge.
+  vi.spyOn(api, "fetchConversations").mockResolvedValue([]);
+  vi.spyOn(api, "createConversation").mockResolvedValue({
+    id: "c1",
+    title: "report.pdf",
+    updated_at: "2026-06-07T00:00:00Z",
+  });
+  const ingest = vi
+    .spyOn(api, "ingestConversationDocument")
+    .mockResolvedValue({ document_id: "d1", chunk_count: 5, already_indexed: false });
   const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
     onDelta("ok");
   });
@@ -755,9 +766,13 @@ test("a large document is sent in documents_full for RAG ingest, not folded inli
   await waitFor(() =>
     expect(screen.getByTestId("document-attachment")).toHaveAttribute("data-status", "large"),
   );
-  // A large doc carries the amber "Searched in this chat" affordance (RAG-indexed, not inline).
+  // A large doc carries the amber "Searched in this chat" affordance (RAG-indexed, not inline). The
+  // label is truthful to eager ingest (#420): it lands on "Searched in this chat" once ingest done.
   expect(screen.getByTestId("document-retrieval-badge")).toHaveAttribute("data-retrieval", "rag");
-  expect(screen.getByTestId("document-retrieval-badge")).toHaveTextContent(/searched in this chat/i);
+  await waitFor(() =>
+    expect(screen.getByTestId("document-retrieval-badge")).toHaveTextContent(/searched in this chat/i),
+  );
+  expect(ingest).toHaveBeenCalledWith("demo", "c1", "report.pdf", big);
 
   // The full text is still reachable for read/copy via the panel.
   fireEvent.focus(screen.getByTestId("document-attachment"));

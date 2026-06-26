@@ -47,6 +47,52 @@ def test_parse_pdf() -> None:
     assert parsed.mime == "application/pdf"
 
 
+def _blank_pdf() -> bytes:
+    """A valid PDF with a blank page -> no text layer (stands in for a scanned/image-only PDF)."""
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=200)
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
+
+def test_pdf_without_text_layer_falls_back_to_ocr(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A scanned PDF yields no pypdf text -> parse_document delegates to OCR (#450) when available.
+    import personalai_modality_files.ocr as ocr_mod
+
+    monkeypatch.setattr(ocr_mod, "ocr_available", lambda: True)
+    monkeypatch.setattr(ocr_mod, "ocr_pdf", lambda content, **kw: "OCR RECOVERED TEXT")
+    parsed = parse_document(_blank_pdf(), "scan.pdf")
+    assert parsed.text == "OCR RECOVERED TEXT"
+    assert parsed.mime == "application/pdf"
+
+
+def test_pdf_without_text_layer_degrades_when_ocr_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Slim install: no OCR deps -> empty text (the "no text found" state), OCR never invoked.
+    import personalai_modality_files.ocr as ocr_mod
+
+    monkeypatch.setattr(ocr_mod, "ocr_available", lambda: False)
+    monkeypatch.setattr(
+        ocr_mod, "ocr_pdf", lambda *a, **k: pytest.fail("ocr_pdf must not run when unavailable")
+    )
+    parsed = parse_document(_blank_pdf(), "scan.pdf")
+    assert parsed.text.strip() == ""
+
+
+def test_enable_ocr_false_skips_ocr_entirely(monkeypatch: pytest.MonkeyPatch) -> None:
+    import personalai_modality_files.ocr as ocr_mod
+
+    monkeypatch.setattr(
+        ocr_mod, "ocr_available", lambda: pytest.fail("availability must not be checked")
+    )
+    parsed = parse_document(_blank_pdf(), "scan.pdf", enable_ocr=False)
+    assert parsed.text.strip() == ""
+
+
 def test_unsupported_type_raises() -> None:
     with pytest.raises(UnsupportedFileTypeError):
         parse_document(b"...", "image.heic")

@@ -124,6 +124,10 @@ async function withConversation(page: Page, messages: unknown[], chatSSE: string
   await page.route("**/api/v1/conversations/c1", (r) =>
     json(r, JSON.stringify({ ok: true, data: { id: "c1", title: "chat", messages } })),
   );
+  // Eager ingest-at-attach (#420): a large doc indexes into the conversation scope on attach.
+  await page.route("**/api/v1/conversations/c1/documents", (r) =>
+    json(r, '{"ok":true,"data":{"document_id":"d1","chunk_count":5,"already_indexed":false}}'),
+  );
   await page.route("**/api/v1/chat", (r) =>
     r.fulfill({ status: 200, contentType: "text/event-stream", body: chatSSE }),
   );
@@ -230,6 +234,71 @@ test("a small document folds inline; a large document is RAG-indexed (Searched i
   await expect(page.getByTestId("document-retrieval-badge").filter({ hasText: /searched in this chat/i })).toBeVisible();
 });
 
+// --- RAG trigger: the /chat request must carry documents_full + use_rag + conversation_id --------
+
+test("large doc send carries documents_full + use_rag + conversation_id in the /chat request", async ({
+  page,
+}) => {
+  await bootRoutes(page);
+  const bigText = "lorem ipsum ".repeat(3000); // over the inline gate -> `large`
+  await page.route("**/api/v1/files/extract", (r) =>
+    json(
+      r,
+      JSON.stringify({
+        ok: true,
+        data: { name: "report.pdf", mime: "application/pdf", text: bigText, truncated: false, model: null, ms: 30 },
+      }),
+    ),
+  );
+
+  // Capture the POST /chat request body — the ground truth of what the browser sends.
+  let chatBody: { use_rag?: boolean; conversation_id?: string; messages?: { role: string; documents_full?: unknown }[] } | null = null;
+  let ingestBody: { name?: string; text?: string } | null = null;
+  const convBody = JSON.stringify({ ok: true, data: { id: "c1", title: "chat", updated_at: "2026-06-07T00:00:00Z" } });
+  await page.route("**/api/v1/conversations", (r) =>
+    r.request().method() === "POST" ? json(r, convBody) : json(r, '{"ok":true,"data":{"conversations":[]}}'),
+  );
+  // Eager ingest-at-attach (#420): capture the document ingest call fired on attach.
+  await page.route("**/api/v1/conversations/c1/documents", (r) => {
+    ingestBody = r.request().postDataJSON();
+    return json(r, '{"ok":true,"data":{"document_id":"d1","chunk_count":5,"already_indexed":false}}');
+  });
+  await page.route("**/api/v1/conversations/c1", (r) =>
+    json(r, '{"ok":true,"data":{"id":"c1","title":"chat","messages":[]}}'),
+  );
+  await page.route("**/api/v1/chat", (r) => {
+    chatBody = r.request().postDataJSON();
+    return r.fulfill({ status: 200, contentType: "text/event-stream", body: ANSWER_SSE });
+  });
+
+  await page.goto("/");
+  await expect(page.getByTestId("model-select")).toHaveValue("qwen3-vl:8b");
+
+  // Attach the large doc; the chip must classify as `large` (otherwise it never enters documents_full).
+  await dropFiles(page, [{ name: "report.pdf", type: "application/pdf" }]);
+  await expect(page.locator('[data-testid="document-attachment"][data-status="large"]')).toBeVisible();
+  // Eager ingest-at-attach: the doc is indexed BEFORE sending; the chip ends in the "indexed" badge.
+  await expect(
+    page.getByTestId("document-retrieval-badge").filter({ hasText: /searched in this chat/i }),
+  ).toBeVisible();
+  expect(ingestBody).not.toBeNull();
+  expect(ingestBody!.name).toBe("report.pdf");
+  expect(ingestBody!.text).toBe(bigText);
+  // "Use my documents" (use_rag) must be on by default.
+  await expect(page.getByTestId("rag-toggle")).toBeChecked();
+
+  await page.getByTestId("composer").fill("summarize the document");
+  await page.getByTestId("send").click();
+  await expect(page.getByTestId("msg-assistant")).toContainText("Sure, here.");
+
+  // Assert the request that drives RAG ingest carried everything the backend gate (app.py:1642) needs.
+  expect(chatBody).not.toBeNull();
+  expect(chatBody!.use_rag).toBe(true);
+  expect(chatBody!.conversation_id).toBe("c1");
+  const lastUser = [...(chatBody!.messages ?? [])].reverse().find((m) => m.role === "user");
+  expect(lastUser?.documents_full).toEqual([{ name: "report.pdf", text: bigText }]);
+});
+
 // --- #446: scanned / image-only PDF -> "no text found" + explanation ----------------------------
 
 test("#446: a scanned/image-only PDF shows 'no text found' and an explanation, not a blank panel", async ({
@@ -319,8 +388,12 @@ test("the Activity panel shows resource + indexing/retrieval steps and a RAG fil
   await expect(
     page.locator('[data-testid="document-attachment"][data-status="large"]'),
   ).toBeVisible();
-  // Live pre-turn resource node (the eager document extract) is visible before sending.
-  await expect(page.getByTestId("timeline-resource")).toContainText("Extracted document — report.pdf");
+  // Live pre-turn document pipeline (#450): extract -> vectorize -> index, each its own resource
+  // node, all visible before sending (the large doc is eagerly ingested at attach).
+  const res = page.getByTestId("timeline-resource");
+  await expect(res.filter({ hasText: "Extracted document — report.pdf" })).toBeVisible();
+  await expect(res.filter({ hasText: "Vectorized document — report.pdf" })).toBeVisible();
+  await expect(res.filter({ hasText: "Indexed document — report.pdf" })).toBeVisible();
 
   await page.getByTestId("composer").fill("what is this");
   await page.getByTestId("send").click();

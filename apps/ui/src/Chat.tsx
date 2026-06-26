@@ -14,6 +14,7 @@ import {
   fetchSettings,
   fetchTranscribeEnabled,
   fetchTtsEnabled,
+  ingestConversationDocument,
   renameConversation,
   resumeChat,
   saveSettings,
@@ -187,6 +188,9 @@ export function activityTsFromId(id: string): number {
 const ACTIVITY_VERB: Record<ResourceAction, string> = {
   image_described: "Described image",
   document_extracted: "Extracted document",
+  document_ocred: "OCR'd document",
+  document_vectorized: "Vectorized document",
+  document_indexed: "Indexed document",
   audio_transcribed: "Transcribed audio",
 };
 
@@ -197,6 +201,7 @@ function makeActivity(
   model: string | null | undefined,
   ms: number | null | undefined,
   error?: string,
+  note?: string | null,
 ): ResourceActivity {
   return {
     kind: "resource",
@@ -206,6 +211,7 @@ function makeActivity(
     ts: activityTsFromId(id),
     model: model ?? null,
     ms: ms ?? null,
+    ...(note ? { note } : {}),
     ...(error ? { status: "error", error } : {}),
   };
 }
@@ -214,8 +220,9 @@ function makeActivity(
 // enough to stay understandable, small enough to bound vision tokens, payload, and DB storage.
 const MAX_IMAGES = 6;
 // A document whose extracted text is at/under this token estimate folds inline; over it, the chip is
-// gated `large` and NOT folded (Tier-2 ephemeral RAG is a later phase, #420). ~6k tokens ≈ 4-5 pages.
-const DOC_INLINE_TOKEN_GATE = 6000;
+// gated `large` and ingested into conversation-scoped RAG at send (Tier-2, #436/#420) instead of
+// folding. Kept low so all but the smallest docs are retrieved (not dumped) into context.
+const DOC_INLINE_TOKEN_GATE = 800;
 const DOC_MIMES = new Set(["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain", "text/markdown"]);
 const DOC_EXTS = /\.(pdf|docx|txt|md|markdown)$/i;
 function isDocumentFile(f: File): boolean {
@@ -428,6 +435,9 @@ export function Chat({
     })),
   );
   const docAbortRef = useRef<Map<string, AbortController>>(new Map());
+  // Collapses concurrent eager-ingest conversation creates (#420) onto one in-flight create, so
+  // dropping two large docs at once never spawns two conversations. Cleared when a new chat starts.
+  const ensureConvRef = useRef<Promise<string | null> | null>(null);
   // True while an image is being dragged over the composer (drop-to-attach affordance, #324).
   const [dragOver, setDragOver] = useState(false);
   // Voice input (M9.2): whether STT is configured, and the live recording state.
@@ -617,6 +627,7 @@ export function Chat({
     setChats((prev) => ({ ...prev, [NEW_CHAT]: EMPTY_CHAT }));
     setActiveId(null);
     setError(null);
+    ensureConvRef.current = null; // next eager ingest creates a fresh conversation (#420)
   }
 
   async function openConversation(id: string): Promise<void> {
@@ -944,6 +955,55 @@ export function Chat({
   const doneAudio = audioAttachments.filter((a) => a.status === "done");
   const audioTranscribing = audioAttachments.some((a) => a.status === "transcribing");
 
+  // Ensure a persisted conversation exists and return its id (or null when persistence is off).
+  // Used by eager ingest-at-attach (#420) so a large doc is indexed BEFORE the first send. Mirrors
+  // the lazy create the send flow does: create the conversation, migrate the optimistic NEW_CHAT
+  // state to the real id, focus it. The ref guard collapses concurrent callers (two large docs
+  // dropped at once) onto ONE creation so a second conversation isn't spawned.
+  async function ensureConversation(titleHint: string): Promise<string | null> {
+    if (activeId !== null) return activeId;
+    if (!persistence) return null;
+    if (ensureConvRef.current) return ensureConvRef.current;
+    const p = (async (): Promise<string | null> => {
+      const conv = await createConversation(token, titleHint.slice(0, 60) || "New chat", incognito);
+      setChats((prev) => {
+        const cur = prev[NEW_CHAT] ?? EMPTY_CHAT;
+        const { [NEW_CHAT]: _omit, ...rest } = prev;
+        return { ...rest, [conv.id]: cur };
+      });
+      setActiveId((cur) => (cur === null ? conv.id : cur));
+      setConversations(await fetchConversations(token));
+      return conv.id;
+    })();
+    ensureConvRef.current = p;
+    return p;
+  }
+
+  // Tier-2 ingest-at-attach (#420): eagerly index a `large` document into the conversation RAG scope
+  // when it is attached, so it is searchable before the question is sent. Best-effort — on failure
+  // the chip falls back to "Indexes on send" and the send-time path ingests it idempotently anyway.
+  async function eagerIngestDocument(id: string, name: string, text: string): Promise<void> {
+    const patch = (fields: Partial<DocumentAttachment>): void =>
+      setDocumentAttachments((cur) => cur.map((c) => (c.id === id ? { ...c, ...fields } : c)));
+    try {
+      const convId = await ensureConversation(name);
+      if (convId === null) {
+        patch({ ragState: "failed" }); // no persistence (no DB) — it indexes at send if persisted
+        return;
+      }
+      const res = await ingestConversationDocument(token, convId, name, text);
+      // Capture the vectorize meta for the pipeline activity (#450): chunk count + embed model + ms.
+      patch({
+        ragState: "indexed",
+        chunks: res.chunk_count ?? null,
+        embedModel: res.embed_model ?? null,
+        vectorizeMs: res.ms ?? null,
+      });
+    } catch {
+      patch({ ragState: "failed" });
+    }
+  }
+
   // Extract text from each dropped document; gate small (folds) vs large (shown, not folded) (#416).
   function onDocumentFiles(files: File[]): void {
     for (const file of files) {
@@ -969,8 +1029,22 @@ export function Chat({
                 ? "small"
                 : "large";
           setDocumentAttachments((cur) =>
-            cur.map((c) => (c.id === id ? { ...c, status, text: doc.text, ms: doc.ms } : c)),
+            cur.map((c) =>
+              c.id === id
+                ? {
+                    ...c,
+                    status,
+                    text: doc.text,
+                    ms: doc.ms,
+                    ocr: doc.ocr ?? false,
+                    pages: doc.pages ?? null,
+                    // Eager ingest-at-attach (#420): a large doc starts indexing immediately.
+                    ...(status === "large" ? { ragState: "indexing" as const } : {}),
+                  }
+                : c,
+            ),
           );
+          if (status === "large") void eagerIngestDocument(id, file.name, doc.text);
         })
         .catch((e: unknown) => {
           docAbortRef.current.delete(id);
@@ -1013,10 +1087,49 @@ export function Chat({
       ...makeActivity(a.id, "audio_transcribed", a.name, a.model, a.ms, a.error),
       state: a.status === "transcribing" ? "in-progress" : a.status === "error" ? "error" : "done",
     })),
-    ...documentAttachments.map((d): LiveActivity => ({
-      ...makeActivity(d.id, "document_extracted", d.name, null, d.ms, d.error),
-      state: d.status === "extracting" ? "in-progress" : d.status === "error" ? "error" : "done",
-    })),
+    // Document pipeline (#450): each attachment expands into its prep stages so the user sees the
+    // whole flow — OCR (scanned) or Extract (text layer), then Vectorize + Index for large docs that
+    // are eagerly ingested into the chat's RAG scope. Each stage carries its own meta (pages/chunks).
+    ...documentAttachments.flatMap((d): LiveActivity[] => {
+      const stages: LiveActivity[] = [
+        {
+          // Stage 1 — extraction: OCR'd (scanned PDF) OR text-layer extracted (mutually exclusive).
+          ...makeActivity(
+            d.id,
+            d.ocr ? "document_ocred" : "document_extracted",
+            d.name,
+            d.ocr ? "RapidOCR" : null,
+            d.ms,
+            d.error,
+            d.ocr && d.pages ? `${d.pages} pages` : undefined,
+          ),
+          state: d.status === "extracting" ? "in-progress" : d.status === "error" ? "error" : "done",
+        },
+      ];
+      // Stages 2 & 3 — vectorize + index: only large docs are eagerly ingested (#420).
+      if (d.status === "large") {
+        stages.push({
+          ...makeActivity(
+            `${d.id}~vec`,
+            "document_vectorized",
+            d.name,
+            d.embedModel,
+            d.vectorizeMs,
+            d.ragState === "failed" ? "indexing failed" : undefined,
+            d.chunks != null ? `${d.chunks} chunks` : undefined,
+          ),
+          state:
+            d.ragState === "failed" ? "error" : d.ragState === "indexed" ? "done" : "in-progress",
+        });
+        if (d.ragState === "indexed") {
+          stages.push({
+            ...makeActivity(`${d.id}~idx`, "document_indexed", d.name, null, null, undefined, "this chat"),
+            state: "done",
+          });
+        }
+      }
+      return stages;
+    }),
   ];
 
   async function send(): Promise<void> {
