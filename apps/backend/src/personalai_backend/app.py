@@ -36,9 +36,10 @@ from personalai_backend import __version__
 from personalai_backend.auth.context import require_context
 from personalai_backend.auth.routes import router as auth_router
 from personalai_backend.composition import Bootstrap, bootstrap
+from personalai_backend.entity_indexing import index_document_entities
 from personalai_backend.folder_scan import canonical_root
-from personalai_backend.folder_sync import purge_orphans, sync_source
-from personalai_backend.ingestion import chunk_ids, ingest_file, ingest_text
+from personalai_backend.folder_sync import EntityIndexer, purge_orphans, sync_source
+from personalai_backend.ingestion import chunk_ids, ingest_text
 from personalai_backend.logbuffer import LOG_BUFFER
 from personalai_backend.logbuffer import install as install_log_buffer
 from personalai_backend.mcp_manager import McpManager
@@ -100,6 +101,7 @@ from personalai_core.security import (
 from personalai_modality_files import UnsupportedFileTypeError, parse_document
 from personalai_storage_postgres import (
     Conversation,
+    Entity,
     FileStatus,
     FolderExistsError,
     FolderFile,
@@ -107,6 +109,7 @@ from personalai_storage_postgres import (
     PgAgentConfigStore,
     PgConversationStore,
     PgDocumentStore,
+    PgEntityStore,
     PgFolderStore,
     PgMemoryStore,
     PgSettingsStore,
@@ -128,6 +131,7 @@ class Storage:
     vectors: PgVectorRepository
     documents: PgDocumentStore
     folders: PgFolderStore
+    entities: PgEntityStore
     conversations: PgConversationStore
     memories: PgMemoryStore
     settings: PgSettingsStore
@@ -983,6 +987,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 vectors=vectors,
                 documents=PgDocumentStore(querier),
                 folders=PgFolderStore(querier),
+                entities=PgEntityStore(querier),
                 conversations=PgConversationStore(querier),
                 memories=PgMemoryStore(querier),
                 settings=PgSettingsStore(querier),
@@ -2543,26 +2548,33 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 detail=f"file exceeds {config.max_upload_bytes} bytes",
             )
         provider = _resolve_provider(config.embed_provider)
+        filename = file.filename or "upload"
+        # Parse ONCE so the extracted text feeds both embedding and entity extraction (no double
+        # parse, which matters with OCR in the path). ingest_text == ingest_file sans the re-parse.
         try:
-            result = await ingest_file(
-                content=content,
-                filename=file.filename or "upload",
-                document_id=str(uuid.uuid4()),
-                embed_model=config.embed_model,
-                provider=provider,
-                vectors=storage.vectors,
-            )
+            parsed = await asyncio.to_thread(parse_document, content, filename)
         except UnsupportedFileTypeError as exc:
             return StructuredResult(
                 ok=False, error=ErrorInfo(code="E_UNSUPPORTED_FILE", message=str(exc))
             )
+        document_id = str(uuid.uuid4())
+        result = await ingest_text(
+            text=parsed.text,
+            name=filename,
+            document_id=document_id,
+            embed_model=config.embed_model,
+            provider=provider,
+            vectors=storage.vectors,
+        )
         doc = await storage.documents.add(
-            id=result.document_id,
-            name=result.name,
-            mime=result.mime,
-            size_bytes=result.size_bytes,
+            id=document_id,
+            name=filename,
+            mime=parsed.mime,
+            size_bytes=len(content),
             chunk_count=result.chunk_count,
         )
+        # NER into the KAG store (#451), best-effort (the indexer swallows its own errors).
+        await _make_entity_indexer(storage, config)(parsed.text, doc.id)
         return StructuredResult(
             ok=True,
             data={"id": doc.id, "name": doc.name, "mime": doc.mime, "chunk_count": doc.chunk_count},
@@ -2757,6 +2769,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document not found")
         await storage.vectors.delete(chunk_ids(doc.id, doc.chunk_count))
         await storage.documents.delete(doc.id)
+        # Drop the document's entity mentions + sweep now-orphaned entities (#451).
+        await storage.entities.purge_document_entities(doc.id)
+        await storage.entities.sweep_orphan_entities()
         return StructuredResult(ok=True, data={"id": doc.id})
 
     # ----------------------------------------------------------------------------------------------
@@ -2800,6 +2815,22 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND, detail="folder not found"
             ) from None
 
+    def _make_entity_indexer(storage: Storage, config: CoreConfig) -> EntityIndexer:
+        """Bind the best-effort NER indexer for global ingests (#451): the CHAT provider + default
+        model (not the embed model). It swallows its own errors so it can never fail an ingest."""
+        chat_provider = _resolve_provider(config.model_provider)
+
+        async def _index(text: str, document_id: str) -> None:
+            await index_document_entities(
+                text,
+                document_id,
+                store=storage.entities,
+                provider=chat_provider,
+                model=config.default_model,
+            )
+
+        return _index
+
     def _schedule_folder_sync(source: FolderSource) -> None:
         """Background full sync (scan -> drain -> GC) of a folder source, off the request (#456).
         Rebinds the request's SecurityContext so the RLS stores hit the right tenant, and uses the
@@ -2810,6 +2841,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             return
         sec = current_security.get()
         provider = _resolve_provider(config.embed_provider)
+        indexer = _make_entity_indexer(storage, config)
 
         async def _run() -> None:
             if sec is not None:
@@ -2822,6 +2854,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     provider=provider,
                     config=config,
                     source=source,
+                    entity_indexer=indexer,
+                    entity_store=storage.entities,
                 )
             except Exception as exc:  # noqa: BLE001 - best-effort; source status reflects failures
                 logger.warning("folder sync failed for %s: %s", source.id, exc)
@@ -3006,6 +3040,52 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             yield f"event: done\ndata: {timed_out}\n\n".encode()
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    # ----------------------------------------------------------------------------------------------
+    # KAG entities (#451): named entities extracted from the global corpus (Settings -> Documents).
+    def _entity_out(e: Entity) -> dict[str, Any]:
+        return {"id": e.id, "type": e.type, "name": e.name, "mention_count": e.mention_count}
+
+    @app.get(
+        "/api/v1/entities", response_model=StructuredResult, dependencies=[Depends(require_context)]
+    )
+    async def list_entities(
+        type: str | None = None, q: str | None = None, limit: int = 50
+    ) -> StructuredResult:
+        storage = _require_storage()
+        ents = await storage.entities.list_entities(type=type, query=q, limit=limit)
+        return StructuredResult(ok=True, data={"entities": [_entity_out(e) for e in ents]})
+
+    @app.get(
+        "/api/v1/entities/{entity_id}",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def get_entity(entity_id: str) -> StructuredResult:
+        storage = _require_storage()
+        ent = await storage.entities.get_entity(entity_id)
+        if ent is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="entity not found")
+        docs = await storage.entities.documents_for_entity(entity_id)
+        edges = await storage.entities.edges_for_entity(entity_id)
+        return StructuredResult(
+            ok=True,
+            data={
+                "entity": _entity_out(ent),
+                "documents": docs,
+                "edges": [{"relation": r, "dst_entity_id": d} for r, d in edges],
+            },
+        )
+
+    @app.get(
+        "/api/v1/documents/{document_id}/entities",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def document_entities(document_id: str) -> StructuredResult:
+        storage = _require_storage()
+        ents = await storage.entities.entities_for_document(document_id)
+        return StructuredResult(ok=True, data={"entities": [_entity_out(e) for e in ents]})
 
     @app.post(
         "/api/v1/conversations",

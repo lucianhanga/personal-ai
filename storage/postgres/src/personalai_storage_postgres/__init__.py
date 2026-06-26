@@ -8,6 +8,7 @@ from personalai_storage_postgres.conversation_store import (
 )
 from personalai_storage_postgres.db import apply_migrations, create_pool
 from personalai_storage_postgres.document_store import Document, PgDocumentStore
+from personalai_storage_postgres.entity_store import Entity, PgEntityStore
 from personalai_storage_postgres.folder_store import (
     FileStatus,
     FolderExistsError,
@@ -33,6 +34,7 @@ __all__ = [
     "VECTOR_DIM",
     "Conversation",
     "Document",
+    "Entity",
     "FolderExistsError",
     "FileStatus",
     "FolderFile",
@@ -41,6 +43,7 @@ __all__ = [
     "PgAgentConfigStore",
     "PgConversationStore",
     "PgDocumentStore",
+    "PgEntityStore",
     "PgFolderStore",
     "PgMemoryStore",
     "PgSessionStore",

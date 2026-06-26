@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -28,7 +29,12 @@ from personalai_core import CoreConfig
 from personalai_core.security.egress import _is_loopback
 from personalai_modality_files import UnsupportedFileTypeError, parse_document
 from personalai_storage_postgres.document_store import PgDocumentStore
+from personalai_storage_postgres.entity_store import PgEntityStore
 from personalai_storage_postgres.folder_store import FolderSource, PgFolderStore
+
+# Best-effort NER hook (#451): called (text, document_id) after a NEW global document is ingested,
+# so the caller can extract entities into the KAG store. None disables it (e.g. orchestration test).
+EntityIndexer = Callable[[str, str], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +104,7 @@ async def _ingest_file_row(
     config: CoreConfig,
     source: FolderSource,
     rel_path: str,
+    entity_indexer: EntityIndexer | None = None,
 ) -> None:
     """Index ONE claimed file: re-check containment, read bytes, content-hash, dedup, embed, link.
 
@@ -156,6 +163,10 @@ async def _ingest_file_row(
             chunk_count=result.chunk_count,
             manual_pin=False,  # folder-synced -> GC-eligible when no live folder_files reference it
         )
+        # NER into the KAG store (#451), best-effort, only on a NEW ingest (a dedup re-link already
+        # has its entities). The indexer swallows its own errors so it can never fail the sync.
+        if entity_indexer is not None:
+            await entity_indexer(parsed.text, document_id)
     await store.mark_file_synced(
         folder_source_id=source.id,
         rel_path=rel_path,
@@ -173,6 +184,7 @@ async def drain_source(
     config: CoreConfig,
     source: FolderSource,
     max_files: int | None = None,
+    entity_indexer: EntityIndexer | None = None,
 ) -> int:
     """Process the pending/stale work queue for one source until empty (or ``max_files``). One bad
     file marks its row ``error`` and never blocks the queue. Returns the count processed."""
@@ -191,6 +203,7 @@ async def drain_source(
                 config=config,
                 source=source,
                 rel_path=claimed.rel_path,
+                entity_indexer=entity_indexer,
             )
         except Exception as exc:  # noqa: BLE001 - best-effort; isolate a bad file from the queue
             logger.warning("folder sync: ingest failed for %r", claimed.rel_path, exc_info=True)
@@ -210,15 +223,21 @@ async def purge_orphans(
     vectors: VectorRepository,
     *,
     grace_days: int = 7,
+    entity_store: PgEntityStore | None = None,
 ) -> int:
     """Refcount GC: delete the vectors + document rows of unpinned global docs that no live
     ``folder_files`` row references, then hard-delete tombstones past the grace window. Returns the
-    number of documents purged. Safe to re-run (idempotent set-difference)."""
+    number of documents purged. Safe to re-run (idempotent set-difference). When an ``entity_store``
+    is given, each purged document's entity mentions are dropped and orphans swept (#451)."""
     orphans = await docstore.gc_orphans()
     for document_id, chunk_count in orphans:
         await vectors.delete(chunk_ids(document_id, chunk_count))
         await docstore.delete(document_id)
+        if entity_store is not None:
+            await entity_store.purge_document_entities(document_id)
     await store.purge_tombstones(grace_days=grace_days)
+    if entity_store is not None and orphans:
+        await entity_store.sweep_orphan_entities()
     return len(orphans)
 
 
@@ -230,12 +249,21 @@ async def sync_source(
     provider: ModelProvider,
     config: CoreConfig,
     source: FolderSource,
+    entity_indexer: EntityIndexer | None = None,
+    entity_store: PgEntityStore | None = None,
 ) -> tuple[int, int]:
     """Full one-shot sync of a source: scan (mark-and-sweep) -> drain the queue -> GC orphans.
-    Returns ``(files_seen, files_processed)``. This is what register / resync invoke."""
+    Returns ``(files_seen, files_processed)``. This is what register / resync invoke. The NER
+    hooks index entities for new docs and purge them for orphaned docs (#451)."""
     seen = await scan_source(store, source)
     processed = await drain_source(
-        store, docstore, vectors, provider=provider, config=config, source=source
+        store,
+        docstore,
+        vectors,
+        provider=provider,
+        config=config,
+        source=source,
+        entity_indexer=entity_indexer,
     )
-    await purge_orphans(store, docstore, vectors)
+    await purge_orphans(store, docstore, vectors, entity_store=entity_store)
     return seen, processed

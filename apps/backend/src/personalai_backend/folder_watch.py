@@ -22,6 +22,7 @@ from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 from watchdog.observers.api import BaseObserver
 
+from personalai_backend.entity_indexing import index_document_entities
 from personalai_backend.folder_sync import FolderSyncError, sync_source
 from personalai_backend.tenant_querier import TenantQuerier
 from personalai_contracts.ports import ModelProvider, SecurityContext
@@ -29,6 +30,7 @@ from personalai_core import CoreConfig
 from personalai_core.security import current_security
 from personalai_storage_postgres import (
     PgDocumentStore,
+    PgEntityStore,
     PgFolderStore,
     PgVectorRepository,
 )
@@ -154,6 +156,15 @@ class FolderSyncManager:
         source = await store.get_source(source_id)
         if source is None or not source.enabled:
             return
+        entities = PgEntityStore(querier)
+        chat_provider = self._resolve_provider(self._config.model_provider)
+
+        async def _index(text: str, document_id: str) -> None:
+            await index_document_entities(
+                text, document_id, store=entities, provider=chat_provider,
+                model=self._config.default_model,
+            )
+
         try:
             await sync_source(
                 store,
@@ -162,6 +173,8 @@ class FolderSyncManager:
                 provider=self._resolve_provider(self._config.embed_provider),
                 config=self._config,
                 source=source,
+                entity_indexer=_index,
+                entity_store=entities,
             )
         except FolderSyncError as exc:
             logger.warning("folder sync refused for %s: %s", source_id, exc)
