@@ -1,3 +1,4 @@
+import { EntityBrowser } from "./EntityBrowser";
 import { FolderSourcesPanel } from "./FolderSourcesPanel";
 import type { DocumentInfo } from "./api";
 
@@ -9,8 +10,9 @@ interface DocumentsPanelProps {
   onDelete: (id: string) => void;
 }
 
-/** Settings > Documents: two labelled regions (#458) — "Individual uploads" (the existing per-file
- * upload + ingested list, unchanged) and "Folder sources" (watch an on-disk folder, new). */
+/** Settings > Documents: three labelled regions — "Individual uploads" (the existing per-file upload
+ * + ingested list, unchanged), "Folder sources" (watch an on-disk folder, #458), and "Entities" (the
+ * corpus-global knowledge-graph browser, #451). */
 export function DocumentsPanel({
   token,
   files,
@@ -73,8 +75,13 @@ export function DocumentsPanel({
 
       <hr style={{ border: "none", borderTop: "1px solid #eee", margin: "0.75rem 0 0" }} />
 
-      {/* Region 2: folder sources (new, #458). Self-fetches via useFolderSources(token). */}
+      {/* Region 2: folder sources (#458). Self-fetches via useFolderSources(token). */}
       <FolderSourcesPanel token={token} />
+
+      <hr style={{ border: "none", borderTop: "1px solid #eee", margin: "0.75rem 0 0" }} />
+
+      {/* Region 3: corpus-global entity browser (#451). Self-fetches via the entities API. */}
+      <EntityBrowser token={token} />
     </section>
   );
 }

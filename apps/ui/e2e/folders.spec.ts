@@ -293,7 +293,7 @@ test("expand a folder card -> the nested file tree renders; expand a subdirector
   await expect(errorRow.getByTestId("file-status")).toHaveText("Error");
   await expect(errorRow.getByTestId("file-error")).toContainText("E_PARSE");
 
-  // The Entities tab is the P3 placeholder.
+  // The per-folder Entities tab points to the corpus-global browser (entities are not per-folder).
   await page.getByTestId("folder-detail-tab-entities").click();
-  await expect(page.getByTestId("folder-entities-empty")).toContainText("knowledge-graph extraction");
+  await expect(page.getByTestId("folder-entities-empty")).toContainText("corpus-global");
 });

@@ -1342,6 +1342,73 @@ export async function fetchFolderDetail(
   return { source: data.source, files: data.files ?? [], total };
 }
 
+// --- Settings > Documents v2: entity browser / knowledge graph (#451 NER+KAG) --------------------
+// Entities are corpus-GLOBAL (the same entity can span many documents/folders), extracted by NER as
+// documents are indexed — so the browser is a top-level Documents section, not a per-folder view.
+
+export type EntityType =
+  | "person"
+  | "org"
+  | "location"
+  | "date"
+  | "product"
+  | "event"
+  | "other";
+
+export interface Entity {
+  id: string;
+  type: EntityType;
+  name: string;
+  mention_count: number;
+}
+
+// One knowledge-graph edge from an entity to another (relation -> dst entity).
+export interface EntityEdge {
+  relation: string;
+  dst_entity_id: string;
+}
+
+// An entity plus its provenance: the documents it was mentioned in and its outgoing graph edges.
+export interface EntityDetail {
+  entity: Entity;
+  documents: string[]; // document_id[]
+  edges: EntityEdge[];
+}
+
+/** List corpus-global entities (#451). `type` filters by kind; `q` is a fuzzy name search; `limit`
+ * caps the result. All optional — omitted params list everything (up to the backend default). */
+export async function fetchEntities(
+  token: string,
+  opts: { type?: EntityType; q?: string; limit?: number } = {},
+): Promise<Entity[]> {
+  const url = new URL(`${API_BASE}/api/v1/entities`);
+  if (opts.type) url.searchParams.set("type", opts.type);
+  if (opts.q) url.searchParams.set("q", opts.q);
+  if (opts.limit != null) url.searchParams.set("limit", String(opts.limit));
+  const res = await fetch(url, { headers: authHeaders(token), credentials: CREDS });
+  if (!res.ok) throw new Error(`entities request failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { entities?: Entity[] } };
+  return body.data?.entities ?? [];
+}
+
+/** Fetch one entity's detail (#451): the entity, its source documents, and its graph edges. */
+export async function fetchEntityDetail(token: string, id: string): Promise<EntityDetail> {
+  const res = await fetch(`${API_BASE}/api/v1/entities/${encodeURIComponent(id)}`, {
+    headers: authHeaders(token),
+    credentials: CREDS,
+  });
+  if (!res.ok) throw new Error(`entity detail failed: ${res.status}`);
+  const body = (await res.json()) as {
+    data?: { entity?: Entity; documents?: string[]; edges?: EntityEdge[] };
+  };
+  if (!body.data?.entity) throw new Error("entity detail failed");
+  return {
+    entity: body.data.entity,
+    documents: body.data.documents ?? [],
+    edges: body.data.edges ?? [],
+  };
+}
+
 /** Register a folder source. Returns a discriminated result so the form can surface the structured
  * error ({code, message}) inline; never throws on a structured backend error (bad path / duplicate). */
 export async function registerFolder(

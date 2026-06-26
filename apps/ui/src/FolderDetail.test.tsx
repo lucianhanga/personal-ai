@@ -105,7 +105,8 @@ test("the Entities tab shows the P3 placeholder", async () => {
   await waitFor(() => expect(screen.getByText("a.pdf")).toBeInTheDocument());
 
   fireEvent.click(screen.getByTestId("folder-detail-tab-entities"));
-  expect(screen.getByTestId("folder-entities-empty")).toHaveTextContent(/knowledge-graph extraction/i);
+  // Per-folder Entities tab points to the corpus-global browser instead of duplicating it (#451).
+  expect(screen.getByTestId("folder-entities-empty")).toHaveTextContent(/corpus-global/i);
   // The files panel is no longer shown.
   expect(screen.queryByTestId("folder-detail-files")).toBeNull();
 });

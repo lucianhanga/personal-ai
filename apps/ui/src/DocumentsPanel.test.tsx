@@ -17,9 +17,11 @@ const DOC: api.DocumentInfo = {
 
 function noFolders(): void {
   vi.spyOn(api, "fetchFolders").mockResolvedValue([]);
+  // The third region (EntityBrowser) self-fetches on mount; stub it so it settles quietly.
+  vi.spyOn(api, "fetchEntities").mockResolvedValue([]);
 }
 
-test("renders two labelled regions: individual uploads + folder sources", async () => {
+test("renders three labelled regions: individual uploads + folder sources + entities", async () => {
   noFolders();
   render(
     <DocumentsPanel token="demo" files={[]} uploading={false} onUpload={vi.fn()} onDelete={vi.fn()} />,
@@ -27,6 +29,7 @@ test("renders two labelled regions: individual uploads + folder sources", async 
   expect(screen.getByTestId("individual-uploads")).toHaveAttribute("aria-label", "Individual uploads");
   const folders = screen.getByTestId("folder-sources-panel");
   expect(folders).toHaveAttribute("aria-label", "Folder sources");
+  expect(screen.getByTestId("entity-browser")).toHaveAttribute("aria-label", "Entities");
   // The folder region resolves to its empty state once the (mocked) fetch settles.
   await waitFor(() => expect(screen.getByTestId("folder-sources-empty")).toBeInTheDocument());
 });

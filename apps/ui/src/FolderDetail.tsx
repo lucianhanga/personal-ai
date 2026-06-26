@@ -251,7 +251,8 @@ export function FolderDetail({ folder, token, liveCounts }: FolderDetailProps): 
       ) : (
         <div role="tabpanel" data-testid="folder-detail-entities" style={{ paddingTop: "0.5rem" }}>
           <p data-testid="folder-entities-empty" style={{ color: MUTED, fontSize: "0.82rem" }}>
-            Entities will appear once knowledge-graph extraction lands.
+            Entities are corpus-global (they can span many folders) — browse them in the Entities
+            section under Settings → Documents.
           </p>
         </div>
       )}
