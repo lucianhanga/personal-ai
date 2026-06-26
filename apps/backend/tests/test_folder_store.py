@@ -207,7 +207,10 @@ def test_list_files_pagination_and_status_filter() -> None:
         gen = await store.begin_scan(src.id)
         for i in range(5):
             await store.upsert_file(
-                folder_source_id=src.id, rel_path=f"{i}.txt", size_bytes=1, mtime_ns=1,
+                folder_source_id=src.id,
+                rel_path=f"{i}.txt",
+                size_bytes=1,
+                mtime_ns=1,
                 generation=gen,
             )
         await store.mark_file_synced(
@@ -237,8 +240,13 @@ def test_gc_orphans_refcount_and_pin() -> None:
         synced = content_document_id(uuid.uuid4().bytes)  # a folder-synced doc with a live ref
         await docs.add(id=pinned, name="m.txt", mime="text/plain", size_bytes=1, chunk_count=1)
         await docs.add(
-            id=synced, name="f.txt", mime="text/plain", size_bytes=1, chunk_count=2,
-            scope=GLOBAL_SCOPE, manual_pin=False,
+            id=synced,
+            name="f.txt",
+            mime="text/plain",
+            size_bytes=1,
+            chunk_count=2,
+            scope=GLOBAL_SCOPE,
+            manual_pin=False,
         )
         gen = await folders.begin_scan(src.id)
         await folders.upsert_file(

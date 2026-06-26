@@ -128,6 +128,29 @@ def test_register_indexes_then_list_detail_delete_purges(tmp_path) -> None:  # t
         assert not (doc_ids & after)
 
 
+def test_reextract_reruns_ner_over_synced_files(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # #464: a dedicated NER re-extraction pass (the normal sync skips content-hash-deduped docs, so
+    # it never re-extracts). Per-source + all-sources endpoints schedule a background re-parse + NER
+    # over the already-synced files; a missing source 404s.
+    (tmp_path / "a.txt").write_text(f"Acme Corp invoiced Bob. {uuid.uuid4().hex}")
+    with TestClient(create_app(_boot())) as client:
+        sid = client.post(
+            "/api/v1/folders", headers=AUTH, json={"path": str(tmp_path), "label": "R"}
+        ).json()["data"]["id"]
+        _wait_synced(client, sid, files=1)
+
+        one = client.post(f"/api/v1/folders/{sid}/reextract", headers=AUTH)
+        assert one.status_code == 200 and one.json()["data"]["status"] == "reextracting"
+
+        every = client.post("/api/v1/folders/reextract", headers=AUTH)
+        assert every.status_code == 200 and every.json()["data"]["sources"] >= 1
+
+        missing = client.post(
+            "/api/v1/folders/00000000-0000-0000-0000-000000000000/reextract", headers=AUTH
+        )
+        assert missing.status_code == 404
+
+
 def test_resync_and_pause_resume(tmp_path) -> None:  # type: ignore[no-untyped-def]
     (tmp_path / "x.txt").write_text("content")
     with TestClient(create_app(_boot())) as client:

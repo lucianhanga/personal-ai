@@ -147,7 +147,11 @@ def test_sync_indexes_global_corpus_and_dedups(tmp_path: Path) -> None:
         (f1 / "geo.txt").write_text(body)
         src1 = await store.register(root_path=str(f1), label="One")
         seen, processed = await sync_source(
-            store, docs, vectors, provider=provider, config=_CONFIG,
+            store,
+            docs,
+            vectors,
+            provider=provider,
+            config=_CONFIG,
             source=await _reget(store, src1.id),
         )
         assert (seen, processed) == (1, 1)
@@ -163,7 +167,11 @@ def test_sync_indexes_global_corpus_and_dedups(tmp_path: Path) -> None:
         (f2 / "copy.txt").write_text(body)
         src2 = await store.register(root_path=str(f2), label="Two")
         await sync_source(
-            store, docs, vectors, provider=provider, config=_CONFIG,
+            store,
+            docs,
+            vectors,
+            provider=provider,
+            config=_CONFIG,
             source=await _reget(store, src2.id),
         )
         file2 = (await store.list_files(folder_source_id=src2.id))[0]
@@ -184,7 +192,11 @@ def test_purge_orphans_respects_refcount(tmp_path: Path) -> None:
         (tmp_path / "doc.txt").write_text("ephemeral content here")
         src = await store.register(root_path=str(tmp_path), label="P")
         await sync_source(
-            store, docs, vectors, provider=provider, config=_CONFIG,
+            store,
+            docs,
+            vectors,
+            provider=provider,
+            config=_CONFIG,
             source=await _reget(store, src.id),
         )
         doc_id = (await store.list_files(folder_source_id=src.id))[0].document_id
@@ -217,7 +229,11 @@ def test_drain_fail_closed_on_remote_provider(tmp_path: Path) -> None:
         # A remote embed provider must be refused BEFORE any work (no background egress).
         with pytest.raises(FolderSyncError):
             await drain_source(
-                store, docs, vectors, provider=_RemoteEmbed(), config=_CONFIG,
+                store,
+                docs,
+                vectors,
+                provider=_RemoteEmbed(),
+                config=_CONFIG,
                 source=await _reget(store, src.id),
             )
         await pool.close()

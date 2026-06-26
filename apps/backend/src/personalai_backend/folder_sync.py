@@ -217,6 +217,52 @@ async def drain_source(
     return processed
 
 
+async def reextract_source_entities(
+    store: PgFolderStore,
+    *,
+    source: FolderSource,
+    entity_indexer: EntityIndexer,
+    page_size: int = 100,
+) -> int:
+    """Re-run NER over EVERY already-synced file of a folder source (#464), re-parsing each from
+    disk and feeding the idempotent entity indexer (it purges a document's prior mentions before
+    re-inserting). A normal sync NEVER re-extracts -- content-hash dedup skips an unchanged document
+    before NER runs -- so this dedicated pass is the only way to refresh the KAG when the extractor
+    itself changes (e.g. the aggressive whole-document sweep). Best-effort per file: a bad file is
+    logged and skipped, never aborting the pass. Returns the count re-extracted.
+
+    Containment is re-checked per file (a symlink may have changed since the scan), mirroring the
+    ingest path's defense-in-depth. Caller must have asserted a LOCAL provider on the indexer."""
+    root = canonical_root(source.root_path)
+    reextracted = 0
+    after: str | None = None
+    while True:
+        files = await store.list_files(
+            folder_source_id=source.id, status="synced", limit=page_size, after_rel_path=after
+        )
+        if not files:
+            break
+        for file in files:
+            after = file.rel_path
+            if not file.document_id:
+                continue
+            path = root / file.rel_path
+            if not is_contained(path, root):
+                continue
+            try:
+                content = await asyncio.to_thread(path.read_bytes)
+                parsed = await asyncio.to_thread(parse_document, content, Path(file.rel_path).name)
+                await entity_indexer(parsed.text, file.document_id)
+                reextracted += 1
+            except (OSError, UnsupportedFileTypeError) as exc:
+                logger.warning("reextract: skipping %r: %s", file.rel_path, exc)
+            except Exception:  # noqa: BLE001 - best-effort; isolate a bad file from the pass
+                logger.warning("reextract: failed for %r", file.rel_path, exc_info=True)
+        if len(files) < page_size:
+            break
+    return reextracted
+
+
 async def purge_orphans(
     store: PgFolderStore,
     docstore: PgDocumentStore,
