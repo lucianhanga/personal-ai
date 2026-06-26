@@ -14,6 +14,7 @@ import {
   fetchSettings,
   fetchTranscribeEnabled,
   fetchTtsEnabled,
+  ingestConversationDocument,
   renameConversation,
   resumeChat,
   saveSettings,
@@ -429,6 +430,9 @@ export function Chat({
     })),
   );
   const docAbortRef = useRef<Map<string, AbortController>>(new Map());
+  // Collapses concurrent eager-ingest conversation creates (#420) onto one in-flight create, so
+  // dropping two large docs at once never spawns two conversations. Cleared when a new chat starts.
+  const ensureConvRef = useRef<Promise<string | null> | null>(null);
   // True while an image is being dragged over the composer (drop-to-attach affordance, #324).
   const [dragOver, setDragOver] = useState(false);
   // Voice input (M9.2): whether STT is configured, and the live recording state.
@@ -618,6 +622,7 @@ export function Chat({
     setChats((prev) => ({ ...prev, [NEW_CHAT]: EMPTY_CHAT }));
     setActiveId(null);
     setError(null);
+    ensureConvRef.current = null; // next eager ingest creates a fresh conversation (#420)
   }
 
   async function openConversation(id: string): Promise<void> {
@@ -945,6 +950,49 @@ export function Chat({
   const doneAudio = audioAttachments.filter((a) => a.status === "done");
   const audioTranscribing = audioAttachments.some((a) => a.status === "transcribing");
 
+  // Ensure a persisted conversation exists and return its id (or null when persistence is off).
+  // Used by eager ingest-at-attach (#420) so a large doc is indexed BEFORE the first send. Mirrors
+  // the lazy create the send flow does: create the conversation, migrate the optimistic NEW_CHAT
+  // state to the real id, focus it. The ref guard collapses concurrent callers (two large docs
+  // dropped at once) onto ONE creation so a second conversation isn't spawned.
+  async function ensureConversation(titleHint: string): Promise<string | null> {
+    if (activeId !== null) return activeId;
+    if (!persistence) return null;
+    if (ensureConvRef.current) return ensureConvRef.current;
+    const p = (async (): Promise<string | null> => {
+      const conv = await createConversation(token, titleHint.slice(0, 60) || "New chat", incognito);
+      setChats((prev) => {
+        const cur = prev[NEW_CHAT] ?? EMPTY_CHAT;
+        const { [NEW_CHAT]: _omit, ...rest } = prev;
+        return { ...rest, [conv.id]: cur };
+      });
+      setActiveId((cur) => (cur === null ? conv.id : cur));
+      setConversations(await fetchConversations(token));
+      return conv.id;
+    })();
+    ensureConvRef.current = p;
+    return p;
+  }
+
+  // Tier-2 ingest-at-attach (#420): eagerly index a `large` document into the conversation RAG scope
+  // when it is attached, so it is searchable before the question is sent. Best-effort — on failure
+  // the chip falls back to "Indexes on send" and the send-time path ingests it idempotently anyway.
+  async function eagerIngestDocument(id: string, name: string, text: string): Promise<void> {
+    const setRag = (ragState: DocumentAttachment["ragState"]): void =>
+      setDocumentAttachments((cur) => cur.map((c) => (c.id === id ? { ...c, ragState } : c)));
+    try {
+      const convId = await ensureConversation(name);
+      if (convId === null) {
+        setRag("failed"); // no persistence (no DB) — it indexes at send if ever persisted
+        return;
+      }
+      await ingestConversationDocument(token, convId, name, text);
+      setRag("indexed");
+    } catch {
+      setRag("failed");
+    }
+  }
+
   // Extract text from each dropped document; gate small (folds) vs large (shown, not folded) (#416).
   function onDocumentFiles(files: File[]): void {
     for (const file of files) {
@@ -970,8 +1018,20 @@ export function Chat({
                 ? "small"
                 : "large";
           setDocumentAttachments((cur) =>
-            cur.map((c) => (c.id === id ? { ...c, status, text: doc.text, ms: doc.ms } : c)),
+            cur.map((c) =>
+              c.id === id
+                ? {
+                    ...c,
+                    status,
+                    text: doc.text,
+                    ms: doc.ms,
+                    // Eager ingest-at-attach (#420): a large doc starts indexing immediately.
+                    ...(status === "large" ? { ragState: "indexing" as const } : {}),
+                  }
+                : c,
+            ),
           );
+          if (status === "large") void eagerIngestDocument(id, file.name, doc.text);
         })
         .catch((e: unknown) => {
           docAbortRef.current.delete(id);

@@ -617,6 +617,33 @@ export async function createConversation(
   return body.data;
 }
 
+/**
+ * Tier-2 ingest-at-attach (#420): eagerly chunk+embed a large attachment into a conversation's RAG
+ * scope when it is attached, before any question is sent — so it is searchable immediately. The
+ * backend is idempotent by content-hash, so the later ingest-at-send for the same doc skips.
+ */
+export async function ingestConversationDocument(
+  token: string,
+  conversationId: string,
+  name: string,
+  text: string,
+): Promise<{ document_id: string; chunk_count: number | null; already_indexed: boolean }> {
+  const res = await fetch(`${API_BASE}/api/v1/conversations/${conversationId}/documents`, {
+    method: "POST",
+    credentials: CREDS,
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ name, text }),
+  });
+  if (!res.ok) throw new Error(`document ingest failed: ${res.status}`);
+  const body = (await res.json()) as {
+    ok?: boolean;
+    data?: { document_id: string; chunk_count: number | null; already_indexed: boolean };
+    error?: { message?: string };
+  };
+  if (!body.ok || !body.data) throw new Error(body.error?.message ?? "document ingest failed");
+  return body.data;
+}
+
 /** List long-term memories. */
 export async function fetchMemories(token: string): Promise<MemoryItem[]> {
   const res = await fetch(`${API_BASE}/api/v1/memory`, { headers: authHeaders(token), credentials: CREDS });

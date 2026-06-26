@@ -347,3 +347,69 @@ def test_rag_off_emits_no_prelude_items() -> None:
 
         trace = _assistant_trace(client, cid)
         assert all(t["kind"] not in ("indexing", "retrieval", "ner") for t in trace)
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_eager_ingest_attachment_endpoint() -> None:
+    # Tier-2 ingest-at-attach (#420): POST a large attachment into a conversation's scope BEFORE any
+    # message; it indexes now, is idempotent on re-post, and is then retrievable (citations).
+    with TestClient(create_app(_rag_boot())) as client:
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        big = "Wexford is the teal octopus mascot of the attached report. " * 40
+        first = client.post(
+            f"/api/v1/conversations/{cid}/documents",
+            headers=AUTH,
+            json={"name": "report.pdf", "text": big},
+        )
+        assert first.status_code == 200, first.text
+        data = first.json()["data"]
+        assert first.json()["ok"] is True
+        assert data["chunk_count"] > 0
+        assert data["already_indexed"] is False
+
+        # Idempotent: the same content re-posted skips re-embedding (no duplicate vectors).
+        again = client.post(
+            f"/api/v1/conversations/{cid}/documents",
+            headers=AUTH,
+            json={"name": "report.pdf", "text": big},
+        )
+        assert again.json()["data"]["already_indexed"] is True
+
+        # The eagerly-indexed doc is now searchable in THIS conversation (union retrieval -> cites).
+        with client.stream(
+            "POST",
+            "/api/v1/chat",
+            headers=AUTH,
+            json={
+                "messages": [{"role": "user", "content": "Who is Wexford?"}],
+                "use_rag": True,
+                "conversation_id": cid,
+            },
+        ) as resp:
+            body = "".join(resp.iter_text())
+        assert "event: citations" in body
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_eager_ingest_unknown_conversation_404() -> None:
+    with TestClient(create_app(_rag_boot())) as client:
+        resp = client.post(
+            "/api/v1/conversations/00000000-0000-0000-0000-000000000000/documents",
+            headers=AUTH,
+            json={"name": "x.pdf", "text": "hello"},
+        )
+        assert resp.status_code == 404
+
+
+@pytest.mark.skipif(not _db_available(), reason="Postgres not reachable (run `make db`)")
+def test_eager_ingest_empty_text_is_structured_error() -> None:
+    with TestClient(create_app(_rag_boot())) as client:
+        cid = client.post("/api/v1/conversations", headers=AUTH, json={}).json()["data"]["id"]
+        resp = client.post(
+            f"/api/v1/conversations/{cid}/documents",
+            headers=AUTH,
+            json={"name": "blank.pdf", "text": "   "},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is False
+        assert resp.json()["error"]["code"] == "E_EMPTY_DOC"

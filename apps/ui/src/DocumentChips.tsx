@@ -28,6 +28,10 @@ export interface DocumentAttachment {
   error?: string;
   // #424: extract-call wall-clock (document parse has no model, so only ms is captured).
   ms?: number | null;
+  // Tier-2 ingest-at-attach (#420): a `large` doc is indexed into the conversation RAG scope eagerly
+  // when attached. `ragState` tracks that so the badge is truthful: "indexing" while embedding,
+  // "indexed" once done, "failed" if ingest errored. Undefined until eager ingest starts.
+  ragState?: "indexing" | "indexed" | "failed";
 }
 
 /** First ~40 chars of the extracted text as a one-line snippet for the chip face. */
@@ -246,15 +250,35 @@ function statusCue(chip: DocumentAttachment): { color: string; node: React.React
 
 /** A small pill clarifying how a `done` document reaches the model (#436): a `small` doc is folded
  * inline into the message ("In message", neutral), a `large` doc is ingested into the conversation
- * RAG index and retrieved with citations ("Searched in this chat", amber/info). No emoji. */
-function RetrievalBadge({ status }: { status: DocumentStatus }): React.ReactElement | null {
+ * RAG index and retrieved with citations. For large docs the label is TRUTHFUL to the eager
+ * ingest-at-attach state (#420): "Indexing…" while embedding, "Searched in this chat" once indexed,
+ * "Indexes on send" if eager ingest failed or hasn't run (it still ingests at send). No emoji. */
+function RetrievalBadge({
+  status,
+  ragState,
+}: {
+  status: DocumentStatus;
+  ragState?: DocumentAttachment["ragState"];
+}): React.ReactElement | null {
   if (status !== "small" && status !== "large") return null;
   const isLarge = status === "large";
   const color = isLarge ? AMBER : MUTED;
-  const label = isLarge ? "Searched in this chat" : "In message";
-  const title = isLarge
-    ? "Indexed for retrieval — the assistant searches this document and cites it in this chat."
-    : "Folded inline — the full text is included directly in this message.";
+  let label: string;
+  let title: string;
+  if (!isLarge) {
+    label = "In message";
+    title = "Folded inline — the full text is included directly in this message.";
+  } else if (ragState === "indexing") {
+    label = "Indexing…";
+    title = "Embedding this document into the chat's index so it can be searched and cited.";
+  } else if (ragState === "failed") {
+    label = "Indexes on send";
+    title = "Eager indexing didn't complete; the document is indexed when you send your message.";
+  } else {
+    // "indexed" (eager ingest done) or undefined (legacy / indexes at send) — both searchable.
+    label = "Searched in this chat";
+    title = "Indexed — the assistant searches this document and cites it in this chat.";
+  }
   return (
     <span
       data-testid="document-retrieval-badge"
@@ -393,7 +417,7 @@ export function DocumentChips({
             >
               {cue.node}
             </span>
-            <RetrievalBadge status={chip.status} />
+            <RetrievalBadge status={chip.status} ragState={chip.ragState} />
             <button
               data-testid={`remove-document-${chip.id}`}
               onMouseDown={(e) => e.stopPropagation()}

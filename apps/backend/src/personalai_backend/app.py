@@ -334,6 +334,15 @@ class ConversationTruncate(BaseModel):
     from_message_id: int
 
 
+class AttachmentIngest(BaseModel):
+    """Request body for tier-2 ingest-at-attach (#420): chunk+embed a large attachment into a
+    conversation's RAG scope eagerly (when the file is attached, before any question is sent) so the
+    doc is searchable immediately. Idempotent by content-hash; the send-time path then skips."""
+
+    name: str
+    text: str
+
+
 class MemoryUpdate(BaseModel):
     """Request body for editing a memory."""
 
@@ -1352,6 +1361,46 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         sources.append(GraphSource())
         return sources
 
+    async def _ingest_attachment_doc(
+        storage: Storage,
+        config: CoreConfig,
+        *,
+        conversation_id: str,
+        name: str,
+        text: str,
+    ) -> int | None:
+        """Idempotently chunk+embed ONE large attachment into ``conversation_id``'s scope.
+
+        Returns the chunk count if it was ingested on THIS call, or ``None`` if a document with the
+        same content-addressed id already exists (idempotent skip — no duplicate vectors). Shared by
+        tier-2 ingest-at-attach (the eager endpoint, #420) and ingest-at-send (chat) so each derives
+        the SAME ``_conversation_document_id`` and never double-embeds the same file."""
+        document_id = _conversation_document_id(conversation_id, text)
+        if await storage.documents.get(document_id) is not None:
+            return None
+        embed_provider = _resolve_provider(config.embed_provider)
+        scope = Scope(conversation_id=conversation_id)
+        result = await ingest_text(
+            text=text,
+            name=name,
+            document_id=document_id,
+            embed_model=config.embed_model,
+            provider=embed_provider,
+            vectors=storage.vectors,
+            scope=scope,
+        )
+        # Record the document in the conversation scope so the PR1 FK cascade GCs it on conversation
+        # delete and the next re-send/ingest finds it and skips. Not in Settings -> Documents.
+        await storage.documents.add(
+            id=result.document_id,
+            name=result.name,
+            mime=result.mime,
+            size_bytes=result.size_bytes,
+            chunk_count=result.chunk_count,
+            scope=scope,
+        )
+        return result.chunk_count
+
     async def _ingest_turn_attachments(
         docs: list[tuple[str, str]],
         *,
@@ -1374,43 +1423,21 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         config: CoreConfig = app.state.config
         if storage is None:
             return
-        embed_provider = _resolve_provider(config.embed_provider)
-        scope = Scope(conversation_id=conversation_id)
         for name, text in docs:
-            document_id = _conversation_document_id(conversation_id, text)
             started = time.perf_counter()
             try:
-                # Idempotency: a document record with this content-addressed id means the chunks are
-                # already embedded for this conversation -> skip (no duplicate vectors on re-send).
-                # No work done -> no indexing trace item (anti-noise, #437 section 4).
-                if await storage.documents.get(document_id) is not None:
+                # Idempotent skip when the same content-addressed doc is already indexed (e.g. it
+                # was ingested eagerly at attach, #420) -> chunks is None -> no work, no trace item.
+                chunks = await _ingest_attachment_doc(
+                    storage, config, conversation_id=conversation_id, name=name, text=text
+                )
+                if chunks is None:
                     continue
-                result = await ingest_text(
-                    text=text,
-                    name=name,
-                    document_id=document_id,
-                    embed_model=config.embed_model,
-                    provider=embed_provider,
-                    vectors=storage.vectors,
-                    scope=scope,
-                )
-                # Record the document in the conversation scope so it is GC'd by the PR1 FK cascade
-                # (conversation delete -> documents+vectors rows gone) and so the next re-send finds
-                # it and skips. It is NOT listed by Settings -> Documents (that filters global
-                # scope).
-                await storage.documents.add(
-                    id=result.document_id,
-                    name=result.name,
-                    mime=result.mime,
-                    size_bytes=result.size_bytes,
-                    chunk_count=result.chunk_count,
-                    scope=scope,
-                )
                 if prelude is not None:
                     prelude.append(
                         _indexing_item(
                             name,
-                            chunks=result.chunk_count,
+                            chunks=chunks,
                             ms=round((time.perf_counter() - started) * 1000),
                         )
                     )
@@ -2858,6 +2885,48 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 "conversation_id": conversation_id,
                 "from_message_id": body.from_message_id,
                 "deleted_count": len(deleted),
+            },
+        )
+
+    @app.post(
+        "/api/v1/conversations/{conversation_id}/documents",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def ingest_conversation_document(
+        conversation_id: str, body: AttachmentIngest
+    ) -> StructuredResult:
+        # Tier-2 ingest-at-attach (#420): index a large attachment into THIS conversation's RAG
+        # scope immediately, before any question is sent, so the doc is searchable right away (the
+        # chip can show a truthful "Indexed" state). Idempotent by content-hash id — a re-attach or
+        # the later ingest-at-send finds the existing record and skips. Tenant/RLS safety mirrors
+        # truncate: the conversation must exist under the caller's tenant (RLS), else 404.
+        storage = _require_storage()
+        config: CoreConfig = app.state.config
+        if await storage.conversations.get(conversation_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation")
+        docs = _ingest_docs_from_turn([{"name": body.name, "text": body.text}])
+        if not docs:
+            return StructuredResult(
+                ok=False, error=ErrorInfo(code="E_EMPTY_DOC", message="no text to ingest")
+            )
+        name, text = docs[0]
+        document_id = _conversation_document_id(conversation_id, text)
+        try:
+            chunks = await _ingest_attachment_doc(
+                storage, config, conversation_id=conversation_id, name=name, text=text
+            )
+        except Exception as exc:  # noqa: BLE001 - surface ingest failure to the client (not a turn)
+            logger.warning("eager tier-2 ingest failed for %r", name, exc_info=True)
+            return StructuredResult(ok=False, error=ErrorInfo(code="E_INGEST", message=str(exc)))
+        # chunks is None when the doc was already indexed (idempotent) — report it as indexed either
+        # way so the UI's chip lands in the same "indexed" state on a re-attach.
+        return StructuredResult(
+            ok=True,
+            data={
+                "document_id": document_id,
+                "chunk_count": chunks,
+                "already_indexed": chunks is None,
             },
         )
 
