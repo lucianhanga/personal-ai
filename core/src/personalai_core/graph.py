@@ -30,6 +30,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
+from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from personalai_contracts.ports import (
@@ -122,12 +123,21 @@ TOOL_USING_AGENTS: frozenset[str] = frozenset({"researcher"})
 # Default system prompt per agent. Exposed (not private) so the backend can echo them to the UI as
 # the editable defaults (#290), exactly like CoreConfig defaults for settings. A tenant's saved
 # override replaces the default for that agent; an empty/unset override falls back to these.
+class Plan(BaseModel):
+    """The planner's STRUCTURED output (#461). Emitting a typed list of steps (not free text) makes
+    answering the request structurally impossible -- the model cannot smuggle a prose answer into a
+    schema-constrained ``steps`` array. The researcher executes the steps and writes the answer."""
+
+    steps: list[str]
+
+
 DEFAULT_AGENT_PROMPTS: dict[str, str] = {
     "planner": (
         "You are the planner. A researcher agent with web search and other tools will carry out "
-        "your plan, so assume live data IS reachable. In 1-3 short bullet points, outline how to "
-        "answer the user's request (what to look up, which tools to use). Be concise; do not "
-        "answer the request yourself, and do not claim a lack of tools or data access."
+        "your plan, so assume live data IS reachable. Output ONLY a short list of 1-3 plan steps "
+        "(what to look up, which tools to use) for the researcher to follow. Do NOT answer the "
+        "request, state any conclusion or result, or claim a lack of tools or data access -- you "
+        "plan, the researcher answers."
     ),
     "researcher": (
         "You are the researcher. Carry out the plan to answer the user's request, calling the "
@@ -327,12 +337,34 @@ def _build_graph(
 
     async def planner(state: GraphState) -> dict[str, Any]:
         writer = get_stream_writer()
-        plan = await _stream_text(
-            provider,
-            model,
-            [ChatMessage(Role.SYSTEM, agent_prompts["planner"]), *messages],
-            lambda d: writer(AgentEvent(type="plan", text=d)),
+        # Structured plan (#461): emit a typed ``Plan`` so the model CANNOT leak a prose answer into
+        # a free-text plan. Feed only the last user request + a final recency-anchor (the strongest
+        # pull on the model), not the whole history, so it plans rather than answers. Fail-closed:
+        # if structured output is unavailable, fall back to the free-text plan (degrade, not break).
+        plan_result = await generate_structured(
+            provider=provider,
+            model=model,
+            messages=[
+                ChatMessage(Role.SYSTEM, agent_prompts["planner"]),
+                ChatMessage(Role.USER, _last_user_text(messages)),
+                ChatMessage(
+                    Role.SYSTEM,
+                    "Output ONLY the plan steps now -- no answer, no result. The researcher runs "
+                    "the plan and answers the user.",
+                ),
+            ],
+            schema=Plan,
         )
+        if plan_result is not None and plan_result.steps:
+            plan = "\n".join(f"{i}. {step}" for i, step in enumerate(plan_result.steps, 1))
+            writer(AgentEvent(type="plan", text=plan))
+        else:
+            plan = await _stream_text(
+                provider,
+                model,
+                [ChatMessage(Role.SYSTEM, agent_prompts["planner"]), *messages],
+                lambda d: writer(AgentEvent(type="plan", text=d)),
+            )
         out: dict[str, Any] = {"plan": plan}
         if multi_source:
             # Widen the planner to ALSO emit a structured SourcePlan (#420): vector+memory are
