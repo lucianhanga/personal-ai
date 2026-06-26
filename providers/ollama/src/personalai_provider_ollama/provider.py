@@ -179,11 +179,19 @@ class OllamaProvider:
         repeat_last_n: int | None = None,
         max_output_tokens: int | None = None,
         egress_guard: EgressGuard | None = None,
+        timeout: float | None = None,
     ) -> None:
         self._base = base_url.rstrip("/")
         self._host = urlparse(self._base).hostname or self._base
         self._egress_guard = egress_guard
-        self._client = client or httpx.AsyncClient(timeout=httpx.Timeout(120.0))
+        # The read timeout must accommodate a COLD load of a large model (a 35B MoE can take well
+        # over the old 120s default to return its first token, especially on a shared GPU) -- a too
+        # short timeout surfaced as httpx.ReadTimeout and, for best-effort NER, silently dropped the
+        # extraction. Streaming resets the read clock per chunk, so this only gates time-to-first-
+        # token. None keeps the conservative default.
+        self._client = client or httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout if timeout is not None else 120.0)
+        )
         self._owns_client = client is None
         # Bound the context window (KV cache) to control memory; None leaves Ollama's default.
         self._num_ctx = num_ctx

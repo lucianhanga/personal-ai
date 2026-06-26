@@ -29,11 +29,26 @@ async def index_document_entities(
     Best-effort: swallows all errors (a failed NER pass leaves the document indexed for retrieval,
     just without entities). Idempotent: purges the document's prior mentions before re-inserting, so
     a re-sync of the same file does not inflate counts. Entities repeated within the document are
-    folded so ``mention_count`` and the mention's ``occurrences`` stay consistent."""
+    folded so ``mention_count`` and the mention's ``occurrences`` stay consistent.
+
+    Data-safety (#464): extraction runs BEFORE the purge, and the purge runs ONLY after a SUCCESSFUL
+    extraction. Previously the purge ran first, so a failed or timed-out extraction (e.g. a slow
+    cold-load of a large model exceeding the client timeout) deleted the document's existing
+    entities and wrote nothing back -- silently wiping the KAG. Now a failed extraction leaves prior
+    entities untouched; only a result we actually have replaces them."""
     try:
-        # Idempotent re-extraction: drop this document's prior mentions + decrement counters first.
-        await store.purge_document_entities(document_id)
         extracted = await extract_entities(text, provider=provider, model=model)
+    except Exception as exc:  # noqa: BLE001 - best-effort; a failed pass MUST keep prior entities
+        logger.warning(
+            "entity extraction failed for document %s (prior entities kept): %s", document_id, exc
+        )
+        return
+
+    try:
+        # Extraction succeeded (possibly empty) -> now it is safe to replace this document's prior
+        # mentions. An empty result intentionally clears stale entities (the document genuinely has
+        # none now); a FAILED extraction returned above without touching anything.
+        await store.purge_document_entities(document_id)
         if not extracted.entities:
             return
 

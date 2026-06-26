@@ -98,6 +98,9 @@ def register_adapters(registries: Registries, config: CoreConfig) -> None:
             repeat_last_n=config.ollama_repeat_last_n,
             max_output_tokens=config.max_output_tokens,
             egress_guard=_ollama_egress,
+            # Generous read timeout so a cold load of a large model (the 35B MoE default) doesn't
+            # ReadTimeout and silently drop best-effort NER (#464).
+            timeout=config.ollama_timeout,
         ),
     )
 
