@@ -25,6 +25,10 @@ dependencies = [
     # ("LangGrinch") is patched in our >=1.2.5 line; we never call load()/loads() on untrusted data.
     # We deliberately do NOT add langchain / -community / -postgres / -ollama (see SUPPLY-CHAIN.md).
     "langchain-core>=1.4,<2",
+    # watchdog: cross-platform filesystem watcher (FSEvents/inotify/ReadDirectoryChangesW + a polling
+    # fallback) for Settings->Documents folder sync (#456). Pure-Python, Apache-2.0, no native build.
+    # The sync worker is local-only/fail-closed; the watcher merely observes the user's granted folders.
+    "watchdog>=4.0",
 ]
 
 [build-system]

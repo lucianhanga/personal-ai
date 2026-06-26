@@ -78,6 +78,7 @@ export function SettingsView(props: SettingsViewProps): React.ReactElement {
       <div data-testid="settings-pane" style={{ flex: 1, minWidth: 280, overflowY: "auto" }}>
         {section === "documents" && (
           <DocumentsPanel
+            token={token}
             files={props.files}
             uploading={props.uploading}
             onUpload={props.onUpload}

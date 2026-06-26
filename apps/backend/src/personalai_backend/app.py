@@ -25,9 +25,9 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast, get_args
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from starlette.responses import JSONResponse, StreamingResponse
@@ -36,7 +36,10 @@ from personalai_backend import __version__
 from personalai_backend.auth.context import require_context
 from personalai_backend.auth.routes import router as auth_router
 from personalai_backend.composition import Bootstrap, bootstrap
-from personalai_backend.ingestion import chunk_ids, ingest_file, ingest_text
+from personalai_backend.entity_indexing import index_document_entities
+from personalai_backend.folder_scan import canonical_root
+from personalai_backend.folder_sync import EntityIndexer, purge_orphans, sync_source
+from personalai_backend.ingestion import chunk_ids, ingest_text
 from personalai_backend.logbuffer import LOG_BUFFER
 from personalai_backend.logbuffer import install as install_log_buffer
 from personalai_backend.mcp_manager import McpManager
@@ -98,9 +101,16 @@ from personalai_core.security import (
 from personalai_modality_files import UnsupportedFileTypeError, parse_document
 from personalai_storage_postgres import (
     Conversation,
+    Entity,
+    FileStatus,
+    FolderExistsError,
+    FolderFile,
+    FolderSource,
     PgAgentConfigStore,
     PgConversationStore,
     PgDocumentStore,
+    PgEntityStore,
+    PgFolderStore,
     PgMemoryStore,
     PgSettingsStore,
     PgVectorRepository,
@@ -120,6 +130,8 @@ class Storage:
     pool: object  # asyncpg.Pool
     vectors: PgVectorRepository
     documents: PgDocumentStore
+    folders: PgFolderStore
+    entities: PgEntityStore
     conversations: PgConversationStore
     memories: PgMemoryStore
     settings: PgSettingsStore
@@ -323,6 +335,26 @@ class ConversationRename(BaseModel):
     """Request body for renaming a conversation."""
 
     title: str
+
+
+class FolderRegister(BaseModel):
+    """Request body for registering a folder source (Settings -> Documents folder sync, #456)."""
+
+    path: str
+    label: str | None = None
+    recursive: bool = True
+    include_globs: list[str] = []
+    exclude_globs: list[str] = []
+    max_file_mb: int | None = None
+
+
+# Folder-events SSE (#456): poll the sync rollup at this cadence, bounded by a max poll count so a
+# stuck/very-large source can't hold the connection open indefinitely (~10 min at 1s).
+_FOLDER_EVENTS_POLL_S = 1.0
+_FOLDER_EVENTS_MAX_POLLS = 600
+
+# Valid ?status= filters for GET /folders/{id} (the folder_files status enum).
+_FILE_STATUSES = frozenset(get_args(FileStatus))
 
 
 class ConversationTruncate(BaseModel):
@@ -978,6 +1010,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 pool=pool,
                 vectors=vectors,
                 documents=PgDocumentStore(querier),
+                folders=PgFolderStore(querier),
+                entities=PgEntityStore(querier),
                 conversations=PgConversationStore(querier),
                 memories=PgMemoryStore(querier),
                 settings=PgSettingsStore(querier),
@@ -1044,14 +1078,24 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 RegisteredTool(FORGET_MEMORY_MANIFEST, ForgetMemoryTool(memories, _embed_one)),
                 overwrite=True,
             )
+            # Live folder-sync watcher (#456): observe registered folder roots and keep the global
+            # corpus in sync. DB-authoritative (crash-safe via reconcile); local-provider-only.
+            from personalai_backend.folder_watch import FolderSyncManager
+
+            app.state.folder_manager = FolderSyncManager(pool, boot.config, _resolve_provider)
+            await app.state.folder_manager.start()
         except Exception as exc:  # noqa: BLE001 - storage is optional; degrade gracefully
             logger.warning("storage unavailable (file/RAG features disabled): %s", exc)
             app.state.storage = None
+            app.state.folder_manager = None
         # Connect configured MCP servers and register their tools behind the gateway (best-effort).
         await app.state.mcp_manager.start()
         try:
             yield
         finally:
+            # Stop the folder watcher first so no new sync work is scheduled during teardown (#456).
+            if app.state.folder_manager is not None:
+                await app.state.folder_manager.stop()
             # Let in-flight background work (e.g. memory extraction) finish before tearing down.
             if app.state.bg_tasks:
                 await asyncio.gather(*app.state.bg_tasks, return_exceptions=True)
@@ -1078,6 +1122,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     app.state.config = boot.config
     app.state.storage = None  # set on startup if a database is reachable
     app.state.tenant_db = None  # set on startup if a database is reachable (M8.1c checkpointer)
+    app.state.folder_manager = None  # live folder-sync watcher (#456); set on startup with storage
     app.state.mcp_manager = McpManager(
         boot.registries,
         _mcp_config_path(boot.config),
@@ -2545,26 +2590,33 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 detail=f"file exceeds {config.max_upload_bytes} bytes",
             )
         provider = _resolve_provider(config.embed_provider)
+        filename = file.filename or "upload"
+        # Parse ONCE so the extracted text feeds both embedding and entity extraction (no double
+        # parse, which matters with OCR in the path). ingest_text == ingest_file sans the re-parse.
         try:
-            result = await ingest_file(
-                content=content,
-                filename=file.filename or "upload",
-                document_id=str(uuid.uuid4()),
-                embed_model=config.embed_model,
-                provider=provider,
-                vectors=storage.vectors,
-            )
+            parsed = await asyncio.to_thread(parse_document, content, filename)
         except UnsupportedFileTypeError as exc:
             return StructuredResult(
                 ok=False, error=ErrorInfo(code="E_UNSUPPORTED_FILE", message=str(exc))
             )
+        document_id = str(uuid.uuid4())
+        result = await ingest_text(
+            text=parsed.text,
+            name=filename,
+            document_id=document_id,
+            embed_model=config.embed_model,
+            provider=provider,
+            vectors=storage.vectors,
+        )
         doc = await storage.documents.add(
-            id=result.document_id,
-            name=result.name,
-            mime=result.mime,
-            size_bytes=result.size_bytes,
+            id=document_id,
+            name=filename,
+            mime=parsed.mime,
+            size_bytes=len(content),
             chunk_count=result.chunk_count,
         )
+        # NER into the KAG store (#451), best-effort (the indexer swallows its own errors).
+        await _make_entity_indexer(storage, config)(parsed.text, doc.id)
         return StructuredResult(
             ok=True,
             data={"id": doc.id, "name": doc.name, "mime": doc.mime, "chunk_count": doc.chunk_count},
@@ -2764,7 +2816,323 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document not found")
         await storage.vectors.delete(chunk_ids(doc.id, doc.chunk_count))
         await storage.documents.delete(doc.id)
+        # Drop the document's entity mentions + sweep now-orphaned entities (#451).
+        await storage.entities.purge_document_entities(doc.id)
+        await storage.entities.sweep_orphan_entities()
         return StructuredResult(ok=True, data={"id": doc.id})
+
+    # ----------------------------------------------------------------------------------------------
+    # Folder sources (#456): Settings -> Documents continuous-sync folders. The data layer +
+    # orchestration live in folder_store.py / folder_sync.py; these are the thin HTTP edge.
+    # Responses are plain dicts in StructuredResult.data, matching /files and /conversations (the
+    # repo convention) rather than VersionedModel contracts.
+    # ----------------------------------------------------------------------------------------------
+    def _folder_source_out(src: FolderSource, counts: dict[str, int]) -> dict[str, Any]:
+        return {
+            "id": src.id,
+            "root_path": src.root_path,
+            "label": src.label,
+            "enabled": src.enabled,
+            "status": src.status,
+            "status_detail": src.status_detail,
+            "counts": counts,
+            "last_scan_finished_at": (
+                src.last_scan_finished_at.isoformat() if src.last_scan_finished_at else None
+            ),
+            "created_at": src.created_at.isoformat(),
+        }
+
+    def _folder_file_out(file: FolderFile) -> dict[str, Any]:
+        return {
+            "rel_path": file.rel_path,
+            "status": file.status,
+            "document_id": file.document_id,
+            "size_bytes": file.size_bytes,
+            "error_code": file.error_code,
+            "error_detail": file.error_detail,
+            "indexed_at": file.indexed_at.isoformat() if file.indexed_at else None,
+        }
+
+    def _ensure_folder_uuid(source_id: str) -> None:
+        # The id column is uuid; a non-uuid path segment is simply "not found", not a 500.
+        try:
+            uuid.UUID(source_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="folder not found"
+            ) from None
+
+    def _make_entity_indexer(storage: Storage, config: CoreConfig) -> EntityIndexer:
+        """Bind the best-effort NER indexer for global ingests (#451): the CHAT provider + default
+        model (not the embed model). It swallows its own errors so it can never fail an ingest."""
+        chat_provider = _resolve_provider(config.model_provider)
+
+        async def _index(text: str, document_id: str) -> None:
+            await index_document_entities(
+                text,
+                document_id,
+                store=storage.entities,
+                provider=chat_provider,
+                model=config.default_model,
+            )
+
+        return _index
+
+    def _schedule_folder_sync(source: FolderSource) -> None:
+        """Background full sync (scan -> drain -> GC) of a folder source, off the request (#456).
+        Rebinds the request's SecurityContext so the RLS stores hit the right tenant, and uses the
+        configured LOCAL embed provider (the fail-closed guard refuses a non-loopback one)."""
+        storage: Storage | None = app.state.storage
+        config: CoreConfig = app.state.config
+        if storage is None:  # pragma: no cover - only scheduled when storage is available
+            return
+        sec = current_security.get()
+        provider = _resolve_provider(config.embed_provider)
+        indexer = _make_entity_indexer(storage, config)
+
+        async def _run() -> None:
+            if sec is not None:
+                current_security.set(sec)
+            try:
+                await sync_source(
+                    storage.folders,
+                    storage.documents,
+                    storage.vectors,
+                    provider=provider,
+                    config=config,
+                    source=source,
+                    entity_indexer=indexer,
+                    entity_store=storage.entities,
+                )
+            except Exception as exc:  # noqa: BLE001 - best-effort; source status reflects failures
+                logger.warning("folder sync failed for %s: %s", source.id, exc)
+
+        task = asyncio.create_task(_run())
+        app.state.bg_tasks.add(task)
+        task.add_done_callback(app.state.bg_tasks.discard)
+
+    @app.post(
+        "/api/v1/folders", response_model=StructuredResult, dependencies=[Depends(require_context)]
+    )
+    async def register_folder(body: FolderRegister) -> StructuredResult:
+        storage = _require_storage()
+        try:
+            root = canonical_root(body.path)
+        except FileNotFoundError:
+            return StructuredResult(
+                ok=False, error=ErrorInfo(code="E_FOLDER_NOT_FOUND", message="folder not found")
+            )
+        except (NotADirectoryError, OSError):
+            return StructuredResult(
+                ok=False, error=ErrorInfo(code="E_FOLDER_NOT_A_DIR", message="not a directory")
+            )
+        max_bytes = body.max_file_mb * 1024 * 1024 if body.max_file_mb else None
+        try:
+            src = await storage.folders.register(
+                root_path=str(root),
+                label=body.label or root.name,
+                recursive=body.recursive,
+                include_globs=tuple(body.include_globs),
+                exclude_globs=tuple(body.exclude_globs),
+                max_file_bytes=max_bytes,
+            )
+        except FolderExistsError:
+            return StructuredResult(
+                ok=False,
+                error=ErrorInfo(code="E_FOLDER_EXISTS", message="folder already registered"),
+            )
+        _schedule_folder_sync(src)  # initial index runs in the background
+        counts = await storage.folders.count_files_by_status(src.id)
+        return StructuredResult(ok=True, data=_folder_source_out(src, counts))
+
+    @app.get(
+        "/api/v1/folders", response_model=StructuredResult, dependencies=[Depends(require_context)]
+    )
+    async def list_folders() -> StructuredResult:
+        storage = _require_storage()
+        out: list[dict[str, Any]] = []
+        for src in await storage.folders.list_sources():
+            counts = await storage.folders.count_files_by_status(src.id)
+            out.append(_folder_source_out(src, counts))
+        return StructuredResult(ok=True, data={"folders": out})
+
+    @app.get(
+        "/api/v1/folders/{source_id}",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def get_folder(
+        source_id: str,
+        status_filter: str | None = Query(default=None, alias="status"),
+        after: str | None = None,
+        limit: int = 50,
+    ) -> StructuredResult:
+        storage = _require_storage()
+        _ensure_folder_uuid(source_id)
+        src = await storage.folders.get_source(source_id)
+        if src is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="folder not found")
+        if status_filter is not None and status_filter not in _FILE_STATUSES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="invalid status filter"
+            )
+        counts = await storage.folders.count_files_by_status(source_id)
+        files = await storage.folders.list_files(
+            folder_source_id=source_id,
+            status=cast("FileStatus | None", status_filter),
+            after_rel_path=after,
+            limit=min(max(limit, 1), 200),
+        )
+        return StructuredResult(
+            ok=True,
+            data={
+                "source": _folder_source_out(src, counts),
+                "files": [_folder_file_out(f) for f in files],
+            },
+        )
+
+    @app.delete(
+        "/api/v1/folders/{source_id}",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def delete_folder(source_id: str) -> StructuredResult:
+        storage = _require_storage()
+        _ensure_folder_uuid(source_id)
+        if await storage.folders.get_source(source_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="folder not found")
+        await storage.folders.delete_source(source_id)  # folder_files CASCADE
+        # Drop now-unreferenced (non-pinned) vectors + documents this folder held.
+        purged = await purge_orphans(storage.folders, storage.documents, storage.vectors)
+        return StructuredResult(ok=True, data={"id": source_id, "purged_documents": purged})
+
+    @app.post(
+        "/api/v1/folders/{source_id}/resync",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def resync_folder(source_id: str) -> StructuredResult:
+        storage = _require_storage()
+        _ensure_folder_uuid(source_id)
+        src = await storage.folders.get_source(source_id)
+        if src is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="folder not found")
+        if not src.enabled:
+            return StructuredResult(
+                ok=False,
+                error=ErrorInfo(
+                    code="E_FOLDER_PAUSED", message="resume the folder before re-syncing"
+                ),
+            )
+        _schedule_folder_sync(src)
+        return StructuredResult(ok=True, data={"id": source_id, "status": "scanning"})
+
+    async def _set_folder_paused(source_id: str, paused: bool) -> StructuredResult:
+        storage = _require_storage()
+        _ensure_folder_uuid(source_id)
+        src = await storage.folders.get_source(source_id)
+        if src is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="folder not found")
+        await storage.folders.set_enabled(source_id, not paused)
+        await storage.folders.set_source_status(source_id, "disabled" if paused else "idle")
+        updated = await storage.folders.get_source(source_id)
+        assert updated is not None
+        counts = await storage.folders.count_files_by_status(source_id)
+        return StructuredResult(ok=True, data=_folder_source_out(updated, counts))
+
+    @app.post(
+        "/api/v1/folders/{source_id}/pause",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def pause_folder(source_id: str) -> StructuredResult:
+        return await _set_folder_paused(source_id, True)
+
+    @app.post(
+        "/api/v1/folders/{source_id}/resume",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def resume_folder(source_id: str) -> StructuredResult:
+        return await _set_folder_paused(source_id, False)
+
+    @app.get("/api/v1/folders/{source_id}/events", dependencies=[Depends(require_context)])
+    async def folder_events(source_id: str) -> StreamingResponse:
+        storage = _require_storage()
+        _ensure_folder_uuid(source_id)
+        if await storage.folders.get_source(source_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="folder not found")
+        sec = current_security.get()
+
+        async def event_stream() -> AsyncIterator[bytes]:
+            if sec is not None:
+                current_security.set(sec)
+            # Poll the rollup until the source is idle with no queued/in-flight files, bounded so a
+            # stuck source can't hold the connection forever.
+            for _ in range(_FOLDER_EVENTS_MAX_POLLS):
+                cur = await storage.folders.get_source(source_id)
+                counts = await storage.folders.count_files_by_status(source_id)
+                payload = {
+                    "id": source_id,
+                    "status": cur.status if cur is not None else "deleted",
+                    "counts": counts,
+                }
+                yield f"event: progress\ndata: {json.dumps(payload)}\n\n".encode()
+                in_flight = counts.get("pending", 0) + counts.get("indexing", 0)
+                if cur is None or (cur.status != "scanning" and in_flight == 0):
+                    yield f"event: done\ndata: {json.dumps(payload)}\n\n".encode()
+                    return
+                await asyncio.sleep(_FOLDER_EVENTS_POLL_S)
+            timed_out = json.dumps({"id": source_id, "timeout": True})
+            yield f"event: done\ndata: {timed_out}\n\n".encode()
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    # ----------------------------------------------------------------------------------------------
+    # KAG entities (#451): named entities extracted from the global corpus (Settings -> Documents).
+    def _entity_out(e: Entity) -> dict[str, Any]:
+        return {"id": e.id, "type": e.type, "name": e.name, "mention_count": e.mention_count}
+
+    @app.get(
+        "/api/v1/entities", response_model=StructuredResult, dependencies=[Depends(require_context)]
+    )
+    async def list_entities(
+        type: str | None = None, q: str | None = None, limit: int = 50
+    ) -> StructuredResult:
+        storage = _require_storage()
+        ents = await storage.entities.list_entities(type=type, query=q, limit=limit)
+        return StructuredResult(ok=True, data={"entities": [_entity_out(e) for e in ents]})
+
+    @app.get(
+        "/api/v1/entities/{entity_id}",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def get_entity(entity_id: str) -> StructuredResult:
+        storage = _require_storage()
+        ent = await storage.entities.get_entity(entity_id)
+        if ent is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="entity not found")
+        docs = await storage.entities.documents_for_entity(entity_id)
+        edges = await storage.entities.edges_for_entity(entity_id)
+        return StructuredResult(
+            ok=True,
+            data={
+                "entity": _entity_out(ent),
+                "documents": docs,
+                "edges": [{"relation": r, "dst_entity_id": d} for r, d in edges],
+            },
+        )
+
+    @app.get(
+        "/api/v1/documents/{document_id}/entities",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def document_entities(document_id: str) -> StructuredResult:
+        storage = _require_storage()
+        ents = await storage.entities.entities_for_document(document_id)
+        return StructuredResult(ok=True, data={"entities": [_entity_out(e) for e in ents]})
 
     @app.post(
         "/api/v1/conversations",
