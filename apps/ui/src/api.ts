@@ -1213,6 +1213,212 @@ export async function cancelChat(token: string, runId: string): Promise<void> {
   if (!res.ok && res.status !== 404) throw new Error(`cancel failed: ${res.status}`);
 }
 
+// --- Settings > Documents v2: folder sources (#458) ----------------------------------------------
+// A watched on-disk folder whose files are scanned, chunked, and embedded into the tenant's global
+// RAG index. The backend owns the scan lifecycle; the UI lists sources, registers/removes them, and
+// drives Pause/Resume/Re-sync, streaming live scan progress over SSE.
+
+export type FolderStatus = "idle" | "scanning" | "error" | "disabled";
+
+// Per-file lifecycle bucket counts. Every bucket is optional: an absent bucket means zero, so the
+// rollup line renders only the non-zero buckets (e.g. "312 synced · 4 indexing · 1 error").
+export interface FolderCounts {
+  pending?: number;
+  indexing?: number;
+  synced?: number;
+  stale?: number;
+  error?: number;
+  deleted?: number;
+}
+
+export interface FolderSource {
+  id: string;
+  root_path: string;
+  label: string;
+  enabled: boolean;
+  status: FolderStatus;
+  status_detail: string | null;
+  counts: FolderCounts;
+  last_scan_finished_at: string | null;
+  created_at: string;
+}
+
+// A structured backend error ({code, message}); surfaced inline by the add form / card so the user
+// sees the specific reason (E_FOLDER_NOT_FOUND / E_FOLDER_NOT_A_DIR / E_FOLDER_EXISTS / ...).
+export interface FolderError {
+  code: string;
+  message: string;
+}
+
+// register / resync return a discriminated result rather than throwing, so the caller can render the
+// specific structured error (bad path, already-registered, paused) inline instead of a generic toast.
+export type RegisterFolderResult =
+  | { ok: true; folder: FolderSource }
+  | { ok: false; error: FolderError };
+
+export type ResyncResult = { ok: true } | { ok: false; error: FolderError };
+
+// Read a `{ok,data|error}` envelope, tolerating non-2xx (the backend returns the structured error as
+// the body). Returns the parsed envelope, or a synthesized transport error when the body is unusable.
+async function readFolderEnvelope(
+  res: Response,
+): Promise<{ ok?: boolean; data?: unknown; error?: FolderError }> {
+  try {
+    return (await res.json()) as { ok?: boolean; data?: unknown; error?: FolderError };
+  } catch {
+    return { ok: false, error: { code: "E_TRANSPORT", message: `request failed: ${res.status}` } };
+  }
+}
+
+/** List the tenant's registered folder sources. */
+export async function fetchFolders(token: string): Promise<FolderSource[]> {
+  const res = await fetch(`${API_BASE}/api/v1/folders`, {
+    headers: authHeaders(token),
+    credentials: CREDS,
+  });
+  if (!res.ok) throw new Error(`folders request failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { folders?: FolderSource[] } };
+  return body.data?.folders ?? [];
+}
+
+/** Register a folder source. Returns a discriminated result so the form can surface the structured
+ * error ({code, message}) inline; never throws on a structured backend error (bad path / duplicate). */
+export async function registerFolder(
+  token: string,
+  path: string,
+  label?: string,
+): Promise<RegisterFolderResult> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/v1/folders`, {
+      method: "POST",
+      credentials: CREDS,
+      headers: { "Content-Type": "application/json", ...authHeaders(token) },
+      body: JSON.stringify({ path, ...(label ? { label } : {}) }),
+    });
+  } catch {
+    return { ok: false, error: { code: "E_NETWORK", message: "Could not reach the backend." } };
+  }
+  const body = await readFolderEnvelope(res);
+  if (body.ok === true && body.data) return { ok: true, folder: body.data as FolderSource };
+  return {
+    ok: false,
+    error: body.error ?? { code: "E_UNKNOWN", message: `register failed: ${res.status}` },
+  };
+}
+
+/** Remove a folder source. Returns how many indexed documents were purged. */
+export async function deleteFolder(token: string, id: string): Promise<{ purgedDocuments: number }> {
+  const res = await fetch(`${API_BASE}/api/v1/folders/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+    credentials: CREDS,
+  });
+  if (!res.ok) throw new Error(`delete folder failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { purged_documents?: number } };
+  return { purgedDocuments: body.data?.purged_documents ?? 0 };
+}
+
+/** Trigger a re-scan. Returns a discriminated result so a paused source (E_FOLDER_PAUSED) surfaces
+ * inline rather than throwing. */
+export async function resyncFolder(token: string, id: string): Promise<ResyncResult> {
+  const res = await fetch(`${API_BASE}/api/v1/folders/${encodeURIComponent(id)}/resync`, {
+    method: "POST",
+    headers: authHeaders(token),
+    credentials: CREDS,
+  });
+  const body = await readFolderEnvelope(res);
+  if (body.ok === true) return { ok: true };
+  return {
+    ok: false,
+    error: body.error ?? { code: "E_UNKNOWN", message: `re-sync failed: ${res.status}` },
+  };
+}
+
+/** Pause watching/scanning a source. Returns the updated source. */
+export async function pauseFolder(token: string, id: string): Promise<FolderSource> {
+  const res = await fetch(`${API_BASE}/api/v1/folders/${encodeURIComponent(id)}/pause`, {
+    method: "POST",
+    headers: authHeaders(token),
+    credentials: CREDS,
+  });
+  if (!res.ok) throw new Error(`pause folder failed: ${res.status}`);
+  const body = (await res.json()) as { data?: FolderSource };
+  if (!body.data) throw new Error("pause folder failed");
+  return body.data;
+}
+
+/** Resume watching/scanning a paused source. Returns the updated source. */
+export async function resumeFolder(token: string, id: string): Promise<FolderSource> {
+  const res = await fetch(`${API_BASE}/api/v1/folders/${encodeURIComponent(id)}/resume`, {
+    method: "POST",
+    headers: authHeaders(token),
+    credentials: CREDS,
+  });
+  if (!res.ok) throw new Error(`resume folder failed: ${res.status}`);
+  const body = (await res.json()) as { data?: FolderSource };
+  if (!body.data) throw new Error("resume folder failed");
+  return body.data;
+}
+
+// One live scan-progress tick from the SSE stream. `done` is true on the terminal `event: done`
+// frame, after which the stream closes server-side.
+export interface FolderProgressEvent {
+  id: string;
+  status: FolderStatus;
+  counts: FolderCounts;
+  done: boolean;
+}
+
+/** Stream a folder source's live scan progress (#458). Calls `onProgress` for each `progress` frame
+ * and once more for the terminal `done` frame (with `done: true`). Best-effort: a transport error or
+ * an aborted `signal` (the caller unmounting) resolves quietly so the card keeps its last-known
+ * counts rather than surfacing a spurious error. Uses fetch + `pumpSSE`, like `streamChat`. */
+export async function streamFolderEvents(
+  id: string,
+  onProgress: (event: FolderProgressEvent) => void,
+  token: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/v1/folders/${encodeURIComponent(id)}/events`, {
+      headers: authHeaders(token),
+      credentials: CREDS,
+      signal,
+    });
+  } catch {
+    return; // abort or transport error — keep last-known counts, no spurious error
+  }
+  if (!res.ok || res.body === null) return;
+
+  const processFrame = (frame: string): void => {
+    const lines = frame.split("\n");
+    const event = lines.find((l) => l.startsWith("event: "))?.slice("event: ".length);
+    const dataLine = lines.find((l) => l.startsWith("data: "));
+    if (dataLine === undefined) return;
+    if (event !== "progress" && event !== "done") return;
+    let parsed: { id?: string; status?: FolderStatus; counts?: FolderCounts };
+    try {
+      parsed = JSON.parse(dataLine.slice("data: ".length));
+    } catch {
+      return; // skip a malformed/partial frame rather than aborting the stream
+    }
+    onProgress({
+      id: parsed.id ?? id,
+      status: parsed.status ?? "scanning",
+      counts: parsed.counts ?? {},
+      done: event === "done",
+    });
+  };
+
+  try {
+    await pumpSSE(res.body, processFrame);
+  } catch {
+    // Reader aborted (unmount) or stream torn down — best-effort, nothing to surface.
+  }
+}
+
 /** Read an SSE body to completion, dispatching each `\n\n`-delimited frame (incl. a trailing one). */
 async function pumpSSE(body: ReadableStream<Uint8Array>, onFrame: (frame: string) => void): Promise<void> {
   const reader = body.getReader();
