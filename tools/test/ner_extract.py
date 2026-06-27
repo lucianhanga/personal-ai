@@ -6,7 +6,7 @@ or an OpenAI model, so you can compare what each one finds and how long it takes
 
 Providers:
   --provider ollama   the local model via the real core ``extract_entities`` (default)
-  --provider openai   an OpenAI model (default gpt-4o-mini -- cheap + good at structured output)
+  --provider openai   an OpenAI model (default gpt-5-nano -- cheapest GPT-5 tier)
   --provider both     run both and print them side by side
 
 Knobs:
@@ -15,7 +15,7 @@ Knobs:
                 windows; OpenAI handles big windows fine, so pass a larger --window for it.
   --overlap / --max-windows / --timeout   window overlap, cap, and Ollama HTTP timeout.
   --model       Ollama model (default: configured default_model).
-  --openai-model  OpenAI model (default gpt-4o-mini; try gpt-4.1-mini / gpt-4.1-nano for cheaper).
+  --openai-model  OpenAI model (default gpt-5-nano; try gpt-5-mini / gpt-4o-mini for more capacity).
 
 OpenAI needs a key: export OPENAI_API_KEY=sk-... (or PERSONALAI_OPENAI_API_KEY).
 
@@ -191,7 +191,7 @@ async def main() -> None:
     ap.add_argument(
         "--model", default=None, help="Ollama model (default: configured default_model)"
     )
-    ap.add_argument("--openai-model", default="gpt-4o-mini")
+    ap.add_argument("--openai-model", default="gpt-5-nano")
     ap.add_argument("--num-ctx", type=int, default=32768)
     ap.add_argument("--window", type=int, default=1200)
     ap.add_argument("--overlap", type=int, default=150)

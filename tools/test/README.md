@@ -38,10 +38,10 @@ bash tools/test/ner_curl.sh "Rechnung von M-Net GmbH, 39,99 EUR, R-2026-0042, 20
 ## Comparing models (Ollama vs OpenAI)
 
 `--provider openai` runs the same windowed extraction through an OpenAI model. The default is
-**`gpt-4o-mini`** — cheap and strong at structured output; for even cheaper try `--openai-model
-gpt-4.1-mini` or `gpt-4.1-nano`. OpenAI has no empty-output-on-large-window problem, so you can give
-it a bigger `--window` (fewer, cheaper calls). `--provider both` runs local + OpenAI back to back so
-you can see which names each one catches and how long each takes.
+**`gpt-5-nano`** — the cheapest GPT-5 tier; pass `--openai-model gpt-5-mini` or `gpt-4o-mini` for
+more capacity. OpenAI has no empty-output-on-large-window problem, so you can give it a bigger
+`--window` (fewer, cheaper calls). `--provider both` runs local + OpenAI back to back so you can see
+which names each one catches and how long each takes.
 
 ## The knobs that actually matter (hard-won)
 
