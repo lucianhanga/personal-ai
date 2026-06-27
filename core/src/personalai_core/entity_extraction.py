@@ -54,15 +54,12 @@ class ExtractedEntities(BaseModel):
 
 
 _NER_PROMPT = (
-    "You are a thorough named-entity extractor. Extract EVERY named entity actually present in the "
-    "text -- be exhaustive, do not stop at the few most obvious ones. Capture all: people; "
-    "organizations and companies (including vendors, senders, recipients, and issuers -- e.g. the "
-    "company named on an invoice or letterhead, wherever it appears); locations; dates; products "
-    "and line items; and events. Also capture salient identifiers and amounts (invoice / "
-    "order / reference numbers, totals, monetary amounts) as type 'other'. Do NOT invent entities "
-    "that are not in the text. Use a type from this EXACT set: person, org, location, date, "
-    "product, event, other. Each relation is a short predicate (e.g. 'works_at', 'issued_by', "
-    "'located_in') between two entity names you also returned. Return ONLY the structured result."
+    "You are a named-entity extractor. Extract the RELEVANT, salient named entities from the text: "
+    "people; organizations and companies (e.g. a vendor, sender, or issuer); locations; notable "
+    "dates; products; events; and key identifiers or amounts (invoice / order / reference numbers, "
+    "totals) as type 'other'. Focus on meaningful entities -- do NOT pad with trivial fragments or "
+    "repeats, and do NOT invent anything that is not in the text. Use a type from this EXACT set: "
+    "person, org, location, date, product, event, other. Return ONLY the entities."
 )
 
 # Whole-document coverage. Windows are deliberately SMALL: beyond recall (a model loses entities in
@@ -71,7 +68,7 @@ _NER_PROMPT = (
 # makes structured NER actually produce on this model (#464). Overlap stops a boundary-straddling
 # entity from being lost; max_windows caps the LLM-pass count on a very large document (raised to
 # match the smaller window so whole-document coverage is preserved).
-_WINDOW_CHARS = 1200
+_WINDOW_CHARS = 1024
 _OVERLAP_CHARS = 150
 _MAX_WINDOWS = 30
 

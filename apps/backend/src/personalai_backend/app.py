@@ -49,6 +49,7 @@ from personalai_backend.ingestion import chunk_ids, ingest_text
 from personalai_backend.logbuffer import LOG_BUFFER
 from personalai_backend.logbuffer import install as install_log_buffer
 from personalai_backend.mcp_manager import McpManager
+from personalai_backend.ollama_admission import AdmissionDeferred, assert_ner_admission
 from personalai_backend.rag import (
     HybridVectorStoreRetriever,
     ProviderEmbeddings,
@@ -105,6 +106,7 @@ from personalai_core.security import (
     effective_egress_config,
 )
 from personalai_modality_files import UnsupportedFileTypeError, parse_document
+from personalai_provider_ollama import OllamaProvider
 from personalai_storage_postgres import (
     Conversation,
     Entity,
@@ -2916,17 +2918,46 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             ) from None
 
     def _make_entity_indexer(storage: Storage, config: CoreConfig) -> EntityIndexer:
-        """Bind the best-effort NER indexer for global ingests (#451): the CHAT provider + default
-        model (not the embed model). It swallows its own errors so it can never fail an ingest."""
-        chat_provider = _resolve_provider(config.model_provider)
+        """Bind the best-effort NER indexer for global ingests (#451, #464). NER runs on its OWN
+        small local model (``ner_model``) at a small ``ner_num_ctx`` -- a dedicated loopback Ollama
+        runner, NOT the heavy chat model -- so it is fast and memory-light. A memory-aware admission
+        gate runs first: if loading the NER model would not fit within the budget against the GLOBAL
+        Ollama load, it DEFERS (the document stays searchable, just not yet in the KAG; a later
+        re-sync / reextract retries). Swallows its own errors so it never fails an ingest.
+
+        The dedicated runner + admission apply only when the provider IS Ollama (the normal local
+        setup). With any other provider (e.g. a test fake), fall back to the resolved provider and
+        skip the Ollama-specific admission so behavior + test isolation are preserved."""
+        on_ollama = config.model_provider == "ollama"
+        if on_ollama:
+            provider: ModelProvider = OllamaProvider(
+                base_url=config.ollama_host,
+                keep_alive=config.ollama_keep_alive,
+                timeout=config.ollama_timeout,
+                num_ctx=config.ner_num_ctx,
+            )
+            assert_local_provider(provider)  # fail-closed: NER must not egress
+        else:
+            provider = _resolve_provider(config.model_provider)
 
         async def _index(text: str, document_id: str) -> None:
+            if on_ollama:
+                try:
+                    await assert_ner_admission(
+                        base_url=config.ollama_host,
+                        model=config.ner_model,
+                        num_ctx=config.ner_num_ctx,
+                        memory_fraction=config.ner_memory_fraction,
+                    )
+                except AdmissionDeferred as exc:
+                    logger.warning("NER deferred for document %s: %s", document_id, exc)
+                    return
             await index_document_entities(
                 text,
                 document_id,
                 store=storage.entities,
-                provider=chat_provider,
-                model=config.default_model,
+                provider=provider,
+                model=config.ner_model,
             )
 
         return _index
