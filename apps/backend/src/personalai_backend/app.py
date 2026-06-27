@@ -356,6 +356,14 @@ class FolderRegister(BaseModel):
     max_file_mb: int | None = None
 
 
+class RetrieveRequest(BaseModel):
+    """Standalone retrieval for the Settings -> Knowledge Retrieval Explorer (#465): run the hybrid
+    retriever over the global corpus, returning ranked passages WITHOUT generating a chat answer."""
+
+    q: str
+    top_k: int = 8
+
+
 # Folder-events SSE (#456): poll the sync rollup at this cadence, bounded by a max poll count so a
 # stuck/very-large source can't hold the connection open indefinitely (~10 min at 1s).
 _FOLDER_EVENTS_POLL_S = 1.0
@@ -3329,6 +3337,47 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     for ent, weight in ranked
                 ],
             },
+        )
+
+    @app.post(
+        "/api/v1/retrieve", response_model=StructuredResult, dependencies=[Depends(require_context)]
+    )
+    async def retrieve(body: RetrieveRequest) -> StructuredResult:
+        """Standalone hybrid retrieval over the GLOBAL corpus for the Knowledge Retrieval Explorer
+        (#465): ranked passages with score + provenance, no chat answer. Reuses the same
+        HybridVectorStoreRetriever (dense+lexical RRF) the chat path uses."""
+        storage = _require_storage()
+        config: CoreConfig = app.state.config
+        q = body.q.strip()
+        if not q:
+            return StructuredResult(ok=True, data={"query": "", "scope": "global", "passages": []})
+        top_k = min(max(body.top_k, 1), 50)
+        retriever = HybridVectorStoreRetriever(
+            vectors=storage.vectors,
+            embeddings=ProviderEmbeddings(
+                _resolve_provider(config.embed_provider), config.embed_model
+            ),
+            top_k=top_k,
+            union_conversation_id=None,  # Settings explorer = the durable global corpus only
+        )
+        started = time.perf_counter()
+        docs = await retriever.ainvoke(q)
+        ms = round((time.perf_counter() - started) * 1000)
+        passages = [
+            {
+                "rank": i + 1,
+                "text": doc.page_content,
+                "score": doc.metadata["citation"]["score"],
+                "source_id": doc.metadata["citation"]["source_id"],
+                "locator": doc.metadata["citation"]["locator"],
+                "name": doc.metadata["citation"]["name"],
+                "source_kind": SOURCE_KIND_VECTOR,
+            }
+            for i, doc in enumerate(docs)
+        ]
+        return StructuredResult(
+            ok=True,
+            data={"query": q, "scope": "global", "top_k": top_k, "ms": ms, "passages": passages},
         )
 
     @app.post(
