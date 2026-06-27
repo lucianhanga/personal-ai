@@ -1487,10 +1487,27 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     top_k=config.memory_top_k,
                 )
             )
-        # The deferred KAG/GraphRAG seam: registered so the merge/provenance/budget machinery
-        # already accounts for it, but a no-op that returns nothing (M11/#409). NOTHING renders for
-        # it today.
-        sources.append(GraphSource())
+        # KAG aggregation source (#465): answers count/enumeration questions ("how many M-Net
+        # invoices?") that plain RAG can't, by counting an entity's documents in the graph. The
+        # counter closes over the tenant-scoped entity store (core stays storage-free); the chat
+        # model (already warm this turn) extracts the target entity. Self-elects only on a counting
+        # question, so ordinary retrieval is unaffected.
+        async def _entity_counter(name: str) -> list[tuple[str, str, int]]:
+            ents = await storage.entities.list_entities(query=name, limit=3)
+            counted: list[tuple[str, str, int]] = []
+            for ent in ents:
+                docs = await storage.entities.documents_for_entity(ent.id)
+                counted.append((ent.name, ent.type, len(docs)))
+            counted.sort(key=lambda t: -t[2])
+            return counted
+
+        sources.append(
+            GraphSource(
+                counter=_entity_counter,
+                provider=_resolve_provider(config.model_provider),
+                model=config.default_model,
+            )
+        )
         return sources
 
     async def _ingest_attachment_doc(
