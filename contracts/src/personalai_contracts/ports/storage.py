@@ -121,6 +121,11 @@ class VectorRepository(Protocol):
         """
         ...
 
+    async def chunks_for_document(self, document_id: str) -> Sequence[tuple[int, str]]:
+        """Return ``(chunk_index, text)`` for a document's chunks, ordered by index -- for the
+        Knowledge chunk inspector (#465)."""
+        ...
+
     async def delete(self, ids: Sequence[str]) -> None: ...
 
 

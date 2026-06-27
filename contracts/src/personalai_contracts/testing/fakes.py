@@ -208,6 +208,15 @@ class InMemoryVectorRepository:
             for rid, score in ranked
         ]
 
+    async def chunks_for_document(self, document_id: str) -> Sequence[tuple[int, str]]:
+        out = [
+            (int(rec.metadata.get("chunk_index", 0)), str(rec.metadata.get("text", "")))
+            for rec in self._records.values()
+            if rec.metadata.get("document_id") == document_id
+        ]
+        out.sort(key=lambda c: c[0])
+        return out
+
     async def delete(self, ids: Sequence[str]) -> None:
         for vid in ids:
             self._records.pop(vid, None)

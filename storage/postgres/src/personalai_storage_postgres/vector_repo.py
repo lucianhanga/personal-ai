@@ -167,3 +167,14 @@ class PgVectorRepository:
 
     async def delete(self, ids: Sequence[str]) -> None:
         await self._pool.execute("DELETE FROM vectors WHERE id = ANY($1::text[])", list(ids))
+
+    async def chunks_for_document(self, document_id: str) -> Sequence[tuple[int, str]]:
+        """``(chunk_index, text)`` for a document's chunks, ordered by index (#465). RLS-scoped via
+        the tenant-bound querier; reads the chunk text/index stored in the vector row's metadata."""
+        rows = await self._pool.fetch(
+            "SELECT (metadata->>'chunk_index')::int AS idx, metadata->>'text' AS text "
+            "FROM vectors WHERE metadata->>'document_id' = $1 "
+            "ORDER BY (metadata->>'chunk_index')::int",
+            document_id,
+        )
+        return [(int(r["idx"]), r["text"] or "") for r in rows]
