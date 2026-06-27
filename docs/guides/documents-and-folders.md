@@ -90,6 +90,38 @@ for the durable corpus — documents attached to a single chat are not added to 
 best-effort: if extraction fails for a document, the document stays searchable; it just is not added
 to the graph.
 
+### NER model & memory management
+
+Entity extraction runs on its **own small, fast local model** — separate from the (larger) chat
+model — at a small context window, so it is cheap and fits in memory alongside the chat model.
+Configurable:
+
+| Setting | Env | Default | Meaning |
+| --- | --- | --- | --- |
+| `ner_model` | `PERSONALAI_NER_MODEL` | `qwen3:14b` | the local model used for NER |
+| `ner_num_ctx` | `PERSONALAI_NER_NUM_CTX` | `8192` | NER context window (KV cache is the main memory driver) |
+| `ner_memory_fraction` | `PERSONALAI_NER_MEMORY_FRACTION` | `0.75` | max share of system RAM a NER load may need |
+
+**Memory-aware loading.** Ollama is often shared with other processes. Before loading the NER model,
+PersonalAI checks the **global** Ollama load (`/api/ps`) against the `ner_memory_fraction` budget and
+only proceeds if the model is already resident or fits **without evicting anything**. If there isn't
+room, NER is **deferred** — the document stays searchable, it's just not added to the graph yet, and
+a later re-sync / re-extract retries. It never evicts a model that has a task running (Ollama
+guarantees this server-side), and it never sends a document off-device.
+
+For a shared Ollama box, these server-side env vars complement the above (set where Ollama runs):
+
+```
+OLLAMA_MAX_LOADED_MODELS=2     # chat + NER
+OLLAMA_NUM_PARALLEL=1          # 1 request/model -> smallest KV cache
+OLLAMA_KV_CACHE_TYPE=q8_0      # halve KV memory (needs flash attention)
+OLLAMA_FLASH_ATTENTION=1
+OLLAMA_KEEP_ALIVE=5m
+```
+
+On Apple Silicon, the 75% default mirrors Metal's working-set limit; if you need more headroom you
+can raise it with `sudo sysctl iogpu.wired_limit_mb=<MB>` (unsupported by Apple, resets on reboot).
+
 ## 6. Privacy & security
 
 - **Local only.** Parsing, OCR, embeddings, and entity extraction use your local models; the folder
