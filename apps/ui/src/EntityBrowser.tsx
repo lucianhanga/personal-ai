@@ -27,6 +27,12 @@ const TYPE_LABEL: Record<EntityType, string> = {
 
 interface EntityBrowserProps {
   token: string;
+  // When provided (Knowledge > Graph tab), each entity gains an "Open in graph" affordance that
+  // drives the ego-graph canvas. `focusedId` highlights the entity currently shown on the canvas so
+  // the list (the accessible alternative) and the canvas stay in sync. Omitted everywhere else, so
+  // the existing inline-expand behavior (Documents > Entities) is unchanged.
+  onFocusEntity?: (id: string) => void;
+  focusedId?: string | null;
 }
 
 function copyId(id: string): void {
@@ -37,7 +43,7 @@ function copyId(id: string): void {
  * type with a type filter + debounced fuzzy name search (both server-driven via the entities API).
  * Clicking an entity inline-expands its detail: the documents it appears in (copy-id affordances) and
  * its knowledge-graph edges (relation -> other entity, navigable). No emoji; word+color; aria-live. */
-export function EntityBrowser({ token }: EntityBrowserProps): React.ReactElement {
+export function EntityBrowser({ token, onFocusEntity, focusedId }: EntityBrowserProps): React.ReactElement {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -201,32 +207,65 @@ export function EntityBrowser({ token }: EntityBrowserProps): React.ReactElement
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
                   {g.items.map((e) => {
                     const open = selectedId === e.id;
+                    const focused = focusedId === e.id;
                     return (
-                      <button
+                      <span
                         key={e.id}
-                        data-testid="entity-chip"
-                        data-entity-id={e.id}
-                        type="button"
-                        aria-expanded={open}
-                        onClick={() => selectEntity(e.id)}
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: "0.4rem",
-                          padding: "0.22rem 0.5rem",
-                          borderRadius: 14,
-                          border: `1px solid ${open ? NER : "#ddd"}`,
-                          background: open ? "rgba(162,28,175,0.08)" : "rgba(127,127,127,0.04)",
-                          fontSize: "0.8rem",
-                          cursor: "pointer",
-                          color: "#333",
-                        }}
+                        data-testid="entity-chip-wrap"
+                        style={{ display: "inline-flex", alignItems: "center", gap: "0.2rem" }}
                       >
-                        <span style={{ fontWeight: 500 }}>{e.name}</span>
-                        <span style={{ color: MUTED, fontSize: "0.72rem" }}>
-                          {e.mention_count} {e.mention_count === 1 ? "mention" : "mentions"}
-                        </span>
-                      </button>
+                        <button
+                          data-testid="entity-chip"
+                          data-entity-id={e.id}
+                          type="button"
+                          aria-expanded={open}
+                          aria-current={focused ? "true" : undefined}
+                          onClick={() => selectEntity(e.id)}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "0.4rem",
+                            padding: "0.22rem 0.5rem",
+                            borderRadius: 14,
+                            border: `1px solid ${focused ? NER : open ? NER : "#ddd"}`,
+                            background: focused
+                              ? "rgba(162,28,175,0.14)"
+                              : open
+                                ? "rgba(162,28,175,0.08)"
+                                : "rgba(127,127,127,0.04)",
+                            fontSize: "0.8rem",
+                            cursor: "pointer",
+                            color: "#333",
+                            fontWeight: focused ? 600 : 400,
+                          }}
+                        >
+                          <span style={{ fontWeight: 500 }}>{e.name}</span>
+                          <span style={{ color: MUTED, fontSize: "0.72rem" }}>
+                            {e.mention_count} {e.mention_count === 1 ? "mention" : "mentions"}
+                          </span>
+                        </button>
+                        {onFocusEntity && (
+                          <button
+                            data-testid="entity-open-in-graph"
+                            data-entity-id={e.id}
+                            type="button"
+                            onClick={() => onFocusEntity(e.id)}
+                            title={`Open ${e.name} in graph`}
+                            aria-label={`Open ${e.name} in graph`}
+                            style={{
+                              border: `1px solid ${focused ? NER : "#ddd"}`,
+                              borderRadius: 10,
+                              background: "none",
+                              color: NER,
+                              fontSize: "0.68rem",
+                              padding: "0.1rem 0.4rem",
+                              cursor: "pointer",
+                            }}
+                          >
+                            Graph
+                          </button>
+                        )}
+                      </span>
                     );
                   })}
                 </div>

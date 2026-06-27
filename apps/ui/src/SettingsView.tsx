@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { Agents } from "./Agents";
 import { DocumentsPanel } from "./DocumentsPanel";
+import { KnowledgePanel } from "./KnowledgePanel";
 import { McpPanel } from "./McpPanel";
 import { Memory } from "./Memory";
 import { Network } from "./Network";
@@ -9,7 +10,15 @@ import { Preferences } from "./Preferences";
 import { Tools } from "./Tools";
 import type { DocumentInfo } from "./api";
 
-type SectionId = "documents" | "tools" | "mcp" | "agents" | "memory" | "network" | "preferences";
+type SectionId =
+  | "documents"
+  | "tools"
+  | "mcp"
+  | "agents"
+  | "memory"
+  | "knowledge"
+  | "network"
+  | "preferences";
 
 const SECTIONS: { id: SectionId; label: string }[] = [
   { id: "documents", label: "Documents" },
@@ -17,6 +26,7 @@ const SECTIONS: { id: SectionId; label: string }[] = [
   { id: "mcp", label: "MCP servers" },
   { id: "agents", label: "Agents" },
   { id: "memory", label: "Memory" },
+  { id: "knowledge", label: "Knowledge" },
   { id: "network", label: "Network" },
   { id: "preferences", label: "Preferences" },
 ];
@@ -89,6 +99,7 @@ export function SettingsView(props: SettingsViewProps): React.ReactElement {
         {section === "mcp" && <McpPanel token={token} />}
         {section === "agents" && <Agents token={token} />}
         {section === "memory" && <Memory token={token} />}
+        {section === "knowledge" && <KnowledgePanel token={token} />}
         {section === "network" && <Network token={token} />}
         {section === "preferences" && <Preferences token={token} onToken={onToken} />}
       </div>

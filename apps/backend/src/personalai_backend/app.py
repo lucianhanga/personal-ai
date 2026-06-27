@@ -503,6 +503,25 @@ def _clamp_int(value: Any, lo: int, hi: int, default: int = 0) -> int:
     return max(lo, min(hi, n))
 
 
+def _rank_cooccurring(
+    per_doc_entities: Sequence[Sequence[Any]], focus_id: str, cap: int
+) -> list[Any]:
+    """Rank entities that CO-OCCUR with the focus entity across documents by shared-document count
+    (#465 KAG ego-graph). ``per_doc_entities`` is the entity list of each document the focus appears
+    in; returns ``[(entity, shared_documents), ...]`` highest-weight first, capped. Pure -> unit
+    tested without a DB."""
+    shared: dict[str, int] = {}
+    by_id: dict[str, Any] = {}
+    for ents in per_doc_entities:
+        for ent in ents:
+            if ent.id == focus_id:
+                continue
+            shared[ent.id] = shared.get(ent.id, 0) + 1
+            by_id[ent.id] = ent
+    ranked = sorted(shared.items(), key=lambda kv: (-kv[1], by_id[kv[0]].name))[:cap]
+    return [(by_id[eid], weight) for eid, weight in ranked]
+
+
 def _sanitize_activities(raw: Any) -> list[dict[str, Any]]:
     """Validate client-supplied resource-processing activities (#424) at the persist boundary.
 
@@ -3277,6 +3296,40 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         storage = _require_storage()
         ents = await storage.entities.entities_for_document(document_id)
         return StructuredResult(ok=True, data={"entities": [_entity_out(e) for e in ents]})
+
+    @app.get(
+        "/api/v1/entities/{entity_id}/neighborhood",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def entity_neighborhood(entity_id: str, cap: int = 200) -> StructuredResult:
+        """Ego-graph for the Knowledge graph (KAG viz): the focus entity, the documents that mention
+        it, and the entities that CO-OCCUR (share a document) ranked by shared-document count. Built
+        from the entity store; bounded by ``cap`` so a hub entity can't blow up the response."""
+        storage = _require_storage()
+        focus = await storage.entities.get_entity(entity_id)
+        if focus is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="entity not found")
+        cap = min(max(cap, 1), 500)
+        doc_ids = await storage.entities.documents_for_entity(entity_id)
+        bounded = doc_ids[:cap]  # bound the fan-out for a hub entity
+        per_doc = [await storage.entities.entities_for_document(did) for did in bounded]
+        ranked = _rank_cooccurring(per_doc, entity_id, cap)
+        documents = []
+        for did in bounded:
+            doc = await storage.documents.get(did)
+            documents.append({"id": did, "name": doc.name if doc else did})
+        return StructuredResult(
+            ok=True,
+            data={
+                "focus": _entity_out(focus),
+                "documents": documents,
+                "neighbors": [
+                    {"entity": _entity_out(ent), "shared_documents": weight}
+                    for ent, weight in ranked
+                ],
+            },
+        )
 
     @app.post(
         "/api/v1/conversations",
