@@ -23,6 +23,9 @@ _ENV_FIELDS = {
     "APP_MODE": "app_mode",
     "MODEL_PROVIDER": "model_provider",
     "DEFAULT_MODEL": "default_model",
+    "NER_MODEL": "ner_model",
+    "NER_NUM_CTX": "ner_num_ctx",
+    "NER_MEMORY_FRACTION": "ner_memory_fraction",
     "OLLAMA_HOST": "ollama_host",
     "OLLAMA_NUM_CTX": "ollama_num_ctx",
     "OLLAMA_KEEP_ALIVE": "ollama_keep_alive",
@@ -96,6 +99,7 @@ _INT_FIELDS = {
     "db_pool_max_size",
     "stm_keep_recent",
     "memory_top_k",
+    "ner_num_ctx",
     "ollama_num_ctx",
     "ollama_top_k",
     "ollama_repeat_last_n",
@@ -113,6 +117,7 @@ _INT_FIELDS = {
     "web_search_max_results",
 }
 _FLOAT_FIELDS = {
+    "ner_memory_fraction",
     "ollama_timeout",
     "ollama_temperature",
     "ollama_top_p",
@@ -156,6 +161,15 @@ class CoreConfig(StrictModel):
     app_mode: str = "local"
     model_provider: str = "ollama"
     default_model: str = "qwen3.6:35b-a3b"
+    # NER/KAG runs on its OWN small, fast model (not the heavy chat model) with a small context, so
+    # entity extraction is cheap and fits in memory alongside the chat model (#464). A dedicated
+    # loopback Ollama runner is built for it; it must stay local (fail-closed, no egress).
+    ner_model: str = "qwen3:14b"
+    ner_num_ctx: int = 8192
+    # Admission budget: the NER loader will only load its model if it fits within this fraction of
+    # total system memory (measured against the GLOBAL Ollama load), else it defers. 0.75 matches
+    # Apple Silicon's Metal working-set default; tune down on a busy shared box.
+    ner_memory_fraction: float = 0.75
     ollama_host: str = "http://127.0.0.1:11434"
     # Bound the Ollama context window (KV cache) to control memory / avoid swap on constrained RAM.
     ollama_num_ctx: int = 32768
