@@ -20,7 +20,7 @@ OpenAI knobs:
 Ollama knobs:
   --num-ctx (default 32768; drop to 4096 if the 35B OOM-crashes Ollama), --window (1200; the local
   MoE returns EMPTY on large windows, OpenAI handles big windows fine), --overlap, --max-windows,
-  --timeout, --model.
+  --timeout, --ollama-model (alias --model).
 
 OpenAI needs a key: export OPENAI_API_KEY=sk-... (or PERSONALAI_OPENAI_API_KEY).
 
@@ -234,7 +234,11 @@ async def main() -> None:
     src.add_argument("--first-doc", action="store_true", help="first global doc from the index")
     ap.add_argument("--provider", choices=["ollama", "openai", "both"], default="ollama")
     ap.add_argument(
-        "--model", default=None, help="Ollama model (default: configured default_model)"
+        "--ollama-model",
+        "--model",
+        dest="ollama_model",
+        default=None,
+        help="Ollama model (default: configured default_model)",
     )
     ap.add_argument("--openai-model", default="gpt-5-nano")
     ap.add_argument(
@@ -269,7 +273,7 @@ async def main() -> None:
             timeout=args.timeout,
             num_ctx=args.num_ctx,
         )
-        model = args.model or config.default_model
+        model = args.ollama_model or config.default_model
         started = time.perf_counter()
         res = await extract_entities(
             text,
