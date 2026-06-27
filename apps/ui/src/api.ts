@@ -1474,6 +1474,60 @@ export async function fetchEntityDetail(token: string, id: string): Promise<Enti
   };
 }
 
+// One co-occurring entity in an ego-graph: the neighbor plus how many documents it shares with the
+// focus (the edge weight). Entity-entity edges are sparse, so co-occurrence is the meaningful link.
+export interface EntityNeighbor {
+  entity: Entity;
+  shared_documents: number;
+}
+
+// The focus+context ego-graph for one entity (#KAG): the focus entity, the documents it appears in
+// (the bipartite doc nodes), and the entities it co-occurs with (weighted by shared documents). The
+// backend caps the result; the UI renders the focus + docs + neighbors as a small node-link graph.
+export interface EntityNeighborhood {
+  focus: Entity;
+  documents: { id: string; name: string }[];
+  neighbors: EntityNeighbor[];
+}
+
+/** Fetch an entity's ego-graph (#KAG): its documents + co-occurring entities (weighted), capped
+ * server-side at `cap` so the canvas never has to render an unbounded hairball. */
+export async function fetchEntityNeighborhood(
+  token: string,
+  id: string,
+  cap = 200,
+): Promise<EntityNeighborhood> {
+  const url = new URL(`${API_BASE}/api/v1/entities/${encodeURIComponent(id)}/neighborhood`);
+  url.searchParams.set("cap", String(cap));
+  const res = await fetch(url, { headers: authHeaders(token), credentials: CREDS });
+  if (!res.ok) throw new Error(`neighborhood request failed: ${res.status}`);
+  const body = (await res.json()) as {
+    data?: {
+      focus?: Entity;
+      documents?: { id: string; name: string }[];
+      neighbors?: EntityNeighbor[];
+    };
+  };
+  if (!body.data?.focus) throw new Error("neighborhood request failed");
+  return {
+    focus: body.data.focus,
+    documents: body.data.documents ?? [],
+    neighbors: body.data.neighbors ?? [],
+  };
+}
+
+/** The entities extracted from a single document (#KAG), for the corpus table's per-doc entity count
+ * and the graph detail rail when a document node is selected. */
+export async function fetchDocumentEntities(token: string, id: string): Promise<Entity[]> {
+  const res = await fetch(`${API_BASE}/api/v1/documents/${encodeURIComponent(id)}/entities`, {
+    headers: authHeaders(token),
+    credentials: CREDS,
+  });
+  if (!res.ok) throw new Error(`document entities request failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { entities?: Entity[] } };
+  return body.data?.entities ?? [];
+}
+
 /** Register a folder source. Returns a discriminated result so the form can surface the structured
  * error ({code, message}) inline; never throws on a structured backend error (bad path / duplicate). */
 export async function registerFolder(
