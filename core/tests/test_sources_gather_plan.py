@@ -135,3 +135,35 @@ def test_plan_prunes_graph_stub_even_if_chosen() -> None:
     chosen = asyncio.run(_run())
     assert "graph" not in chosen  # pruned by select()=0.0
     assert "vector" in chosen  # cheap floor stays
+
+
+def test_plan_force_includes_self_electing_source() -> None:
+    # A source whose select() is strongly applicable (the KAG count source on a "how many" query)
+    # SELF-ELECTS -- included even when the router picks nothing (#465).
+    vector = _SlowSource("vector", SOURCE_KIND_VECTOR, 0.0)
+
+    async def _counter(name: str) -> list[tuple[str, str, int]]:
+        return [("M-Net", "org", 14)]
+
+    graph = GraphSource(counter=_counter)
+
+    class _RouterPicksNothing(FakeModelProvider):
+        async def generate(self, request):  # type: ignore[no-untyped-def]
+            from personalai_contracts.ports import GenerationResult
+
+            return GenerationResult(
+                text='{"sources": [], "rationale": "none", "parallel": true}', model=request.model
+            )
+
+    async def _run() -> list[str]:
+        chosen, _plan = await plan_sources(
+            query="how many M-Net invoices?",
+            sources=[vector, graph],
+            provider=_RouterPicksNothing(),
+            model="m",
+        )
+        return [s.name for s in chosen]
+
+    chosen = asyncio.run(_run())
+    assert "graph" in chosen  # self-elected via select()=0.9 despite the router picking nothing
+    assert "vector" in chosen

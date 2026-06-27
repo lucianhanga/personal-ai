@@ -38,6 +38,11 @@ _ALWAYS_ON_KINDS = frozenset({SOURCE_KIND_VECTOR, SOURCE_KIND_MEMORY})
 # 0.0).
 _SELECT_PRUNE_THRESHOLD = 0.0
 
+# A source this confident it applies SELF-ELECTS: it is included even if the LLM router didn't pick
+# it. This lets a deterministic intent classifier (e.g. the KAG aggregation source recognising a
+# "how many ..." count question) reliably fire without depending on the model's routing (#465).
+_FORCE_SELECT_THRESHOLD = 0.5
+
 _ROUTER_PROMPT = (
     "You are a retrieval router. Given the user's request and a list of OPTIONAL retrieval "
     "sources, return JSON naming ONLY the optional sources that are actually needed to answer (an "
@@ -95,11 +100,15 @@ async def plan_sources(
 
     chosen_optional: list[RetrievalSource] = []
     for src in optional:
+        score = await src.select(query, ctx)
+        # Self-election: a strongly-applicable source is included even if the router didn't pick it.
+        if score is not None and score >= _FORCE_SELECT_THRESHOLD:
+            chosen_optional.append(src)
+            continue
         if src.name not in chosen_optional_names:
             continue
         # Deterministic prune: drop a planner pick whose select() says it's not applicable (e.g. the
         # deferred graph stub's 0.0). select() returning None means "no opinion" -> keep it.
-        score = await src.select(query, ctx)
         if score is not None and score <= _SELECT_PRUNE_THRESHOLD:
             continue
         chosen_optional.append(src)
