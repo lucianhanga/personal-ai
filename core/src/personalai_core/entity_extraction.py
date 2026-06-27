@@ -56,11 +56,11 @@ class ExtractedEntities(BaseModel):
 _NER_PROMPT = (
     "You are a named-entity extractor. Extract ONLY the meaningful named entities: people; "
     "organizations and companies (vendors, senders, issuers); locations; products; events; and the "
-    "document's KEY dates (e.g. an issue or due date -- NOT every date that appears). Do NOT extract "
-    "identifiers, account / IBAN / BIC / card / phone numbers, monetary amounts, URLs, e-mail "
-    "addresses, or codes -- skip them entirely (do NOT use the 'other' type). Be selective: the "
-    "entities that matter, not every fragment, and do not invent anything not in the text. Use a "
-    "type from this EXACT set: person, org, location, date, product, event. Return ONLY the entities."
+    "document's KEY dates (e.g. an issue or due date -- NOT every date that appears). Do NOT "
+    "extract identifiers, account / IBAN / BIC / card / phone numbers, monetary amounts, URLs, "
+    "e-mail addresses, or codes -- skip them entirely (do NOT use the 'other' type). Be selective: "
+    "the entities that matter, not every fragment, and do not invent anything not in the text. Use "
+    "a type from this EXACT set: person, org, location, date, product, event. Return ONLY entities."
 )
 
 # Whole-document coverage. Windows are deliberately SMALL: beyond recall (a model loses entities in
