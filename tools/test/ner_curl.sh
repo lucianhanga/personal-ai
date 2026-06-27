@@ -60,7 +60,7 @@ payload = {
     "model": os.environ["MODEL"],
     "messages": messages,
     "format": schema,
-    "stream": False,
+    "stream": True,
     "keep_alive": "30m",
     "options": {"num_ctx": int(os.environ["NUM_CTX"])},
 }
@@ -74,5 +74,36 @@ PY
 )
 
 echo ">>> POST $HOST/api/chat  model=$MODEL num_ctx=$NUM_CTX think=$THINK chars=${#TEXT}" >&2
-curl -s "$HOST/api/chat" -d "$PAYLOAD" \
-  | python3 -c "import sys,json;r=json.load(sys.stdin);print(r.get('message',{}).get('content') or '(EMPTY content) '+json.dumps(r)[:300])"
+echo "--- streaming live ($(date '+%H:%M:%S')) ---" >&2
+# Stream the NDJSON: print each content delta as it arrives (so you watch the model produce), then
+# print the assembled result and timing (time-to-first-token exposes the cold model load).
+curl -sN "$HOST/api/chat" -d "$PAYLOAD" | python3 -c "
+import sys, json, time
+t0 = time.monotonic()
+ttft = None
+buf, think = '', ''
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        obj = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    msg = obj.get('message', {})
+    if msg.get('thinking'):
+        think += msg['thinking']
+    delta = msg.get('content', '')
+    if delta:
+        if ttft is None:
+            ttft = time.monotonic() - t0
+        sys.stdout.write(delta)
+        sys.stdout.flush()
+        buf += delta
+    if obj.get('done'):
+        total = time.monotonic() - t0
+        print('\n\n--- assembled content ---')
+        print(buf or ('(EMPTY content)' + ((' thinking=' + think[:200]) if think else '')))
+        ttft_s = f'{ttft:.1f}s' if ttft is not None else 'n/a (no content)'
+        print(f'\n[timing] time-to-first-token={ttft_s}  total={total:.1f}s', file=sys.stderr)
+"
