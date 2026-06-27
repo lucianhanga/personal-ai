@@ -610,8 +610,17 @@ export async function extractDocument(
 }
 
 /** List ingested documents. */
-export async function fetchFiles(token: string): Promise<DocumentInfo[]> {
-  const res = await fetch(`${API_BASE}/api/v1/files`, { headers: authHeaders(token), credentials: CREDS });
+export async function fetchFiles(
+  token: string,
+  opts?: { includeSynced?: boolean },
+): Promise<DocumentInfo[]> {
+  // Default: manual uploads only ("Individual uploads"). includeSynced=true returns the FULL global
+  // corpus (manual + folder-synced) for the Knowledge -> Corpus overview (#465).
+  const qs = opts?.includeSynced ? "?include_synced=true" : "";
+  const res = await fetch(`${API_BASE}/api/v1/files${qs}`, {
+    headers: authHeaders(token),
+    credentials: CREDS,
+  });
   if (!res.ok) throw new Error(`files request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { files?: DocumentInfo[] } };
   return body.data?.files ?? [];
@@ -1526,6 +1535,69 @@ export async function fetchDocumentEntities(token: string, id: string): Promise<
   if (!res.ok) throw new Error(`document entities request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { entities?: Entity[] } };
   return body.data?.entities ?? [];
+}
+
+// --- Settings > Knowledge: Retrieval Explorer (#465) ---------------------------------------------
+// Standalone hybrid retrieval over the GLOBAL corpus (no chat answer): the Settings playground that
+// shows what the retriever would surface for a query. Rank is the primary signal; the RRF-fused
+// `score` is only meaningful relative to its siblings (shown as a relative bar, never an absolute).
+
+/** One ranked passage from POST /api/v1/retrieve: its rank, text, fused score, and provenance
+ * (source document name + locator + source kind). `locator`/`name` may be null (unnamed source). */
+export interface RetrievedPassage {
+  rank: number;
+  text: string;
+  score: number;
+  source_id: string;
+  locator: string | null;
+  name: string | null;
+  source_kind: string;
+}
+
+/** The standalone-retrieval result for the Knowledge Retrieval Explorer. `scope` is always
+ * "global" today (the durable corpus); `ms` is the retrieval wall-clock. */
+export interface RetrievalResult {
+  query: string;
+  scope: "global";
+  top_k: number;
+  ms: number | null;
+  passages: RetrievedPassage[];
+}
+
+/** Run standalone hybrid retrieval over the global corpus (#465) — ranked passages with score +
+ * provenance, NO chat answer. Backs the Settings > Knowledge Retrieval Explorer. Unwraps the
+ * StructuredResult envelope like fetchEntityNeighborhood / fetchFiles. */
+export async function retrievePassages(
+  token: string,
+  q: string,
+  topK = 8,
+): Promise<RetrievalResult> {
+  const res = await fetch(`${API_BASE}/api/v1/retrieve`, {
+    method: "POST",
+    credentials: CREDS,
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ q, top_k: topK }),
+  });
+  if (!res.ok) throw new Error(`retrieve failed: ${res.status}`);
+  const body = (await res.json()) as {
+    ok?: boolean;
+    error?: { message?: string };
+    data?: {
+      query?: string;
+      scope?: "global";
+      top_k?: number;
+      ms?: number | null;
+      passages?: RetrievedPassage[];
+    };
+  };
+  if (body.ok === false) throw new Error(body.error?.message ?? "retrieve failed");
+  return {
+    query: body.data?.query ?? q,
+    scope: body.data?.scope ?? "global",
+    top_k: body.data?.top_k ?? topK,
+    ms: body.data?.ms ?? null,
+    passages: body.data?.passages ?? [],
+  };
 }
 
 /** Register a folder source. Returns a discriminated result so the form can surface the structured

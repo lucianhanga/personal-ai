@@ -2869,8 +2869,12 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
     @app.get(
         "/api/v1/files", response_model=StructuredResult, dependencies=[Depends(require_context)]
     )
-    async def list_files() -> StructuredResult:
+    async def list_files(include_synced: bool = False) -> StructuredResult:
         storage = _require_storage()
+        # Default (manual_only): the "Individual uploads" list shows only manually-uploaded docs,
+        # never folder-synced ones (those live under their folder source) (#451). With
+        # ``include_synced=true`` the FULL global corpus is returned -- manual + folder-synced --
+        # for the Knowledge -> Corpus overview (#465).
         docs = [
             {
                 "id": d.id,
@@ -2880,9 +2884,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 "chunk_count": d.chunk_count,
                 "created_at": d.created_at.isoformat(),
             }
-            # manual_only: the "Individual uploads" list shows only manually-uploaded docs, never
-            # folder-synced ones (those live under their folder source in the tree) (#451).
-            for d in await storage.documents.list(manual_only=True)
+            for d in await storage.documents.list(manual_only=not include_synced)
         ]
         return StructuredResult(ok=True, data={"files": docs})
 

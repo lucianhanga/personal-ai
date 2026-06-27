@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { fetchEntities, fetchFiles, type DocumentInfo } from "./api";
 import { MUTED, RED, formatWhen } from "./folderUi";
 import { STATUS_OK, STATUS_WARN } from "./knowledgeUi";
+import { RetrievalExplorer } from "./RetrievalExplorer";
 
 interface KnowledgeCorpusTabProps {
   token: string;
@@ -24,7 +25,10 @@ export function KnowledgeCorpusTab({ token }: KnowledgeCorpusTabProps): React.Re
     let active = true;
     setLoading(true);
     setError(null);
-    Promise.all([fetchFiles(token), fetchEntities(token, { limit: 1000 })])
+    Promise.all([
+      fetchFiles(token, { includeSynced: true }),
+      fetchEntities(token, { limit: 1000 }),
+    ])
       .then(([files, entities]) => {
         if (active) setData({ files, entityCount: entities.length });
       })
@@ -41,6 +45,8 @@ export function KnowledgeCorpusTab({ token }: KnowledgeCorpusTabProps): React.Re
         What is indexed for retrieval: your documents, their chunks, and the entities extracted from
         them.
       </p>
+
+      <RetrievalExplorer token={token} />
 
       <div aria-live="polite" aria-busy={loading}>
         {loading ? (
