@@ -18,9 +18,22 @@ interface KnowledgePanelProps {
 
 /** Settings > Knowledge (#KAG/#RAG): the entity/document graph (Graph) and the indexed-corpus
  * overview (Corpus). Two tabs; the graph is the focus+context ego-graph, the corpus is the P0
- * overview (stats + per-document indexed status). */
+ * overview (stats + per-document indexed status + chunk inspector).
+ *
+ * The active tab and the Corpus chunk-inspector's selected document are lifted here so the Graph tab
+ * can deep-link a document node into the Corpus tab ("Open in Corpus"): one click switches to Corpus
+ * AND opens that document's chunks. The Corpus document table also drives the same selection. */
 export function KnowledgePanel({ token }: KnowledgePanelProps): React.ReactElement {
   const [tab, setTab] = useState<KnowledgeTab>("graph");
+  // The document whose chunks the Corpus inspector shows (null = closed). Single source of truth so
+  // the graph deep-link and the corpus table both drive the same inspector.
+  const [corpusDocId, setCorpusDocId] = useState<string | null>(null);
+
+  // Graph -> Corpus deep link: switch to the Corpus tab and open the document's chunk inspector.
+  function openInCorpus(docId: string): void {
+    setCorpusDocId(docId);
+    setTab("corpus");
+  }
 
   return (
     <section
@@ -62,7 +75,15 @@ export function KnowledgePanel({ token }: KnowledgePanelProps): React.ReactEleme
       </div>
 
       <div role="tabpanel" data-testid={`knowledge-panel-${tab}`}>
-        {tab === "graph" ? <KnowledgeGraphTab token={token} /> : <KnowledgeCorpusTab token={token} />}
+        {tab === "graph" ? (
+          <KnowledgeGraphTab token={token} onOpenInCorpus={openInCorpus} />
+        ) : (
+          <KnowledgeCorpusTab
+            token={token}
+            selectedDocId={corpusDocId}
+            onSelectDocument={setCorpusDocId}
+          />
+        )}
       </div>
     </section>
   );

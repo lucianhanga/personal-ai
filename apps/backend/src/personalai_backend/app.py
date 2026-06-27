@@ -3308,6 +3308,20 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         return StructuredResult(ok=True, data={"entities": [_entity_out(e) for e in ents]})
 
     @app.get(
+        "/api/v1/documents/{document_id}/chunks",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def document_chunks(document_id: str) -> StructuredResult:
+        """A document's chunks (index + text) for the Knowledge chunk inspector (#465)."""
+        storage = _require_storage()
+        chunks = await storage.vectors.chunks_for_document(document_id)
+        return StructuredResult(
+            ok=True,
+            data={"chunks": [{"index": idx, "text": text} for idx, text in chunks]},
+        )
+
+    @app.get(
         "/api/v1/entities/{entity_id}/neighborhood",
         response_model=StructuredResult,
         dependencies=[Depends(require_context)],

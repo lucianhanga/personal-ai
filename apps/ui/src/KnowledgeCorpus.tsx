@@ -1,12 +1,22 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { fetchEntities, fetchFiles, type DocumentInfo } from "./api";
+import {
+  fetchDocumentChunks,
+  fetchEntities,
+  fetchFiles,
+  type DocumentChunk,
+  type DocumentInfo,
+} from "./api";
 import { MUTED, RED, formatWhen } from "./folderUi";
 import { STATUS_OK, STATUS_WARN } from "./knowledgeUi";
 import { RetrievalExplorer } from "./RetrievalExplorer";
 
 interface KnowledgeCorpusTabProps {
   token: string;
+  // The document whose chunks the inspector shows (null = closed). Lifted into KnowledgePanel so the
+  // Graph tab's "Open in Corpus" deep link and the corpus table both drive the same inspector.
+  selectedDocId: string | null;
+  onSelectDocument: (id: string | null) => void;
 }
 
 interface CorpusData {
@@ -15,8 +25,13 @@ interface CorpusData {
 }
 
 /** Knowledge > Corpus (P0 overview): stat cards (documents, total chunks, entities) + a per-document
- * table with an indexed/not-indexed flag. Derived from the files + entities APIs. */
-export function KnowledgeCorpusTab({ token }: KnowledgeCorpusTabProps): React.ReactElement {
+ * table with an indexed/not-indexed flag + a chunk inspector. Derived from the files + entities APIs;
+ * selecting a document row (or deep-linking from the Graph tab) opens its chunks. */
+export function KnowledgeCorpusTab({
+  token,
+  selectedDocId,
+  onSelectDocument,
+}: KnowledgeCorpusTabProps): React.ReactElement {
   const [data, setData] = useState<CorpusData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -39,6 +54,11 @@ export function KnowledgeCorpusTab({ token }: KnowledgeCorpusTabProps): React.Re
     };
   }, [token]);
 
+  // The selected document's name for the inspector header — resolved from the loaded corpus, falling
+  // back to the id (e.g. a deep link that arrives before the file list finishes loading).
+  const selectedName =
+    (selectedDocId && data?.files.find((f) => f.id === selectedDocId)?.name) || selectedDocId || "";
+
   return (
     <section data-testid="knowledge-corpus-tab" aria-label="Corpus overview">
       <p style={{ color: MUTED, fontSize: "0.82rem", margin: "0 0 0.6rem" }}>
@@ -47,6 +67,15 @@ export function KnowledgeCorpusTab({ token }: KnowledgeCorpusTabProps): React.Re
       </p>
 
       <RetrievalExplorer token={token} />
+
+      {selectedDocId && (
+        <ChunkInspector
+          token={token}
+          docId={selectedDocId}
+          docName={selectedName}
+          onClose={() => onSelectDocument(null)}
+        />
+      )}
 
       <div aria-live="polite" aria-busy={loading}>
         {loading ? (
@@ -62,7 +91,12 @@ export function KnowledgeCorpusTab({ token }: KnowledgeCorpusTabProps): React.Re
             No documents yet — upload or add a folder source to build your corpus.
           </p>
         ) : data ? (
-          <CorpusOverview files={data.files} entityCount={data.entityCount} />
+          <CorpusOverview
+            files={data.files}
+            entityCount={data.entityCount}
+            selectedDocId={selectedDocId}
+            onSelectDocument={onSelectDocument}
+          />
         ) : null}
       </div>
     </section>
@@ -99,9 +133,13 @@ function StatCard({
 function CorpusOverview({
   files,
   entityCount,
+  selectedDocId,
+  onSelectDocument,
 }: {
   files: DocumentInfo[];
   entityCount: number;
+  selectedDocId: string | null;
+  onSelectDocument: (id: string | null) => void;
 }): React.ReactElement {
   const totalChunks = files.reduce((sum, f) => sum + (f.chunk_count ?? 0), 0);
 
@@ -128,9 +166,39 @@ function CorpusOverview({
         <tbody>
           {files.map((f) => {
             const indexed = (f.chunk_count ?? 0) > 0;
+            const active = selectedDocId === f.id;
             return (
-              <tr key={f.id} data-testid="corpus-row" data-doc-id={f.id} style={{ borderBottom: "1px solid #f2f2f2" }}>
-                <td style={{ padding: "0.3rem 0.4rem", color: "#222" }}>{f.name}</td>
+              <tr
+                key={f.id}
+                data-testid="corpus-row"
+                data-doc-id={f.id}
+                style={{ borderBottom: "1px solid #f2f2f2", background: active ? "rgba(51,65,85,0.06)" : undefined }}
+              >
+                <td style={{ padding: "0.3rem 0.4rem" }}>
+                  {/* The name cell is a button so the chunk inspector is keyboard-reachable; a button
+                      can't wrap a <tr>, so it lives in the first cell and toggles the selection. */}
+                  <button
+                    data-testid="corpus-row-button"
+                    data-doc-id={f.id}
+                    type="button"
+                    aria-pressed={active}
+                    aria-expanded={active}
+                    onClick={() => onSelectDocument(active ? null : f.id)}
+                    style={{
+                      border: "none",
+                      background: "none",
+                      padding: 0,
+                      textAlign: "left",
+                      color: active ? "#0b3a66" : "#1a6fb0",
+                      fontWeight: active ? 600 : 400,
+                      fontSize: "0.8rem",
+                      cursor: "pointer",
+                      textDecoration: "underline",
+                    }}
+                  >
+                    {f.name}
+                  </button>
+                </td>
                 <td style={{ padding: "0.3rem 0.4rem", color: "#444" }}>{f.chunk_count ?? 0}</td>
                 <td style={{ padding: "0.3rem 0.4rem" }}>
                   <span
@@ -152,5 +220,117 @@ function CorpusOverview({
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** Chunk inspector (#KAG): the indexed chunks of one document (index + text), with the standard
+ * loading/empty/error trio. Collapsible — the close button clears the lifted selection. Fetches
+ * fresh whenever the document changes; a request guard discards a stale response. */
+function ChunkInspector({
+  token,
+  docId,
+  docName,
+  onClose,
+}: {
+  token: string;
+  docId: string;
+  docName: string;
+  onClose: () => void;
+}): React.ReactElement {
+  const [chunks, setChunks] = useState<DocumentChunk[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const reqRef = useRef(0);
+
+  useEffect(() => {
+    const req = ++reqRef.current;
+    setLoading(true);
+    setError(null);
+    setChunks(null);
+    fetchDocumentChunks(token, docId)
+      .then((cs) => {
+        if (reqRef.current === req) setChunks(cs);
+      })
+      .catch(() => {
+        if (reqRef.current === req) setError("Could not load the document's chunks.");
+      })
+      .finally(() => {
+        if (reqRef.current === req) setLoading(false);
+      });
+  }, [token, docId]);
+
+  return (
+    <section
+      data-testid="chunk-inspector"
+      role="region"
+      aria-label={`Chunks for ${docName}`}
+      style={{
+        border: "1px solid #eee",
+        borderLeft: "3px solid #334155",
+        borderRadius: 6,
+        padding: "0.5rem 0.6rem",
+        margin: "0 0 0.75rem",
+        background: "#fbfbfc",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
+        <strong style={{ fontSize: "0.85rem", color: "#222" }}>
+          Chunks · {docName}
+          {chunks ? <span style={{ color: MUTED, fontWeight: 400 }}> ({chunks.length})</span> : null}
+        </strong>
+        <button
+          data-testid="chunk-inspector-close"
+          type="button"
+          onClick={onClose}
+          aria-label="Close chunk inspector"
+          style={{
+            border: "1px solid #ddd",
+            borderRadius: 5,
+            background: "none",
+            color: "#555",
+            fontSize: "0.72rem",
+            padding: "0.1rem 0.45rem",
+            cursor: "pointer",
+            flex: "0 0 auto",
+          }}
+        >
+          Close
+        </button>
+      </div>
+
+      <div aria-live="polite" aria-busy={loading} style={{ marginTop: "0.4rem" }}>
+        {loading ? (
+          <p data-testid="chunk-loading" role="status" style={{ color: MUTED, fontSize: "0.8rem", margin: 0 }}>
+            Loading chunks…
+          </p>
+        ) : error ? (
+          <p data-testid="chunk-error" role="alert" style={{ color: RED, fontSize: "0.8rem", margin: 0 }}>
+            {error}
+          </p>
+        ) : chunks && chunks.length === 0 ? (
+          <p data-testid="chunk-empty" style={{ color: MUTED, fontSize: "0.8rem", margin: 0 }}>
+            This document has no indexed chunks yet.
+          </p>
+        ) : chunks ? (
+          <ol data-testid="chunk-list" style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+            {chunks.map((c) => (
+              <li
+                key={c.index}
+                data-testid="chunk-row"
+                data-chunk-index={c.index}
+                style={{ border: "1px solid #f0f0f0", borderRadius: 5, padding: "0.35rem 0.45rem", background: "#fff" }}
+              >
+                <div style={{ fontSize: "0.68rem", fontWeight: 600, color: MUTED, marginBottom: "0.15rem" }}>
+                  Chunk {c.index}
+                </div>
+                <div style={{ fontSize: "0.78rem", color: "#333", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                  {c.text}
+                </div>
+              </li>
+            ))}
+          </ol>
+        ) : null}
+      </div>
+    </section>
   );
 }
