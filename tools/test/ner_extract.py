@@ -35,6 +35,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from personalai_contracts.ports import ChatMessage, GenerationRequest, Role
 from personalai_core.config import CoreConfig
 from personalai_core.entity_extraction import (
@@ -116,7 +118,12 @@ async def _extract_via_schema(
     structured mode needs the strict schema). Same prompt + merge as core extract_entities."""
     merged_e: dict[tuple[str, str], ExtractedEntity] = {}
     merged_r: dict[tuple[str, str, str], ExtractedRelation] = {}
-    for win in _windows(text.strip(), window, overlap, max_windows):
+    wins = _windows(text.strip(), window, overlap, max_windows)
+    for i, win in enumerate(wins, 1):
+        # Live progress: reasoning models (gpt-5-*) think before emitting tokens, so a window can
+        # sit silent for a while. Print before/after each call so it never looks frozen.
+        print(f"  [{i}/{len(wins)}] calling {model} on {len(win)} chars ...", flush=True)
+        t0 = time.perf_counter()
         raw = ""
         request = GenerationRequest(
             messages=[ChatMessage(Role.SYSTEM, _NER_PROMPT), ChatMessage(Role.USER, win)],
@@ -126,6 +133,7 @@ async def _extract_via_schema(
         async for chunk in provider.stream(request):
             if chunk.delta:
                 raw += chunk.delta
+        print(f"      <- {len(raw)} chars in {time.perf_counter() - t0:.1f}s", flush=True)
         start, end = raw.find("{"), raw.rfind("}")
         if start < 0 or end < 0:
             continue
@@ -172,13 +180,16 @@ async def _run(
         print(f"  REL  {r.src} -[{r.relation}]-> {r.dst}")
 
 
-def _openai_provider(config: CoreConfig) -> OpenAICompatProvider:
+def _openai_provider(config: CoreConfig, timeout: float) -> OpenAICompatProvider:
     key = os.environ.get("OPENAI_API_KEY") or config.openai_api_key
     if not key:
         raise SystemExit(
             "set OPENAI_API_KEY (or PERSONALAI_OPENAI_API_KEY) to use --provider openai"
         )
-    return OpenAICompatProvider(api_key=key, base_url=config.openai_base_url)
+    # The provider hardcodes a 120s client timeout; a slow reasoning model (gpt-5-*) on a big window
+    # can exceed that, so pass our own client with the generous --timeout.
+    client = httpx.AsyncClient(timeout=httpx.Timeout(timeout))
+    return OpenAICompatProvider(api_key=key, base_url=config.openai_base_url, client=client)
 
 
 async def main() -> None:
@@ -234,7 +245,7 @@ async def main() -> None:
         await _run(
             "OPENAI",
             text,
-            provider=_openai_provider(config),
+            provider=_openai_provider(config, args.timeout),
             model=args.openai_model,
             core=False,
             window=args.window,
