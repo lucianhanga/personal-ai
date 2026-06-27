@@ -21,6 +21,7 @@ thinking run silently and restores valid JSON).
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -80,6 +81,31 @@ def _is_moe(model: str) -> bool:
     return "a3b" in model
 
 
+_IBAN_RE = re.compile(r"^[A-Z]{2}\d{2}[A-Z0-9]{8,30}$")
+_BIC_RE = re.compile(r"^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$")
+
+
+def _looks_like_entity_name(name: str) -> bool:
+    """Reject strings that are clearly identifiers/codes, not names. Local models over-extract these
+    (IBANs, BICs, tax/registration numbers, account codes, phones) and -- with no catch-all type --
+    mislabel them as org/location/etc. This deterministic guard drops them regardless of the label.
+    Dates are filtered out by the caller before this runs (they are legitimately numeric)."""
+    s = name.strip()
+    if not s:
+        return False
+    letters = sum(c.isalpha() for c in s)
+    digits = sum(c.isdigit() for c in s)
+    if letters == 0:
+        return False  # pure number / punctuation (phone, code, "143/163/40289")
+    if digits and digits / (letters + digits) >= 0.5:
+        return False  # digit-dominated -> account / tax id / registration number
+    compact = s.replace(" ", "")
+    if _IBAN_RE.match(compact) or _BIC_RE.match(compact):
+        return False  # e.g. DE72 7605 ... (IBAN), SSKNDE77 / BYLADEMM (BIC)
+    # reject e-mails / URLs
+    return "@" not in s and not s.lower().startswith(("http://", "https://", "www."))
+
+
 def _default_window(model: str) -> int:
     """Small window for the MoE (it returns empty on large windows); big window for dense models."""
     return _MOE_WINDOW_CHARS if _is_moe(model) else _DENSE_WINDOW_CHARS
@@ -136,8 +162,13 @@ async def extract_entities(
         result = await _extract_window(window_text, provider=provider, model=model)
         for ent in result.entities:
             norm = " ".join(ent.name.strip().lower().split())
-            if norm:
-                merged_entities.setdefault((ent.type, norm), ent)
+            if not norm:
+                continue
+            # Drop identifiers/codes the local model over-extracts and mislabels (e.g. an IBAN or
+            # BIC tagged as a 'location'). Dates are exempt -- they are numeric by nature.
+            if ent.type != "date" and not _looks_like_entity_name(ent.name):
+                continue
+            merged_entities.setdefault((ent.type, norm), ent)
         for rel in result.relations:
             key = (
                 rel.src.strip().lower(),

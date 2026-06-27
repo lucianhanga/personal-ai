@@ -39,6 +39,35 @@ class _ConstantNer(FakeModelProvider):
         yield GenerationChunk(done=True, finish_reason="stop")
 
 
+def test_looks_like_entity_name_drops_identifiers_keeps_names() -> None:
+    from personalai_core.entity_extraction import _looks_like_entity_name
+
+    # Junk the local model over-extracts (and mislabels) -> dropped.
+    for junk in [
+        "DE72 7605 0101 0001 5978 80",  # IBAN
+        "SSKNDE77",  # BIC
+        "BYLADEMM",  # BIC (no digits)
+        "DE 188 796 931",  # tax id
+        "HRB 108514",  # register no.
+        "143/163/40289",  # code
+        "M5007048290001",  # account code
+        "0800 4 90 60 90",  # phone
+        "kundenservice@m-net.de",  # email
+        "www.m-net.de",  # url
+    ]:
+        assert not _looks_like_entity_name(junk), junk
+
+    # Real names -> kept (incl. a postal-code + city, which is ~40% digits).
+    for name in [
+        "M-net Telekommunikations GmbH",
+        "Finanzamt München für Körperschaften",
+        "80807 München",
+        "Lucian Hanga",
+        "Frankfurter Ring 158",
+    ]:
+        assert _looks_like_entity_name(name), name
+
+
 def test_default_window_is_model_aware() -> None:
     # The MoE breaks on big windows -> small; dense models run faster on a big window.
     from personalai_core.entity_extraction import (
