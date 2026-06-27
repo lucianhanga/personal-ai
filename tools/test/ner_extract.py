@@ -1,44 +1,94 @@
 #!/usr/bin/env python3
-"""Experiment with the local NER / KAG entity extractor (#464).
+"""Experiment with the local NER / KAG entity extractor (#464) -- and compare models.
 
-Runs the REAL core extractor (``personalai_core.entity_extraction.extract_entities``) against text
-you provide -- a literal string, a file, or a document reconstructed from the live vector store --
-so you can see exactly what the model produces and sweep the knobs that actually matter on the
-Qwen3 35B MoE:
+Runs the SAME windowed extraction (same prompt, same merge) through either the local Ollama model
+or an OpenAI model, so you can compare what each one finds and how long it takes.
 
-  --num-ctx     Ollama context window (default 32768). If Ollama OOM-crashes loading the 35B at 32K
-                on your box, drop to 4096 -- a small NER window needs little context anyway.
-  --window      NER window size in chars. Keep SMALL (1200): the MoE returns EMPTY structured output
-                on large windows -- a ~4000-char window comes back with zero tokens.
-  --overlap     window overlap (default 150).
-  --max-windows cap on windows per document.
-  --timeout     Ollama HTTP timeout seconds (default 600; a cold 35B load is slow).
-  --model       Ollama model (default: the configured default_model).
+Providers:
+  --provider ollama   the local model via the real core ``extract_entities`` (default)
+  --provider openai   an OpenAI model (default gpt-4o-mini -- cheap + good at structured output)
+  --provider both     run both and print them side by side
+
+Knobs:
+  --num-ctx     Ollama context (default 32768). Drop to 4096 if Ollama OOM-crashes the 35B at 32K.
+  --window      NER window size in chars (default 1200). The local MoE returns EMPTY on large
+                windows; OpenAI handles big windows fine, so pass a larger --window for it.
+  --overlap / --max-windows / --timeout   window overlap, cap, and Ollama HTTP timeout.
+  --model       Ollama model (default: configured default_model).
+  --openai-model  OpenAI model (default gpt-4o-mini; try gpt-4.1-mini / gpt-4.1-nano for cheaper).
+
+OpenAI needs a key: export OPENAI_API_KEY=sk-... (or PERSONALAI_OPENAI_API_KEY).
 
 Examples:
-  uv run python tools/test/ner_extract.py --text "Rechnung von M-Net GmbH, 39,99 EUR, 2026-01-15"
-  uv run python tools/test/ner_extract.py --file tools/test/sample_invoice.txt --window 1200
-  uv run python tools/test/ner_extract.py --first-doc --num-ctx 4096
-  # find the size where the MoE starts returning nothing:
-  uv run python tools/test/ner_extract.py --first-doc --sweep 800,1200,2000,4000
+  uv run python tools/test/ner_extract.py --file tools/test/sample_invoice.txt
+  uv run python tools/test/ner_extract.py --provider openai --file tools/test/sample_invoice.txt
+  uv run python tools/test/ner_extract.py --provider both --first-doc
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import time
 from pathlib import Path
+from typing import Any
 
+from personalai_contracts.ports import ChatMessage, GenerationRequest, Role
 from personalai_core.config import CoreConfig
-from personalai_core.entity_extraction import ExtractedEntities, extract_entities
+from personalai_core.entity_extraction import (
+    _NER_PROMPT,
+    ExtractedEntities,
+    ExtractedEntity,
+    ExtractedRelation,
+    _windows,
+    extract_entities,
+)
 from personalai_provider_ollama import OllamaProvider
+from personalai_provider_openai import OpenAICompatProvider
 
 _SAMPLE = (
     "Rechnung von M-Net Telekommunikations GmbH an Lucian Hanga, Betrag 39,99 EUR, "
     "Rechnungsnummer R-2026-0042, Datum 2026-01-15."
 )
+
+_ENTITY_TYPES = ["person", "org", "location", "date", "product", "event", "other"]
+
+# OpenAI structured outputs are STRICT: every object needs additionalProperties:false and all its
+# properties listed in `required`. (Ollama tolerates this too.) Built by hand so it stays strict.
+_STRICT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "entities": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "type": {"type": "string", "enum": _ENTITY_TYPES},
+                    "name": {"type": "string"},
+                },
+                "required": ["type", "name"],
+            },
+        },
+        "relations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "src": {"type": "string"},
+                    "relation": {"type": "string"},
+                    "dst": {"type": "string"},
+                },
+                "required": ["src", "relation", "dst"],
+            },
+        },
+    },
+    "required": ["entities", "relations"],
+}
 
 
 async def _text_from_first_doc(database_url: str) -> str:
@@ -59,40 +109,97 @@ async def _text_from_first_doc(database_url: str) -> str:
         await pool.close()
 
 
+async def _extract_via_schema(
+    text: str, *, provider: Any, model: str, window: int, overlap: int, max_windows: int
+) -> ExtractedEntities:
+    """Windowed extraction using the strict JSON schema -- the path for the OpenAI provider (its
+    structured mode needs the strict schema). Same prompt + merge as core extract_entities."""
+    merged_e: dict[tuple[str, str], ExtractedEntity] = {}
+    merged_r: dict[tuple[str, str, str], ExtractedRelation] = {}
+    for win in _windows(text.strip(), window, overlap, max_windows):
+        raw = ""
+        request = GenerationRequest(
+            messages=[ChatMessage(Role.SYSTEM, _NER_PROMPT), ChatMessage(Role.USER, win)],
+            model=model,
+            json_schema=_STRICT_SCHEMA,
+        )
+        async for chunk in provider.stream(request):
+            if chunk.delta:
+                raw += chunk.delta
+        start, end = raw.find("{"), raw.rfind("}")
+        if start < 0 or end < 0:
+            continue
+        try:
+            payload = json.loads(raw[start : end + 1])
+        except json.JSONDecodeError:
+            continue
+        for ent in payload.get("entities", []):
+            etype, name = ent.get("type"), str(ent.get("name", "")).strip()
+            norm = " ".join(name.lower().split())
+            if norm and etype in _ENTITY_TYPES:
+                merged_e.setdefault((etype, norm), ExtractedEntity(type=etype, name=name))
+        for rel in payload.get("relations", []):
+            key = (
+                str(rel.get("src", "")).strip().lower(),
+                str(rel.get("relation", "")).strip().lower(),
+                str(rel.get("dst", "")).strip().lower(),
+            )
+            if all(key):
+                merged_r.setdefault(
+                    key,
+                    ExtractedRelation(src=rel["src"], relation=rel["relation"], dst=rel["dst"]),
+                )
+    return ExtractedEntities(entities=list(merged_e.values()), relations=list(merged_r.values()))
+
+
 async def _run(
-    text: str, *, provider: OllamaProvider, model: str, window: int, overlap: int, max_windows: int
-) -> tuple[ExtractedEntities, float]:
+    label: str, text: str, *, provider: Any, model: str, core: bool, window: int, **kw: int
+) -> None:
     started = time.perf_counter()
-    res = await extract_entities(
-        text,
-        provider=provider,
-        model=model,
-        window=window,
-        overlap=overlap,
-        max_windows=max_windows,
+    if core:
+        # Ollama path: the real extractor (handles the MoE /no_think workaround + repair).
+        res = await extract_entities(text, provider=provider, model=model, window=window, **kw)
+    else:
+        res = await _extract_via_schema(text, provider=provider, model=model, window=window, **kw)
+    elapsed = time.perf_counter() - started
+    print(
+        f"\n==== {label} ({model}) -> {len(res.entities)} entities, "
+        f"{len(res.relations)} relations in {elapsed:.1f}s ===="
     )
-    return res, time.perf_counter() - started
+    for e in res.entities:
+        print(f"  {e.type:9} {e.name}")
+    for r in res.relations:
+        print(f"  REL  {r.src} -[{r.relation}]-> {r.dst}")
+
+
+def _openai_provider(config: CoreConfig) -> OpenAICompatProvider:
+    key = os.environ.get("OPENAI_API_KEY") or config.openai_api_key
+    if not key:
+        raise SystemExit(
+            "set OPENAI_API_KEY (or PERSONALAI_OPENAI_API_KEY) to use --provider openai"
+        )
+    return OpenAICompatProvider(api_key=key, base_url=config.openai_base_url)
 
 
 async def main() -> None:
-    ap = argparse.ArgumentParser(description="Experiment with the local NER extractor.")
+    ap = argparse.ArgumentParser(description="Experiment with / compare NER extractors.")
     src = ap.add_mutually_exclusive_group()
     src.add_argument("--text", help="literal text to extract from")
     src.add_argument("--file", help="path to a text file to extract from")
-    src.add_argument(
-        "--first-doc", action="store_true", help="reconstruct the first global doc from the index"
+    src.add_argument("--first-doc", action="store_true", help="first global doc from the index")
+    ap.add_argument("--provider", choices=["ollama", "openai", "both"], default="ollama")
+    ap.add_argument(
+        "--model", default=None, help="Ollama model (default: configured default_model)"
     )
-    ap.add_argument("--model", default=None)
+    ap.add_argument("--openai-model", default="gpt-4o-mini")
     ap.add_argument("--num-ctx", type=int, default=32768)
     ap.add_argument("--window", type=int, default=1200)
     ap.add_argument("--overlap", type=int, default=150)
     ap.add_argument("--max-windows", type=int, default=30)
     ap.add_argument("--timeout", type=float, default=600.0)
-    ap.add_argument("--sweep", default=None, help="comma-separated window sizes to compare")
     args = ap.parse_args()
 
     config = CoreConfig.from_env(os.environ)
-    model = args.model or config.default_model
 
     if args.text:
         text = args.text
@@ -102,33 +209,37 @@ async def main() -> None:
         text = await _text_from_first_doc(config.database_url)
     else:
         text = _SAMPLE
+    print(f"input_chars={len(text)} window={args.window} provider={args.provider}")
 
-    provider = OllamaProvider(
-        base_url=config.ollama_host,
-        keep_alive=config.ollama_keep_alive,
-        timeout=args.timeout,
-        num_ctx=args.num_ctx,
-    )
-    print(f"model={model} num_ctx={args.num_ctx} input_chars={len(text)}")
+    win_kw = {"overlap": args.overlap, "max_windows": args.max_windows}
 
-    sizes = [int(s) for s in args.sweep.split(",")] if args.sweep else [args.window]
-    for window in sizes:
-        res, elapsed = await _run(
+    if args.provider in ("ollama", "both"):
+        ollama = OllamaProvider(
+            base_url=config.ollama_host,
+            keep_alive=config.ollama_keep_alive,
+            timeout=args.timeout,
+            num_ctx=args.num_ctx,
+        )
+        await _run(
+            "OLLAMA",
             text,
-            provider=provider,
-            model=model,
-            window=window,
-            overlap=args.overlap,
-            max_windows=args.max_windows,
+            provider=ollama,
+            model=args.model or config.default_model,
+            core=True,
+            window=args.window,
+            **win_kw,
         )
-        print(
-            f"\n--- window={window} -> {len(res.entities)} entities, "
-            f"{len(res.relations)} relations in {elapsed:.1f}s ---"
+
+    if args.provider in ("openai", "both"):
+        await _run(
+            "OPENAI",
+            text,
+            provider=_openai_provider(config),
+            model=args.openai_model,
+            core=False,
+            window=args.window,
+            **win_kw,
         )
-        for e in res.entities:
-            print(f"  {e.type:9} {e.name}")
-        for r in res.relations:
-            print(f"  REL  {r.src} -[{r.relation}]-> {r.dst}")
 
 
 if __name__ == "__main__":
