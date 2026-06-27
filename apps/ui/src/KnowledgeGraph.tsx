@@ -42,9 +42,16 @@ interface BuiltGraph {
   total: number; // nodes BEFORE the cap, so we can say "showing N of M"
 }
 
-function buildGraph(nb: EntityNeighborhood | null): BuiltGraph {
+// Two ego-graph projections (ui-ux-designer spec). Bipartite is the literal model (focus ->
+// documents -> co-occurring entities). Co-occurrence COLLAPSES the documents away and draws the
+// focus straight to each co-occurring entity, with edge weight = shared_documents — the meaningful
+// entity-cluster view given that direct entity<->entity edges are sparse/empty.
+export type GraphLayout = "bipartite" | "cooccurrence";
+
+function buildGraph(nb: EntityNeighborhood | null, layout: GraphLayout): BuiltGraph {
   if (!nb) return { nodes: [], links: [], total: 0 };
   const f = nb.focus;
+  const includeDocs = layout === "bipartite";
   const nodes: GraphNode[] = [
     {
       id: f.id,
@@ -57,11 +64,12 @@ function buildGraph(nb: EntityNeighborhood | null): BuiltGraph {
     },
   ];
   const links: GraphLink[] = [];
-  const total = 1 + nb.documents.length + nb.neighbors.length;
+  // Co-occurrence hides the document nodes, so they don't count toward the rendered total/cap.
+  const total = 1 + (includeDocs ? nb.documents.length : 0) + nb.neighbors.length;
 
   // Capping priority: documents first (the bipartite backbone), then the strongest co-occurrences.
   let budget = MAX_NODES - 1;
-  const docs = nb.documents.slice(0, Math.max(0, budget));
+  const docs = includeDocs ? nb.documents.slice(0, Math.max(0, budget)) : [];
   budget -= docs.length;
   const neighbors = [...nb.neighbors]
     .sort((a, b) => b.shared_documents - a.shared_documents)
@@ -81,6 +89,8 @@ function buildGraph(nb: EntityNeighborhood | null): BuiltGraph {
       val: entityNodeVal(n.entity.mention_count),
       color: TYPE_META[n.entity.type].hue,
     });
+    // The focus -> neighbor edge carries the co-occurrence weight (shared_documents) in BOTH
+    // layouts; in co-occurrence it is the only edge class, so it reads as the entity cluster.
     links.push({ source: f.id, target: n.entity.id, weight: n.shared_documents });
   }
   return { nodes, links, total };
@@ -92,12 +102,15 @@ function prefersReducedMotion(): boolean {
 
 interface KnowledgeGraphTabProps {
   token: string;
+  // Graph -> Corpus deep link (lifted into KnowledgePanel): switch to the Corpus tab and open the
+  // given document's chunk inspector. Omitted in standalone/tests that don't need the cross-tab jump.
+  onOpenInCorpus?: (docId: string) => void;
 }
 
 /** Knowledge > Graph: the entity list/picker (EntityBrowser, also the accessible alternative) on the
  * left, the focus+context ego-graph on the right. Focus is lifted here so both the list and the
  * graph's own neighbor affordances can drive it. */
-export function KnowledgeGraphTab({ token }: KnowledgeGraphTabProps): React.ReactElement {
+export function KnowledgeGraphTab({ token, onOpenInCorpus }: KnowledgeGraphTabProps): React.ReactElement {
   const [focusId, setFocusId] = useState<string | null>(null);
 
   return (
@@ -109,7 +122,12 @@ export function KnowledgeGraphTab({ token }: KnowledgeGraphTabProps): React.Reac
         <EntityBrowser token={token} onFocusEntity={setFocusId} focusedId={focusId} />
       </div>
       <div style={{ flex: "2 1 360px", minWidth: 300 }}>
-        <EgoGraph token={token} focusId={focusId} onFocusEntity={setFocusId} />
+        <EgoGraph
+          token={token}
+          focusId={focusId}
+          onFocusEntity={setFocusId}
+          onOpenInCorpus={onOpenInCorpus}
+        />
       </div>
     </div>
   );
@@ -119,15 +137,20 @@ interface EgoGraphProps {
   token: string;
   focusId: string | null;
   onFocusEntity: (id: string) => void;
+  onOpenInCorpus?: (docId: string) => void;
 }
 
 /** The ego-graph canvas + legend + accessible detail rail for the focused entity. The canvas is
  * `aria-hidden`; the rail (documents + co-occurring entities, both keyboard-focusable buttons) is the
  * accessible path, and selection is announced via an aria-live region. */
-function EgoGraph({ token, focusId, onFocusEntity }: EgoGraphProps): React.ReactElement {
+function EgoGraph({ token, focusId, onFocusEntity, onOpenInCorpus }: EgoGraphProps): React.ReactElement {
   const [nb, setNb] = useState<EntityNeighborhood | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Projection toggle (ui-ux-designer spec). Default Bipartite (the literal model); Co-occurrence
+  // collapses the document nodes to show the focus's entity cluster directly. Sticky across re-focus.
+  const [layout, setLayout] = useState<GraphLayout>("bipartite");
 
   // Selected document within the focus's graph -> its entities (the "document's entities" rail view).
   const [selDoc, setSelDoc] = useState<{ id: string; name: string } | null>(null);
@@ -162,7 +185,7 @@ function EgoGraph({ token, focusId, onFocusEntity }: EgoGraphProps): React.React
       });
   }, [token, focusId]);
 
-  const graph = useMemo(() => buildGraph(nb), [nb]);
+  const graph = useMemo(() => buildGraph(nb, layout), [nb, layout]);
 
   function selectDocument(id: string, name: string): void {
     setSelDoc({ id, name });
@@ -211,6 +234,8 @@ function EgoGraph({ token, focusId, onFocusEntity }: EgoGraphProps): React.React
           </p>
         ) : nb ? (
           <>
+            <LayoutToggle layout={layout} onChange={setLayout} />
+
             {graph.total > graph.nodes.length && (
               <p data-testid="graph-cap" style={{ color: MUTED, fontSize: "0.74rem", margin: "0 0 0.3rem" }}>
                 Showing {graph.nodes.length} of {graph.total} nodes (largest connections first).
@@ -269,6 +294,7 @@ function EgoGraph({ token, focusId, onFocusEntity }: EgoGraphProps): React.React
               nb={nb}
               onSelectDocument={selectDocument}
               onFocusEntity={onFocusEntity}
+              onOpenInCorpus={onOpenInCorpus}
               selDoc={selDoc}
               docEntities={docEntities}
               docLoading={docLoading}
@@ -281,10 +307,61 @@ function EgoGraph({ token, focusId, onFocusEntity }: EgoGraphProps): React.React
   );
 }
 
+interface LayoutToggleProps {
+  layout: GraphLayout;
+  onChange: (layout: GraphLayout) => void;
+}
+
+/** The projection toggle: Bipartite (focus -> documents -> entities) vs Co-occurrence (documents
+ * collapsed; focus -> entities weighted by shared documents). A 2-button segmented control; the
+ * active option is `aria-pressed`. Color is reinforcement only — the labels carry the meaning. */
+function LayoutToggle({ layout, onChange }: LayoutToggleProps): React.ReactElement {
+  const options: { id: GraphLayout; label: string }[] = [
+    { id: "bipartite", label: "Bipartite" },
+    { id: "cooccurrence", label: "Co-occurrence" },
+  ];
+  return (
+    <div
+      data-testid="graph-layout-toggle"
+      role="group"
+      aria-label="Graph layout"
+      style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginTop: "0.5rem" }}
+    >
+      <span style={{ fontSize: "0.74rem", color: MUTED }}>Layout</span>
+      <div style={{ display: "inline-flex", border: "1px solid #ddd", borderRadius: 6, overflow: "hidden" }}>
+        {options.map((o) => {
+          const active = layout === o.id;
+          return (
+            <button
+              key={o.id}
+              data-testid={`graph-layout-${o.id}`}
+              type="button"
+              aria-pressed={active}
+              onClick={() => onChange(o.id)}
+              style={{
+                border: "none",
+                background: active ? NER : "transparent",
+                color: active ? "#fff" : "#555",
+                fontSize: "0.74rem",
+                fontWeight: active ? 600 : 400,
+                padding: "0.16rem 0.5rem",
+                cursor: "pointer",
+              }}
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 interface GraphDetailRailProps {
   nb: EntityNeighborhood;
   onSelectDocument: (id: string, name: string) => void;
   onFocusEntity: (id: string) => void;
+  onOpenInCorpus?: (docId: string) => void;
   selDoc: { id: string; name: string } | null;
   docEntities: Entity[] | null;
   docLoading: boolean;
@@ -297,6 +374,7 @@ function GraphDetailRail({
   nb,
   onSelectDocument,
   onFocusEntity,
+  onOpenInCorpus,
   selDoc,
   docEntities,
   docLoading,
@@ -425,8 +503,40 @@ function GraphDetailRail({
           aria-live="polite"
           style={{ marginTop: "0.5rem", borderTop: "1px solid #eee", paddingTop: "0.4rem" }}
         >
-          <div style={{ fontSize: "0.74rem", fontWeight: 600, color: MUTED, marginBottom: "0.2rem" }}>
-            Entities in “{selDoc.name}”
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "0.4rem",
+              marginBottom: "0.2rem",
+            }}
+          >
+            <span style={{ fontSize: "0.74rem", fontWeight: 600, color: MUTED }}>
+              Entities in “{selDoc.name}”
+            </span>
+            {onOpenInCorpus && (
+              <button
+                data-testid="graph-open-in-corpus"
+                data-doc-id={selDoc.id}
+                type="button"
+                onClick={() => onOpenInCorpus(selDoc.id)}
+                title={`Open “${selDoc.name}” in the Corpus chunk inspector`}
+                style={{
+                  border: `1px solid ${DOC_HUE}`,
+                  borderRadius: 5,
+                  background: "none",
+                  color: "#334155",
+                  fontSize: "0.72rem",
+                  fontWeight: 600,
+                  padding: "0.12rem 0.45rem",
+                  cursor: "pointer",
+                  flex: "0 0 auto",
+                }}
+              >
+                Open in Corpus
+              </button>
+            )}
           </div>
           {docLoading ? (
             <span data-testid="graph-doc-loading" role="status" style={{ color: MUTED, fontSize: "0.78rem" }}>

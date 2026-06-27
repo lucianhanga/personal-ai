@@ -1537,6 +1537,25 @@ export async function fetchDocumentEntities(token: string, id: string): Promise<
   return body.data?.entities ?? [];
 }
 
+// One indexed chunk of a document (#KAG chunk inspector): its 0-based position in the document and
+// the chunk text the retriever embeds and searches over.
+export interface DocumentChunk {
+  index: number;
+  text: string;
+}
+
+/** The chunks a single document was split into (#KAG), for the Corpus chunk inspector. Unwraps the
+ * StructuredResult envelope like fetchEntityNeighborhood / fetchDocumentEntities. */
+export async function fetchDocumentChunks(token: string, id: string): Promise<DocumentChunk[]> {
+  const res = await fetch(`${API_BASE}/api/v1/documents/${encodeURIComponent(id)}/chunks`, {
+    headers: authHeaders(token),
+    credentials: CREDS,
+  });
+  if (!res.ok) throw new Error(`document chunks request failed: ${res.status}`);
+  const body = (await res.json()) as { data?: { chunks?: DocumentChunk[] } };
+  return body.data?.chunks ?? [];
+}
+
 // --- Settings > Knowledge: Retrieval Explorer (#465) ---------------------------------------------
 // Standalone hybrid retrieval over the GLOBAL corpus (no chat answer): the Settings playground that
 // shows what the retriever would surface for a query. Rank is the primary signal; the RRF-fused

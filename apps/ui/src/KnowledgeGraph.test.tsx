@@ -124,6 +124,41 @@ test("clicking a co-occurring entity re-focuses the graph", async () => {
   await waitFor(() => expect(nbSpy).toHaveBeenLastCalledWith("demo", "e3"));
 });
 
+test("the co-occurrence toggle collapses the document nodes to a direct focus->entity projection", async () => {
+  vi.spyOn(api, "fetchEntities").mockResolvedValue([NEIGHBORHOOD.focus]);
+  vi.spyOn(api, "fetchEntityNeighborhood").mockResolvedValue(NEIGHBORHOOD);
+  render(<KnowledgeGraphTab token="demo" />);
+
+  await waitFor(() => expect(screen.getByText("Ada Lovelace")).toBeInTheDocument());
+  openInGraph(FOCUS_ID);
+  await screen.findByTestId("graph-detail");
+
+  // Bipartite (default): focus + 2 docs + 1 neighbor = 4 nodes, 3 edges. A document node is present.
+  expect(screen.getByTestId("graph-layout-bipartite")).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByTestId("force-graph")).toHaveAttribute("data-node-count", "4");
+  const bipartiteNodes = captured.graphData?.nodes as { kind?: string }[];
+  expect(bipartiteNodes.some((n) => n.kind === "document")).toBe(true);
+
+  // Switch to Co-occurrence: documents hidden -> focus + 1 neighbor = 2 nodes, 1 weighted edge.
+  fireEvent.click(screen.getByTestId("graph-layout-cooccurrence"));
+
+  await waitFor(() =>
+    expect(screen.getByTestId("force-graph")).toHaveAttribute("data-node-count", "2"),
+  );
+  expect(screen.getByTestId("force-graph")).toHaveAttribute("data-link-count", "1");
+  expect(screen.getByTestId("graph-layout-cooccurrence")).toHaveAttribute("aria-pressed", "true");
+
+  const nodes = captured.graphData?.nodes as { kind?: string }[];
+  expect(nodes.some((n) => n.kind === "document")).toBe(false);
+  // The only edge is focus -> neighbor, carrying the co-occurrence weight (shared_documents).
+  const links = captured.graphData?.links as { source?: string; target?: string; weight?: number }[];
+  expect(links).toHaveLength(1);
+  expect(links[0]).toMatchObject({ source: "e1", target: "e3", weight: 2 });
+
+  // The accessible detail rail still lists both documents in either projection.
+  expect(screen.getAllByTestId("graph-doc")).toHaveLength(2);
+});
+
 test("surfaces a graph load error", async () => {
   vi.spyOn(api, "fetchEntities").mockResolvedValue([NEIGHBORHOOD.focus]);
   vi.spyOn(api, "fetchEntityNeighborhood").mockRejectedValue(new Error("neighborhood request failed: 503"));
