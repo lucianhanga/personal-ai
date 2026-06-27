@@ -32,9 +32,9 @@ bash tools/test/ner_curl.sh "Rechnung von M-Net GmbH, 39,99 EUR, R-2026-0042, 20
 
 ## The knobs that actually matter (hard-won)
 
-- **`--num-ctx` / `NUM_CTX` = 4096, not 32K.** The 32K default makes the 35B allocate a huge KV
-  cache and **OOM-crashes Ollama** (`Server disconnected` / `connection refused`). Small windows
-  need little context anyway.
+- **`--num-ctx` / `NUM_CTX` (default 32768).** Full context. If Ollama **OOM-crashes** loading the
+  35B at 32K on your hardware (`Server disconnected` / `connection refused`), drop to `4096` — a
+  small NER window needs little context anyway.
 - **`--window` / text length small (~1200 chars).** This MoE returns **empty** structured output on
   large windows — a ~4000-char window comes back with zero tokens, while a 1200-char one extracts
   reliably. Reproduce the cliff:

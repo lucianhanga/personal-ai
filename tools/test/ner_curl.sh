@@ -5,14 +5,14 @@
 #
 # Env knobs (the ones that decide success on the Qwen3 35B MoE):
 #   MODEL    default qwen3.6:35b-a3b
-#   NUM_CTX  default 4096   (32K OOM-crashes Ollama on this model)
+#   NUM_CTX  default 32768  (drop to 4096 if Ollama OOM-crashes loading the 35B at 32K)
 #   THINK    default no_think | low | off   (how reasoning is requested)
 #
 # Lesson: keep the text SMALL (<= ~1500 chars). Large windows make this MoE return EMPTY content.
 set -euo pipefail
 HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
 MODEL="${MODEL:-qwen3.6:35b-a3b}"
-NUM_CTX="${NUM_CTX:-4096}"
+NUM_CTX="${NUM_CTX:-32768}"
 THINK="${THINK:-no_think}"
 TEXT="${1:-Rechnung von M-Net Telekommunikations GmbH an Lucian Hanga, Betrag 39,99 EUR, Rechnungsnummer R-2026-0042, Datum 2026-01-15.}"
 

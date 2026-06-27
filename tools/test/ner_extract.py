@@ -6,8 +6,8 @@ you provide -- a literal string, a file, or a document reconstructed from the li
 so you can see exactly what the model produces and sweep the knobs that actually matter on the
 Qwen3 35B MoE:
 
-  --num-ctx     Ollama context window. Keep SMALL (4096): the 32K default OOM-crashes Ollama on this
-                model, and a small window needs little context anyway.
+  --num-ctx     Ollama context window (default 32768). If Ollama OOM-crashes loading the 35B at 32K
+                on your box, drop to 4096 -- a small NER window needs little context anyway.
   --window      NER window size in chars. Keep SMALL (1200): the MoE returns EMPTY structured output
                 on large windows -- a ~4000-char window comes back with zero tokens.
   --overlap     window overlap (default 150).
@@ -83,7 +83,7 @@ async def main() -> None:
         "--first-doc", action="store_true", help="reconstruct the first global doc from the index"
     )
     ap.add_argument("--model", default=None)
-    ap.add_argument("--num-ctx", type=int, default=4096)
+    ap.add_argument("--num-ctx", type=int, default=32768)
     ap.add_argument("--window", type=int, default=1200)
     ap.add_argument("--overlap", type=int, default=150)
     ap.add_argument("--max-windows", type=int, default=30)
