@@ -63,12 +63,13 @@ _NER_PROMPT = (
 )
 
 # Whole-document coverage. Windows are deliberately SMALL: beyond recall (a model loses entities in
-# a huge blob), the Qwen3 MoE returns EMPTY structured output on large windows -- a ~4000-char
-# window came back with zero tokens while a short one extracts reliably -- so a small window is what
-# makes structured NER actually produce on this model (#464). Overlap stops a boundary-straddling
-# entity from being lost; max_windows caps the LLM-pass count on a very large document (raised to
-# match the smaller window so whole-document coverage is preserved).
-_WINDOW_CHARS = 1024
+# a huge blob). Window size is MODEL-AWARE: the Qwen3 MoE returns EMPTY structured output on large
+# windows -- a ~4000-char window came back with zero tokens -- so it needs a SMALL window; dense
+# models (e.g. qwen3:14b) have no such limit and run far faster on a BIG window (fewer LLM calls per
+# document). Overlap stops a boundary-straddling entity from being lost; max_windows caps the
+# LLM-pass count on a very large document.
+_MOE_WINDOW_CHARS = 1024  # the MoE breaks above ~this; keep it small
+_DENSE_WINDOW_CHARS = 4096  # dense models handle big windows -> 3-4x fewer calls -> much faster
 _OVERLAP_CHARS = 150
 _MAX_WINDOWS = 30
 
@@ -76,6 +77,11 @@ _MAX_WINDOWS = 30
 def _is_moe(model: str) -> bool:
     # Qwen3 MoE (qwen35moe arch) needs the /no_think prefix for reliable JSON (see module doc).
     return "a3b" in model
+
+
+def _default_window(model: str) -> int:
+    """Small window for the MoE (it returns empty on large windows); big window for dense models."""
+    return _MOE_WINDOW_CHARS if _is_moe(model) else _DENSE_WINDOW_CHARS
 
 
 def _windows(text: str, window: int, overlap: int, max_windows: int) -> list[str]:
@@ -109,13 +115,16 @@ async def extract_entities(
     *,
     provider: ModelProvider,
     model: str,
-    window: int = _WINDOW_CHARS,
+    window: int | None = None,
     overlap: int = _OVERLAP_CHARS,
     max_windows: int = _MAX_WINDOWS,
 ) -> ExtractedEntities:
     """Extract entities + relations from the WHOLE of ``text`` via overlapping windows, merged and
-    de-duplicated. Best-effort: returns an empty result if there is no text; a window that fails to
+    de-duplicated. ``window`` defaults to a MODEL-AWARE size (small for the MoE, large for dense
+    models). Best-effort: returns an empty result if there is no text; a window that fails to
     produce valid structured output contributes nothing rather than aborting the document."""
+    if window is None:
+        window = _default_window(model)
     cleaned = text.strip()
     if not cleaned:
         return ExtractedEntities()

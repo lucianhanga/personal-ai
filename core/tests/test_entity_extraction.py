@@ -39,6 +39,19 @@ class _ConstantNer(FakeModelProvider):
         yield GenerationChunk(done=True, finish_reason="stop")
 
 
+def test_default_window_is_model_aware() -> None:
+    # The MoE breaks on big windows -> small; dense models run faster on a big window.
+    from personalai_core.entity_extraction import (
+        _DENSE_WINDOW_CHARS,
+        _MOE_WINDOW_CHARS,
+        _default_window,
+    )
+
+    assert _default_window("qwen3.6:35b-a3b") == _MOE_WINDOW_CHARS
+    assert _default_window("qwen3:14b") == _DENSE_WINDOW_CHARS
+    assert _DENSE_WINDOW_CHARS > _MOE_WINDOW_CHARS
+
+
 def test_single_window_one_pass() -> None:
     prov = _PerWindowNer()
     res = asyncio.run(extract_entities("short text", provider=prov, model="m", window=4000))
