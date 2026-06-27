@@ -65,12 +65,15 @@ _NER_PROMPT = (
     "'located_in') between two entity names you also returned. Return ONLY the structured result."
 )
 
-# Whole-document coverage. Windows are deliberately small (recall drops when a model must scan a
-# huge blob), overlap stops a boundary-straddling entity from being lost, and max_windows caps the
-# number of LLM passes on a very large document.
-_WINDOW_CHARS = 4000
-_OVERLAP_CHARS = 250
-_MAX_WINDOWS = 12
+# Whole-document coverage. Windows are deliberately SMALL: beyond recall (a model loses entities in
+# a huge blob), the Qwen3 MoE returns EMPTY structured output on large windows -- a ~4000-char
+# window came back with zero tokens while a short one extracts reliably -- so a small window is what
+# makes structured NER actually produce on this model (#464). Overlap stops a boundary-straddling
+# entity from being lost; max_windows caps the LLM-pass count on a very large document (raised to
+# match the smaller window so whole-document coverage is preserved).
+_WINDOW_CHARS = 1200
+_OVERLAP_CHARS = 150
+_MAX_WINDOWS = 30
 
 
 def _is_moe(model: str) -> bool:
