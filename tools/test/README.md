@@ -10,7 +10,7 @@ app or the test suite — it is for hand experiments.
 
 | File | What it does |
 | --- | --- |
-| `ner_extract.py` | Runs the windowed extractor and lets you **compare providers** — the local Ollama model vs an OpenAI model — with the same prompt + merge, and see entities + timing. |
+| `ner_extract.py` | **Compare providers** — local Ollama vs OpenAI — on the same windowed extraction, and see entities + timing (+ OpenAI token cost). Uses a deliberately **lighter** prompt than the core app extractor (relevant entities, not an exhaustive sweep) and extracts **entities only** (no relations). |
 | `ner_curl.sh` | The **raw** Ollama request one NER window makes, via `curl` — for poking at the model directly. |
 | `sample_invoice.txt` | A small sample invoice to extract from. |
 

@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""Experiment with the local NER / KAG entity extractor (#464) -- and compare models.
+"""Experiment with / compare NER extractors (#464).
 
-Runs the SAME windowed extraction (same prompt, same merge) through either the local Ollama model
-or an OpenAI model, so you can compare what each one finds, how long it takes, and how many tokens
-it costs.
+Runs a windowed entity extraction through either the local Ollama model or an OpenAI model, so you
+can compare what each finds, how long it takes, and (for OpenAI) how many tokens it costs.
+
+This harness uses its OWN prompt -- deliberately LESS aggressive than the core extractor: it asks
+for the *relevant* named entities rather than an exhaustive sweep, and it extracts entities ONLY
+(no relations). The core app extractor is unchanged.
 
 Providers:
-  --provider ollama   the local model via the real core ``extract_entities`` (default)
+  --provider ollama   the local model (default)
   --provider openai   an OpenAI model (default gpt-5-nano)
   --provider both     run both and print them side by side
 
 OpenAI knobs:
   --openai-model      default gpt-5-nano. For NER, gpt-4o-mini / gpt-4.1-nano are fast non-reasoning
                       options; gpt-5-mini is more capable.
-  --openai-reasoning  minimal | low | medium | high (default minimal). Applies ONLY to reasoning
-                      models (gpt-5-*, o-series). 'minimal' is fastest + cheapest -- best for NER.
-                      Non-reasoning models (gpt-4o-mini, gpt-4.1-*) ignore it.
+  --openai-reasoning  minimal | low | medium | high (default minimal). Reasoning models only.
 
 Ollama knobs:
   --num-ctx (default 32768; drop to 4096 if the 35B OOM-crashes Ollama), --window (1200; the local
@@ -25,7 +26,7 @@ Ollama knobs:
 OpenAI needs a key: export OPENAI_API_KEY=sk-... (or PERSONALAI_OPENAI_API_KEY).
 
 Examples:
-  uv run python tools/test/ner_extract.py --provider openai --file tools/test/sample_invoice.txt
+  uv run python tools/test/ner_extract.py --provider ollama --ollama-model qwen3:14b --first-doc
   uv run python tools/test/ner_extract.py --provider openai --openai-model gpt-4o-mini --window 6000
   uv run python tools/test/ner_extract.py --provider both --first-doc
 """
@@ -34,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import time
@@ -42,15 +44,9 @@ from typing import Any
 
 import httpx
 
+from personalai_contracts.ports import ChatMessage, GenerationRequest, Role
 from personalai_core.config import CoreConfig
-from personalai_core.entity_extraction import (
-    _NER_PROMPT,
-    ExtractedEntities,
-    ExtractedEntity,
-    ExtractedRelation,
-    _windows,
-    extract_entities,
-)
+from personalai_core.entity_extraction import ExtractedEntity, _windows
 from personalai_provider_ollama import OllamaProvider
 
 _SAMPLE = (
@@ -61,9 +57,20 @@ _SAMPLE = (
 _ENTITY_TYPES = ["person", "org", "location", "date", "product", "event", "other"]
 _REASONING_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
-# OpenAI structured outputs are STRICT: every object needs additionalProperties:false and all its
-# properties listed in `required`.
-_STRICT_SCHEMA: dict[str, Any] = {
+# LESS aggressive than the core prompt: the relevant/salient entities, not an exhaustive sweep, and
+# entities only (no relations).
+_PROMPT = (
+    "You are a named-entity extractor. Extract the RELEVANT, salient named entities from the text: "
+    "people; organizations and companies (e.g. a vendor, sender, or issuer); locations; notable "
+    "dates; products; events; and key identifiers or amounts (invoice / order / reference numbers, "
+    "totals) as type 'other'. Focus on meaningful entities -- don't pad with trivial fragments or "
+    "repeats, and do NOT invent anything that is not in the text. Use a type from this "
+    "EXACT set: person, org, location, date, product, event, other. Return ONLY the entities."
+)
+
+# Entities only -- no relations. Strict for OpenAI (additionalProperties:false + required); Ollama
+# accepts the same schema as its `format`.
+_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
@@ -79,21 +86,8 @@ _STRICT_SCHEMA: dict[str, Any] = {
                 "required": ["type", "name"],
             },
         },
-        "relations": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "src": {"type": "string"},
-                    "relation": {"type": "string"},
-                    "dst": {"type": "string"},
-                },
-                "required": ["src", "relation", "dst"],
-            },
-        },
     },
-    "required": ["entities", "relations"],
+    "required": ["entities"],
 }
 
 
@@ -115,26 +109,45 @@ async def _text_from_first_doc(database_url: str) -> str:
         await pool.close()
 
 
-def _merge_payload(
-    payload: dict[str, Any],
-    entities: dict[tuple[str, str], ExtractedEntity],
-    relations: dict[tuple[str, str, str], ExtractedRelation],
-) -> None:
+def _merge_entities(payload: dict[str, Any], out: dict[tuple[str, str], ExtractedEntity]) -> None:
     for ent in payload.get("entities", []):
         etype, name = ent.get("type"), str(ent.get("name", "")).strip()
         norm = " ".join(name.lower().split())
         if norm and etype in _ENTITY_TYPES:
-            entities.setdefault((etype, norm), ExtractedEntity(type=etype, name=name))
-    for rel in payload.get("relations", []):
-        key = (
-            str(rel.get("src", "")).strip().lower(),
-            str(rel.get("relation", "")).strip().lower(),
-            str(rel.get("dst", "")).strip().lower(),
+            out.setdefault((etype, norm), ExtractedEntity(type=etype, name=name))
+
+
+def _parse_into(raw: str, out: dict[tuple[str, str], ExtractedEntity]) -> None:
+    start, end = raw.find("{"), raw.rfind("}")
+    if start < 0 or end < 0:
+        return
+    with contextlib.suppress(json.JSONDecodeError):
+        _merge_entities(json.loads(raw[start : end + 1]), out)
+
+
+async def _extract_ollama(
+    text: str, *, provider: OllamaProvider, model: str, window: int, overlap: int, max_windows: int
+) -> list[ExtractedEntity]:
+    """Windowed extraction via the local Ollama model, schema-constrained. The Qwen3 MoE (``a3b``)
+    needs a ``/no_think`` line + ``think`` omitted, else it emits prose; dense models use False."""
+    is_moe = "a3b" in model.lower()
+    merged: dict[tuple[str, str], ExtractedEntity] = {}
+    wins = _windows(text.strip(), window, overlap, max_windows)
+    for i, win in enumerate(wins, 1):
+        messages = [ChatMessage(Role.SYSTEM, "/no_think")] if is_moe else []
+        messages += [ChatMessage(Role.SYSTEM, _PROMPT), ChatMessage(Role.USER, win)]
+        print(f"  [{i}/{len(wins)}] {model} on {len(win)} chars ...", flush=True)
+        t0 = time.perf_counter()
+        raw = ""
+        request = GenerationRequest(
+            messages=messages, model=model, json_schema=_SCHEMA, think=None if is_moe else False
         )
-        if all(key):
-            relations.setdefault(
-                key, ExtractedRelation(src=rel["src"], relation=rel["relation"], dst=rel["dst"])
-            )
+        async for chunk in provider.stream(request):
+            if chunk.delta:
+                raw += chunk.delta
+        print(f"      <- {len(raw)} chars in {time.perf_counter() - t0:.1f}s", flush=True)
+        _parse_into(raw, merged)
+    return list(merged.values())
 
 
 async def _extract_openai(
@@ -148,14 +161,13 @@ async def _extract_openai(
     overlap: int,
     max_windows: int,
     timeout: float,
-) -> ExtractedEntities:
+) -> list[ExtractedEntity]:
     """Windowed extraction via a DIRECT OpenAI /chat/completions call (strict structured output).
-    Direct, not via the app provider, so we can set ``reasoning_effort`` (the provider can't). For
-    reasoning models that param decides speed/cost: 'minimal' barely thinks -- ideal for NER."""
+    Direct, not via the app provider, so we can set ``reasoning_effort`` -- 'minimal' barely thinks,
+    ideal for NER. Prints per-window token usage so cost is visible."""
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     use_reasoning = model.startswith(_REASONING_PREFIXES)
-    merged_e: dict[tuple[str, str], ExtractedEntity] = {}
-    merged_r: dict[tuple[str, str, str], ExtractedRelation] = {}
+    merged: dict[tuple[str, str], ExtractedEntity] = {}
     in_tok = out_tok = reason_tok = 0
     wins = _windows(text.strip(), window, overlap, max_windows)
     async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
@@ -163,12 +175,12 @@ async def _extract_openai(
             body: dict[str, Any] = {
                 "model": model,
                 "messages": [
-                    {"role": "system", "content": _NER_PROMPT},
+                    {"role": "system", "content": _PROMPT},
                     {"role": "user", "content": win},
                 ],
                 "response_format": {
                     "type": "json_schema",
-                    "json_schema": {"name": "entities", "schema": _STRICT_SCHEMA, "strict": True},
+                    "json_schema": {"name": "entities", "schema": _SCHEMA, "strict": True},
                 },
             }
             if use_reasoning:
@@ -195,26 +207,15 @@ async def _extract_openai(
                 f"(in={p_in} out={p_out} reasoning={p_reason})",
                 flush=True,
             )
-            start, end = content.find("{"), content.rfind("}")
-            if start < 0 or end < 0:
-                continue
-            try:
-                _merge_payload(json.loads(content[start : end + 1]), merged_e, merged_r)
-            except json.JSONDecodeError:
-                continue
+            _parse_into(content, merged)
     print(f"  [tokens] input={in_tok} output={out_tok} (of which reasoning={reason_tok})")
-    return ExtractedEntities(entities=list(merged_e.values()), relations=list(merged_r.values()))
+    return list(merged.values())
 
 
-def _print_result(label: str, model: str, res: ExtractedEntities, elapsed: float) -> None:
-    print(
-        f"\n==== {label} ({model}) -> {len(res.entities)} entities, "
-        f"{len(res.relations)} relations in {elapsed:.1f}s ===="
-    )
-    for e in res.entities:
+def _print_result(label: str, model: str, entities: list[ExtractedEntity], elapsed: float) -> None:
+    print(f"\n==== {label} ({model}) -> {len(entities)} entities in {elapsed:.1f}s ====")
+    for e in entities:
         print(f"  {e.type:9} {e.name}")
-    for r in res.relations:
-        print(f"  REL  {r.src} -[{r.relation}]-> {r.dst}")
 
 
 def _openai_key(config: CoreConfig) -> str:
@@ -275,7 +276,7 @@ async def main() -> None:
         )
         model = args.ollama_model or config.default_model
         started = time.perf_counter()
-        res = await extract_entities(
+        ents = await _extract_ollama(
             text,
             provider=ollama,
             model=model,
@@ -283,11 +284,11 @@ async def main() -> None:
             overlap=args.overlap,
             max_windows=args.max_windows,
         )
-        _print_result("OLLAMA", model, res, time.perf_counter() - started)
+        _print_result("OLLAMA", model, ents, time.perf_counter() - started)
 
     if args.provider in ("openai", "both"):
         started = time.perf_counter()
-        res = await _extract_openai(
+        ents = await _extract_openai(
             text,
             base_url=config.openai_base_url,
             api_key=_openai_key(config),
@@ -298,7 +299,7 @@ async def main() -> None:
             max_windows=args.max_windows,
             timeout=args.timeout,
         )
-        _print_result("OPENAI", args.openai_model, res, time.perf_counter() - started)
+        _print_result("OPENAI", args.openai_model, ents, time.perf_counter() - started)
 
 
 if __name__ == "__main__":
