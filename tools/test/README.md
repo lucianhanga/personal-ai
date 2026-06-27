@@ -1,0 +1,53 @@
+# tools/test — NER / KAG extraction playground
+
+Scratch harness for experimenting with the local entity extractor that feeds the knowledge graph
+(KAG). Built while debugging why the Qwen3 35B MoE produced nothing on the real folder corpus (#464).
+
+Everything runs fully local against your Ollama + the configured model. Nothing here is part of the
+app or the test suite — it is for hand experiments.
+
+## What's here
+
+| File | What it does |
+| --- | --- |
+| `ner_extract.py` | Runs the **real** core extractor (`extract_entities`) so you can sweep window size, `num_ctx`, model, etc. and see the entities it returns. |
+| `ner_curl.sh` | The **raw** Ollama request one NER window makes, via `curl` — for poking at the model directly. |
+| `sample_invoice.txt` | A small sample invoice to extract from. |
+
+## Quick start
+
+```bash
+# Real code path (recommended) — sample text:
+uv run python tools/test/ner_extract.py
+
+# A file:
+uv run python tools/test/ner_extract.py --file tools/test/sample_invoice.txt
+
+# The first document already in your index (reconstructed from its chunks, no OCR):
+uv run python tools/test/ner_extract.py --first-doc
+
+# Raw model call via curl:
+bash tools/test/ner_curl.sh "Rechnung von M-Net GmbH, 39,99 EUR, R-2026-0042, 2026-01-15"
+```
+
+## The knobs that actually matter (hard-won)
+
+- **`--num-ctx` / `NUM_CTX` = 4096, not 32K.** The 32K default makes the 35B allocate a huge KV
+  cache and **OOM-crashes Ollama** (`Server disconnected` / `connection refused`). Small windows
+  need little context anyway.
+- **`--window` / text length small (~1200 chars).** This MoE returns **empty** structured output on
+  large windows — a ~4000-char window comes back with zero tokens, while a 1200-char one extracts
+  reliably. Reproduce the cliff:
+  ```bash
+  uv run python tools/test/ner_extract.py --first-doc --sweep 800,1200,2000,4000
+  ```
+- **`format` = the JSON schema** forces structured output (already wired in both scripts).
+- **reasoning mode.** `ner_curl.sh THINK=no_think|low|off` toggles how reasoning is requested.
+  `/no_think` is what reliably produces on small windows here; `low` was less stable on this box.
+
+## Notes
+
+- The 35B is shared with the running app — experiments compete with it, so a call can be slow if the
+  app is busy.
+- `ner_extract.py --first-doc` reads `vectors.metadata->>'text'`; it needs the DB reachable
+  (`PERSONALAI_DATABASE_URL`, default local).
