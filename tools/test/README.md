@@ -37,11 +37,16 @@ bash tools/test/ner_curl.sh "Rechnung von M-Net GmbH, 39,99 EUR, R-2026-0042, 20
 
 ## Comparing models (Ollama vs OpenAI)
 
-`--provider openai` runs the same windowed extraction through an OpenAI model. The default is
-**`gpt-5-nano`** — the cheapest GPT-5 tier; pass `--openai-model gpt-5-mini` or `gpt-4o-mini` for
-more capacity. OpenAI has no empty-output-on-large-window problem, so you can give it a bigger
-`--window` (fewer, cheaper calls). `--provider both` runs local + OpenAI back to back so you can see
-which names each one catches and how long each takes.
+`--provider openai` runs the same windowed extraction through an OpenAI model (a direct API call, so
+it can set `reasoning_effort`). The default is **`gpt-5-nano`**; pass `--openai-model gpt-4o-mini`
+(fast non-reasoning) or `gpt-5-mini` (more capable). OpenAI has no empty-output-on-large-window
+problem, so give it a bigger `--window` (fewer, cheaper calls). `--provider both` runs local + OpenAI
+back to back. Each OpenAI run prints **token usage** (`in / out / reasoning`) so you can gauge cost.
+
+**Reasoning effort.** `gpt-5-*` / o-series are reasoning models — they "think" before answering,
+which is slow and bills reasoning tokens as output. `--openai-reasoning minimal` (the default) makes
+them barely think, which is what you want for NER. Raise it (`low`/`medium`/`high`) only if quality
+needs it. Non-reasoning models (`gpt-4o-mini`, `gpt-4.1-*`) ignore the flag.
 
 ## The knobs that actually matter (hard-won)
 
