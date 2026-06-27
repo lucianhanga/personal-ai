@@ -1,0 +1,21 @@
+M-Net Telekommunikations GmbH
+Emmy-Noether-Strasse 2, 80992 Muenchen
+
+Rechnung
+
+Rechnungsempfaenger: Lucian Hanga
+Kundennummer: 123456789
+Rechnungsnummer: R-2026-0042
+Rechnungsdatum: 15.01.2026
+Leistungszeitraum: 01.01.2026 - 31.01.2026
+
+Position                         Betrag
+Grundgebuehr Surf&Fon Flex       39,99 EUR
+Bereitstellungsentgelt            0,00 EUR
+
+Summe netto                      33,61 EUR
+MwSt 19%                          6,38 EUR
+Gesamtbetrag                     39,99 EUR
+
+Zahlbar per SEPA-Lastschrift. Vielen Dank fuer Ihr Vertrauen.
+www.m-net.de
