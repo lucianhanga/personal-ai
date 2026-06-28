@@ -110,6 +110,61 @@ class PgEntityStore:
         )
         return _rowcount(result)
 
+    async def merge_entity(self, *, canonical_id: str, alias_id: str) -> None:
+        """Entity resolution (#465): fold an ALIAS entity into a CANONICAL one. Re-points the alias
+        document mentions and graph edges onto the canonical (de-duplicating where the canonical
+        already has the same mention/edge -- occurrences/weights add), recomputes the canonical's
+        mention_count from its mentions, then deletes the alias. Tenant-scoped; idempotent-ish (safe
+        to re-run -- a missing alias just no-ops the moves)."""
+        if canonical_id == alias_id:
+            return
+        tid = "current_setting('app.tenant_id')::uuid"
+        # 1. Move document mentions (dedup: a doc mentioning both -> sum occurrences).
+        await self._pool.execute(
+            f"INSERT INTO entity_documents (tenant_id, entity_id, document_id, occurrences) "
+            f"SELECT tenant_id, $1, document_id, occurrences FROM entity_documents "
+            f"WHERE tenant_id = {tid} AND entity_id = $2 "
+            f"ON CONFLICT (tenant_id, entity_id, document_id) DO UPDATE SET "
+            f"occurrences = entity_documents.occurrences + excluded.occurrences",
+            canonical_id,
+            alias_id,
+        )
+        await self._pool.execute(
+            f"DELETE FROM entity_documents WHERE tenant_id = {tid} AND entity_id = $1", alias_id
+        )
+        # 2. Re-point edges (outgoing then incoming), dedup by summing weight; drop self-loops.
+        for src_col, dst_col in (
+            ("src_entity_id", "dst_entity_id"),
+            ("dst_entity_id", "src_entity_id"),
+        ):
+            await self._pool.execute(
+                f"INSERT INTO entity_edges "
+                f"(tenant_id, src_entity_id, relation, dst_entity_id, weight) "
+                f"SELECT tenant_id, "
+                f"  CASE WHEN {src_col} = $2 THEN $1 ELSE src_entity_id END, relation, "
+                f"  CASE WHEN {dst_col} = $2 THEN $1 ELSE dst_entity_id END, weight "
+                f"FROM entity_edges WHERE tenant_id = {tid} AND {src_col} = $2 "
+                f"  AND {dst_col} <> $1 "
+                f"ON CONFLICT (tenant_id, src_entity_id, relation, dst_entity_id) DO UPDATE SET "
+                f"weight = entity_edges.weight + excluded.weight",
+                canonical_id,
+                alias_id,
+            )
+            await self._pool.execute(
+                f"DELETE FROM entity_edges WHERE tenant_id = {tid} AND {src_col} = $1", alias_id
+            )
+        # 3. Recompute the canonical's denormalized count from its merged mentions, drop the alias.
+        await self._pool.execute(
+            f"UPDATE entities SET mention_count = COALESCE(("
+            f"  SELECT SUM(occurrences) FROM entity_documents "
+            f"  WHERE tenant_id = {tid} AND entity_id = $1), 0), updated_at = now() "
+            f"WHERE tenant_id = {tid} AND id = $1",
+            canonical_id,
+        )
+        await self._pool.execute(
+            f"DELETE FROM entities WHERE tenant_id = {tid} AND id = $1", alias_id
+        )
+
     async def list_entities(
         self, *, type: str | None = None, query: str | None = None, limit: int = 50
     ) -> list[Entity]:

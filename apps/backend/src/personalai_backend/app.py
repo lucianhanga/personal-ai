@@ -37,6 +37,7 @@ from personalai_backend.auth.context import require_context
 from personalai_backend.auth.routes import router as auth_router
 from personalai_backend.composition import Bootstrap, bootstrap
 from personalai_backend.entity_indexing import index_document_entities
+from personalai_backend.entity_resolution import reconcile_entities
 from personalai_backend.folder_scan import canonical_root
 from personalai_backend.folder_sync import (
     EntityIndexer,
@@ -3066,6 +3067,12 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     logger.info("reextract: %s files re-extracted for folder %s", n, source.id)
                 except Exception as exc:  # noqa: BLE001 - best-effort; one source can't fail others
                     logger.warning("reextract failed for %s: %s", source.id, exc)
+            # After re-extraction, fold same-type alias entities into canonicals (#465).
+            try:
+                merged = await reconcile_entities(storage.entities)
+                logger.info("reextract: reconciled %s alias entities", merged)
+            except Exception as exc:  # noqa: BLE001 - best-effort; never fail the background task
+                logger.warning("entity reconciliation failed: %s", exc)
 
         task = asyncio.create_task(_run())
         app.state.bg_tasks.add(task)
@@ -3337,6 +3344,18 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             ok=True,
             data={"chunks": [{"index": idx, "text": text} for idx, text in chunks]},
         )
+
+    @app.post(
+        "/api/v1/entities/reconcile",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def reconcile_entities_endpoint() -> StructuredResult:
+        """Conservative entity resolution (#465): fold same-type alias entities (e.g. 'M-net' into
+        'M-net Telekommunikations GmbH') into one canonical, re-pointing mentions. Returns count."""
+        storage = _require_storage()
+        merged = await reconcile_entities(storage.entities)
+        return StructuredResult(ok=True, data={"merged": merged})
 
     @app.get(
         "/api/v1/entities/{entity_id}/neighborhood",

@@ -53,6 +53,31 @@ def _bind(tenant_id: str) -> None:
     current_security.set(SecurityContext(subject_id="test", tenant_id=tenant_id))
 
 
+def test_merge_entity_repoints_mentions_dedups_and_drops_alias() -> None:
+    # Entity resolution (#465): folding "M-net" into "M-net Telekommunikations GmbH" unions their
+    # documents (a shared doc's occurrences add), recomputes the count, and removes the alias.
+    async def run() -> None:
+        pool = await create_pool(DB_URL)
+        await apply_migrations(pool)
+        _bind(await _new_tenant(pool))
+        store = PgEntityStore(TenantQuerier(pool))
+        canon = await store.upsert_entity(type="org", name="M-net Telekommunikations GmbH")
+        alias = await store.upsert_entity(type="org", name="M-net")
+        await store.add_mention(entity_id=canon, document_id="A", occurrences=1)
+        await store.add_mention(entity_id=canon, document_id="B", occurrences=1)
+        await store.add_mention(entity_id=alias, document_id="B", occurrences=2)  # shared doc
+        await store.add_mention(entity_id=alias, document_id="C", occurrences=1)
+
+        await store.merge_entity(canonical_id=canon, alias_id=alias)
+
+        assert await store.get_entity(alias) is None  # alias removed
+        assert set(await store.documents_for_entity(canon)) == {"A", "B", "C"}  # unioned
+        ent = await store.get_entity(canon)
+        assert ent is not None and ent.mention_count == 5  # A=1 + B=(1+2) + C=1
+
+    _run(run)
+
+
 def test_canonical_upsert_dedups_and_normalizes() -> None:
     async def run() -> None:
         pool = await create_pool(DB_URL)
