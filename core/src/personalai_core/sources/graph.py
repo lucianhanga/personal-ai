@@ -44,6 +44,30 @@ def _is_count_query(query: str) -> bool:
     return bool(_COUNT_RE.search(query or ""))
 
 
+# Document-type nouns to ignore when falling back to per-token entity lookup (so "M-Net invoices"
+# still resolves to the "M-Net" entity, not the literal phrase which matches no entity name).
+_DOC_WORDS = frozenset(
+    {
+        "invoice",
+        "invoices",
+        "document",
+        "documents",
+        "file",
+        "files",
+        "record",
+        "records",
+        "report",
+        "reports",
+        "receipt",
+        "receipts",
+        "statement",
+        "statements",
+        "bill",
+        "bills",
+    }
+)
+
+
 class _Target(BaseModel):
     """The single entity the user wants counted/listed, extracted from their question."""
 
@@ -81,6 +105,16 @@ class GraphSource:
             return []
         matches = await self._counter(name)
         if not matches:
+            # The extracted phrase may carry the document-type noun (e.g. "M-Net invoices"), which
+            # matches no entity. Retry on its most specific tokens (longest first, skipping short /
+            # document-type words) so "M-Net invoices" still resolves to the "M-Net" entity.
+            for token in sorted(name.split(), key=len, reverse=True):
+                if len(token) < 3 or token.lower() in _DOC_WORDS:
+                    continue
+                matches = await self._counter(token)
+                if matches:
+                    break
+        if not matches:
             return []
         ename, etype, count = matches[0]
         text = (
@@ -108,9 +142,10 @@ class GraphSource:
             messages=[
                 ChatMessage(
                     Role.SYSTEM,
-                    "Extract the SINGLE entity (organization, person, place, product, or topic) "
-                    "the user wants counted or listed from their question. Return only its name, "
-                    "no extra words.",
+                    "Extract the SINGLE entity (organization, person, place, or product) the user "
+                    "wants counted or listed. Return ONLY its proper name -- do NOT include the "
+                    "document type or count words (exclude 'invoice(s)', 'document(s)', 'file(s)', "
+                    "'how many', 'number of').",
                 ),
                 ChatMessage(Role.USER, query),
             ],
