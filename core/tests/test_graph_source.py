@@ -54,3 +54,15 @@ def test_retrieve_noop_on_non_count_query() -> None:
 
 def test_retrieve_noop_without_counter() -> None:
     assert asyncio.run(GraphSource().retrieve("how many M-Net invoices?", 1000, None)) == []
+
+
+def test_retrieve_token_fallback_when_phrase_carries_doc_noun() -> None:
+    # The model often extracts "M-Net invoices" (keeps the doc-type noun), matching no entity. The
+    # token fallback retries on "M-Net" (skipping the doc word) and still finds the count (#465).
+    async def _strict(name: str) -> Sequence[tuple[str, str, int]]:
+        n = name.lower()
+        return [("M-net Telekom", "org", 14)] if "m-net" in n and "invoice" not in n else []
+
+    src = GraphSource(counter=_strict)  # no provider -> heuristic extract = "M-Net invoices"
+    evidence = asyncio.run(src.retrieve("how many M-Net invoices?", 1000, None))
+    assert len(evidence) == 1 and evidence[0].metadata["count"] == 14
