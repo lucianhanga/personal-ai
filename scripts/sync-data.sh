@@ -105,8 +105,17 @@ fi
 SSH_CMD="ssh -i ${KEY} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
 
 # --- Locate the Postgres containers ----------------------------------------
-LCID="$(docker ps --format '{{.ID}} {{.Image}}' 2>/dev/null | awk -v m="$PG_MATCH" '$0 ~ m {print $1; exit}')"
-RCID="$($SSH_CMD "$REMOTE" "docker ps --format '{{.ID}} {{.Image}}' 2>/dev/null | awk -v m='$PG_MATCH' '\$0 ~ m {print \$1; exit}'" 2>/dev/null || echo "")"
+# The user may run several Postgres containers (e.g. doktok-db AND personalai-db),
+# so pick the one that actually serves DBUSER/DBNAME, not just any pgvector image.
+find_local_pg() {
+  local c
+  for c in $(docker ps --format '{{.ID}} {{.Image}}' 2>/dev/null | awk '/pgvector|postgres/{print $1}'); do
+    docker exec "$c" psql -U "$DBUSER" -d "$DBNAME" -tAc 'select 1' >/dev/null 2>&1 && { echo "$c"; return 0; }
+  done
+  return 1
+}
+LCID="$(find_local_pg || true)"
+RCID="$($SSH_CMD "$REMOTE" "for c in \$(docker ps --format '{{.ID}} {{.Image}}' 2>/dev/null | awk '/pgvector|postgres/{print \$1}'); do docker exec \$c psql -U ${DBUSER} -d ${DBNAME} -tAc 'select 1' >/dev/null 2>&1 && { echo \$c; break; }; done" 2>/dev/null || echo "")"
 
 log_info "Target    : ${REMOTE}"
 log_info "Direction : ${DIRECTION}   DB: ${DBNAME} (user ${DBUSER})"
