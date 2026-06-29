@@ -10,23 +10,9 @@
 #
 set -euo pipefail
 
-# --- Colors ----------------------------------------------------------------
-if [[ -t 1 ]]; then
-  GREEN='\033[0;32m'
-  RED='\033[0;31m'
-  YELLOW='\033[0;33m'
-  NC='\033[0m'
-else
-  GREEN=''; RED=''; YELLOW=''; NC=''
-fi
-
-log_ok()   { printf "${GREEN}[ OK ]${NC} %s\n" "$*"; }
-log_warn() { printf "${YELLOW}[WARN]${NC} %s\n" "$*"; }
-log_err()  { printf "${RED}[FAIL]${NC} %s\n" "$*" >&2; }
-log_info() { printf "%s\n" "$*"; }
-
-# --- Paths -----------------------------------------------------------------
+# --- Shared helpers --------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/common.sh"
 TF_DIR="$(cd "${SCRIPT_DIR}/../terraform" && pwd)"
 
 # --- Marketplace image coordinates (must match terraform defaults) ---------
@@ -42,6 +28,7 @@ SSH_KEY_PATH="${HOME}/.ssh/ai-a100-devel"
 # --- Defaults --------------------------------------------------------------
 INSTANCE="devel"    # instance name; selects the Terraform workspace + resource names.
 AUTO_APPROVE="false"
+SUBSCRIPTION=""     # az subscription for marketplace-terms; empty -> read from terraform.tfvars.
 SSH_CIDR=""
 REGION=""
 REGION_SET="false"
@@ -67,6 +54,8 @@ Options:
                             instances at once - even in the same region. The
                             default 'devel' reproduces the original names.
   -y, --auto-approve        Skip the interactive confirmation before apply.
+  -s, --subscription <id|name>  Azure subscription for marketplace-terms acceptance.
+                            Default: subscription_id from terraform.tfvars.
   -r, --region <region>     Azure region to deploy into (alias: --location).
                             Overrides 'location' in terraform.tfvars for this run.
                             Default: whatever terraform.tfvars / the variable sets.
@@ -110,6 +99,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -n|--name|--instance) INSTANCE="${2:-}"; shift 2 ;;
     -y|--auto-approve) AUTO_APPROVE="true"; shift ;;
+    -s|--subscription) SUBSCRIPTION="${2:-}"; shift 2 ;;
     -r|--region|--location) REGION="${2:-}"; REGION_SET="true"; shift 2 ;;
     --on-demand|--regular|--no-spot) ON_DEMAND="true"; shift ;;
     --no-devtools) DEVTOOLS="false"; shift ;;
@@ -144,12 +134,22 @@ check_prereqs() {
   done
   [[ "$missing" -eq 0 ]] || exit 3
 
-  if ! az account show >/dev/null 2>&1; then
-    log_err "Not logged in to Azure. Run: az login"
+  # Pin the subscription to the SAME one Terraform deploys into (terraform.tfvars
+  # subscription_id), unless overridden with -s. Marketplace term acceptance is
+  # per-subscription, so accepting in the az CLI default while Terraform deploys
+  # elsewhere would leave the real target subscription un-accepted.
+  if [[ -z "$SUBSCRIPTION" ]]; then
+    SUBSCRIPTION="$(tfvars_subscription "$TF_DIR")"
+    [[ -n "$SUBSCRIPTION" ]] && log_ok "Subscription pinned from terraform.tfvars: ${SUBSCRIPTION}"
+  fi
+  common_init_sub
+
+  if ! az account show ${SUB_OPT[@]+"${SUB_OPT[@]}"} >/dev/null 2>&1; then
+    log_err "Not logged in to Azure (or the pinned subscription is not accessible). Run: az login"
     exit 4
   fi
   local sub
-  sub="$(az account show --query name -o tsv)"
+  sub="$(az account show ${SUB_OPT[@]+"${SUB_OPT[@]}"} --query name -o tsv)"
   log_ok "Azure login active. Subscription: ${sub}"
 }
 
@@ -193,6 +193,7 @@ accept_terms() {
   local accepted
   accepted="$(az vm image terms show \
     --publisher "$IMG_PUBLISHER" --offer "$IMG_OFFER" --plan "$IMG_SKU" \
+    ${SUB_OPT[@]+"${SUB_OPT[@]}"} \
     --query accepted -o tsv 2>/dev/null || echo "false")"
   if [[ "$accepted" == "true" ]]; then
     log_ok "Marketplace terms already accepted."
@@ -201,6 +202,7 @@ accept_terms() {
   log_warn "Marketplace terms not accepted. Accepting now..."
   if az vm image terms accept \
       --publisher "$IMG_PUBLISHER" --offer "$IMG_OFFER" --plan "$IMG_SKU" \
+      ${SUB_OPT[@]+"${SUB_OPT[@]}"} \
       >/dev/null 2>&1; then
     log_ok "Marketplace terms accepted."
   else
@@ -212,6 +214,10 @@ accept_terms() {
 # --- Terraform -------------------------------------------------------------
 run_terraform() {
   cd "$TF_DIR"
+
+  # Never leave a stale saved plan behind: a leftover tfplan from a failed apply
+  # could later be applied by accident. Clean it on any exit from here on.
+  trap 'rm -f "${TF_DIR}/tfplan"' EXIT
 
   log_info "Running terraform init..."
   terraform init -input=false

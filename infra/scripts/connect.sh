@@ -2,42 +2,28 @@
 #
 # connect.sh - Open an SSH session to the A100 GPU dev VM.
 #
-# Reads the public IP and admin username from Terraform outputs, checks the VM
-# power state, and SSHes in. Any extra arguments after "--" (or a single
-# trailing command) are run on the VM instead of an interactive shell.
+# Resolves the VM's public IP from Azure (deterministic resource names, no
+# Terraform state required), checks the VM power state, and SSHes in. Any extra
+# arguments after "--" (or a single trailing command) are run on the VM instead
+# of an interactive shell.
 #
 # Examples:
-#   scripts/connect.sh                 # interactive shell
+#   scripts/connect.sh                 # interactive shell (instance: devel)
+#   scripts/connect.sh -n train        # connect to another instance
 #   scripts/connect.sh nvidia-smi      # run one command and exit
 #   scripts/connect.sh -i ~/.ssh/mykey # use a specific private key
 #   scripts/connect.sh -- -L 8888:localhost:8888   # forward a port (Jupyter)
 #
 set -euo pipefail
 
-# --- Colors ----------------------------------------------------------------
-if [[ -t 1 ]]; then
-  GREEN='\033[0;32m'
-  RED='\033[0;31m'
-  YELLOW='\033[0;33m'
-  NC='\033[0m'
-else
-  GREEN=''; RED=''; YELLOW=''; NC=''
-fi
-
-log_ok()   { printf "${GREEN}[ OK ]${NC} %s\n" "$*"; }
-log_warn() { printf "${YELLOW}[WARN]${NC} %s\n" "$*"; }
-log_err()  { printf "${RED}[FAIL]${NC} %s\n" "$*" >&2; }
-
-# --- Paths -----------------------------------------------------------------
+# --- Shared helpers --------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TF_DIR="$(cd "${SCRIPT_DIR}/../terraform" && pwd)"
+source "${SCRIPT_DIR}/lib/common.sh"
 
 # --- Defaults --------------------------------------------------------------
-INSTANCE="devel"   # instance to connect to; selects its Terraform workspace.
+INSTANCE="devel"   # instance to connect to.
 IDENTITY=""
-# Default to the dedicated project key (created by provision.sh) if present.
-# An explicit -i/--identity overrides this.
-DEFAULT_KEY="${HOME}/.ssh/ai-a100-devel"
+SUBSCRIPTION=""    # optional az subscription (id or name); empty = CLI default.
 SSH_EXTRA_ARGS=()
 REMOTE_CMD=()
 
@@ -48,9 +34,10 @@ Usage: $(basename "$0") [options] [-- <ssh-args...>] [remote-command...]
 Open an SSH session to the A100 GPU dev VM.
 
 Options:
-  -n, --name <name>       Instance to connect to (alias: --instance). Default: devel.
-  -i, --identity <path>   Private key to authenticate with (ssh -i).
-  -h, --help              Show this help.
+  -n, --name <name>            Instance to connect to (alias: --instance). Default: devel.
+  -i, --identity <path>        Private key to authenticate with (ssh -i).
+  -s, --subscription <id|name> Azure subscription to resolve the VM in. Default: CLI default.
+  -h, --help                   Show this help.
 
 Anything after "--" is passed straight to ssh (e.g. -L for port forwarding).
 A trailing command (e.g. "nvidia-smi") is executed on the VM and then exits.
@@ -62,6 +49,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -n|--name|--instance) INSTANCE="${2:-}"; shift 2 ;;
     -i|--identity) IDENTITY="${2:-}"; shift 2 ;;
+    -s|--subscription) SUBSCRIPTION="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     --) shift; SSH_EXTRA_ARGS+=("$@"); break ;;
     *) REMOTE_CMD+=("$1"); shift ;;
@@ -70,46 +58,19 @@ done
 
 [[ -z "$INSTANCE" ]] && { log_err "--name requires a non-empty value."; exit 2; }
 
-# --- Prerequisites ---------------------------------------------------------
-for tool in az terraform ssh; do
-  if ! command -v "$tool" >/dev/null 2>&1; then
-    log_err "Required tool not found: $tool"; exit 3
-  fi
-done
-if ! az account show >/dev/null 2>&1; then
-  log_err "Not logged in to Azure. Run: az login"; exit 4
-fi
-
-# --- Resolve targets from Terraform outputs --------------------------------
-# Per-instance state: select (or create) the workspace for this instance first.
-cd "$TF_DIR"
-terraform workspace select "$INSTANCE" 2>/dev/null || terraform workspace new "$INSTANCE" >/dev/null 2>&1
-ADMIN="$(terraform output -raw admin_username 2>/dev/null || echo "azureuser")"
-PUBIP="$(terraform output -raw public_ip_address 2>/dev/null || echo "")"
-RG="$(terraform output -raw resource_group_name 2>/dev/null || echo "")"
-VM="$(terraform output -raw vm_name 2>/dev/null || echo "")"
-
-if [[ -z "$PUBIP" || -z "$RG" || -z "$VM" ]]; then
-  log_err "Could not read Terraform outputs for instance '${INSTANCE}'. Has it been provisioned?"
-  log_err "Run: scripts/provision.sh --name ${INSTANCE}"
-  exit 5
-fi
+# --- Prerequisites & resolution --------------------------------------------
+require_tools az ssh
+require_az_login
+resolve_instance "$INSTANCE"
 
 # --- Check power state ------------------------------------------------------
-POWER="$(az vm get-instance-view --resource-group "$RG" --name "$VM" \
-         --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" \
-         -o tsv 2>/dev/null | sed 's#PowerState/##' || echo "unknown")"
-
+POWER="$(vm_power_state "$RG" "$VM")"
 case "$POWER" in
   running)
     log_ok "VM is running."
     ;;
-  deallocated)
-    log_warn "VM is deallocated. Start it first: scripts/start.sh"
-    exit 6
-    ;;
-  stopped)
-    log_warn "VM is stopped. Start it first: scripts/start.sh"
+  deallocated|stopped)
+    log_warn "VM is ${POWER}. Start it first: scripts/start.sh --name ${INSTANCE}"
     exit 6
     ;;
   *)
@@ -119,7 +80,7 @@ esac
 
 # --- Build and run SSH command ---------------------------------------------
 [[ -z "$IDENTITY" && -f "$DEFAULT_KEY" ]] && IDENTITY="$DEFAULT_KEY"
-SSH_CMD=(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
+SSH_CMD=(ssh "${SSH_BASE_OPTS[@]}")
 [[ -n "$IDENTITY" ]] && SSH_CMD+=(-i "$IDENTITY")
 [[ ${#SSH_EXTRA_ARGS[@]} -gt 0 ]] && SSH_CMD+=("${SSH_EXTRA_ARGS[@]}")
 SSH_CMD+=("${ADMIN}@${PUBIP}")
