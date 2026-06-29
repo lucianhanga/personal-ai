@@ -57,7 +57,9 @@ test("Graph 'Open in Corpus' switches to the Corpus tab and opens that document'
   render(<KnowledgePanel token="demo" />);
 
   // Focus the entity from the browser, then select its document in the rail.
-  await waitFor(() => expect(screen.getByText("Ada Lovelace")).toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.getAllByTestId("entity-open-in-graph").length).toBeGreaterThan(0),
+  );
   const openInGraph = screen
     .getAllByTestId("entity-open-in-graph")
     .find((b) => b.getAttribute("data-entity-id") === "e1")!;

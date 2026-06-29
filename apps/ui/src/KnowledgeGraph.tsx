@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import ForceGraph2D, { type LinkObject, type NodeObject } from "react-force-graph-2d";
+import ForceGraph2D, {
+  type ForceGraphMethods,
+  type LinkObject,
+  type NodeObject,
+} from "react-force-graph-2d";
 
 import { EntityBrowser } from "./EntityBrowser";
 import {
   fetchDocumentEntities,
+  fetchEntities,
   fetchEntityNeighborhood,
   type Entity,
   type EntityNeighborhood,
@@ -96,8 +101,120 @@ function buildGraph(nb: EntityNeighborhood | null, layout: GraphLayout): BuiltGr
   return { nodes, links, total };
 }
 
+// Minimal shapes for the pure label-selection helper, so it can be unit-tested without a canvas or a
+// force-graph instance. A link's source/target may be a raw id (as we build it) or, once the engine
+// has run, a node object — handle both.
+interface LabelableNode {
+  id: string;
+  label: string;
+  focus?: boolean;
+}
+interface LabelableLink {
+  source: string | { id: string };
+  target: string | { id: string };
+}
+
+/** Which node ids get a painted on-canvas label (G-A): always the focus node, plus the top `n` other
+ * nodes by degree (incident-link count), ties broken by name. Everything else stays a bare dot with
+ * the existing hover tooltip. Pure so the selection rule is unit-testable without rendering. */
+export function pickLabeledNodeIds(
+  nodes: LabelableNode[],
+  links: LabelableLink[],
+  n = 6,
+): Set<string> {
+  const ids = new Set<string>();
+  const focus = nodes.find((node) => node.focus);
+  if (focus) ids.add(focus.id);
+
+  const endId = (e: string | { id: string }): string => (typeof e === "object" ? e.id : e);
+  const degree = new Map<string, number>();
+  for (const l of links) {
+    const s = endId(l.source);
+    const t = endId(l.target);
+    degree.set(s, (degree.get(s) ?? 0) + 1);
+    degree.set(t, (degree.get(t) ?? 0) + 1);
+  }
+
+  const others = nodes
+    .filter((node) => !node.focus)
+    .sort((a, b) => {
+      const da = degree.get(a.id) ?? 0;
+      const db = degree.get(b.id) ?? 0;
+      if (db !== da) return db - da;
+      return a.label.localeCompare(b.label);
+    });
+  for (const node of others.slice(0, Math.max(0, n))) ids.add(node.id);
+  return ids;
+}
+
 function prefersReducedMotion(): boolean {
   return Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+}
+
+/** Text-first legend rows for the size + edge-weight encodings (G-C). Word-only — no color or shape
+ * carries meaning here, so it reads identically without color. */
+function ScaleLegend(): React.ReactElement {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "0.75rem",
+        marginTop: "0.35rem",
+        fontSize: "0.72rem",
+        color: MUTED,
+      }}
+    >
+      <span data-testid="graph-legend-size">small dot = few mentions, large dot = many</span>
+      <span data-testid="graph-legend-edge">thin line = 1 shared doc, thick line = many</span>
+    </div>
+  );
+}
+
+/** Cold-start launcher (G-D): the corpus's most-mentioned entities as clickable chips, so a fresh
+ * graph has an obvious first move instead of a single sentence. Clicking one focuses the graph. */
+function TopEntities({
+  entities,
+  onFocusEntity,
+}: {
+  entities: Entity[];
+  onFocusEntity: (id: string) => void;
+}): React.ReactElement {
+  const top = [...entities].sort((a, b) => b.mention_count - a.mention_count).slice(0, 12);
+  return (
+    <div data-testid="graph-top-entities">
+      <p style={{ color: MUTED, fontSize: "0.85rem", margin: "0 0 0.4rem" }}>
+        Pick an entity to see how it connects, or start with your most-mentioned:
+      </p>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+        {top.map((e) => (
+          <button
+            key={e.id}
+            data-testid="graph-top-entity"
+            data-entity-id={e.id}
+            type="button"
+            onClick={() => onFocusEntity(e.id)}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.3rem",
+              border: "1px solid #e2e8f0",
+              borderRadius: 6,
+              background: "#fff",
+              padding: "0.18rem 0.45rem",
+              fontSize: "0.78rem",
+              color: "#334155",
+              cursor: "pointer",
+            }}
+          >
+            <TypeBadge type={e.type} />
+            <span>{e.name}</span>
+            <span style={{ color: MUTED, fontSize: "0.72rem" }}>{e.mention_count}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 interface KnowledgeGraphTabProps {
@@ -158,7 +275,31 @@ function EgoGraph({ token, focusId, onFocusEntity, onOpenInCorpus }: EgoGraphPro
   const [docLoading, setDocLoading] = useState(false);
   const [docError, setDocError] = useState<string | null>(null);
 
+  // Cold-start launcher (G-D): the most-mentioned entities to start the graph from when nothing is
+  // focused. null = still loading; [] = a genuinely empty corpus (the graph-empty prompt).
+  const [topEntities, setTopEntities] = useState<Entity[] | null>(null);
+  const [topError, setTopError] = useState<string | null>(null);
+
+  // ForceGraph2D imperative handle for the camera controls (G-B).
+  const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
+
   const reqRef = useRef(0);
+
+  useEffect(() => {
+    let active = true;
+    setTopEntities(null);
+    setTopError(null);
+    fetchEntities(token, { limit: 50 })
+      .then((es) => active && setTopEntities(es))
+      .catch(() => active && setTopError("Could not load entities."));
+    return () => {
+      active = false;
+    };
+  }, [token]);
+
+  function fitView(): void {
+    graphRef.current?.zoomToFit(400, 40);
+  }
 
   useEffect(() => {
     setSelDoc(null);
@@ -186,6 +327,7 @@ function EgoGraph({ token, focusId, onFocusEntity, onOpenInCorpus }: EgoGraphPro
   }, [token, focusId]);
 
   const graph = useMemo(() => buildGraph(nb, layout), [nb, layout]);
+  const labeledIds = useMemo(() => pickLabeledNodeIds(graph.nodes, graph.links, 6), [graph]);
 
   function selectDocument(id: string, name: string): void {
     setSelDoc({ id, name });
@@ -211,10 +353,24 @@ function EgoGraph({ token, focusId, onFocusEntity, onOpenInCorpus }: EgoGraphPro
     return (
       <section data-testid="ego-graph" aria-label="Entity graph">
         <GraphLegend />
-        <p data-testid="graph-empty" style={{ color: MUTED, fontSize: "0.85rem", marginTop: "0.75rem" }}>
-          Select an entity (or use “Graph” on a chip) to see how it connects to your documents and
-          other entities.
-        </p>
+        <ScaleLegend />
+        <div aria-live="polite" aria-busy={topEntities === null} style={{ marginTop: "0.75rem" }}>
+          {topError ? (
+            <p data-testid="graph-top-error" role="alert" style={{ color: RED, fontSize: "0.85rem" }}>
+              {topError}
+            </p>
+          ) : topEntities === null ? (
+            <p data-testid="graph-top-loading" role="status" style={{ color: MUTED, fontSize: "0.85rem" }}>
+              Loading entities…
+            </p>
+          ) : topEntities.length === 0 ? (
+            <p data-testid="graph-empty" style={{ color: MUTED, fontSize: "0.85rem" }}>
+              No entities yet — add documents to your corpus and they’ll appear here as they’re indexed.
+            </p>
+          ) : (
+            <TopEntities entities={topEntities} onFocusEntity={onFocusEntity} />
+          )}
+        </div>
       </section>
     );
   }
@@ -222,6 +378,7 @@ function EgoGraph({ token, focusId, onFocusEntity, onOpenInCorpus }: EgoGraphPro
   return (
     <section data-testid="ego-graph" aria-label="Entity graph">
       <GraphLegend />
+      <ScaleLegend />
 
       <div aria-live="polite" aria-busy={loading} style={{ marginTop: "0.5rem" }}>
         {loading ? (
@@ -242,6 +399,48 @@ function EgoGraph({ token, focusId, onFocusEntity, onOpenInCorpus }: EgoGraphPro
               </p>
             )}
 
+            {/* Camera controls (G-B). Real buttons (keyboard-reachable, visible focus ring); the
+                canvas itself stays aria-hidden, with the detail rail as the accessible equivalent. */}
+            <div
+              data-testid="graph-controls"
+              style={{ display: "flex", gap: "0.4rem", margin: "0.3rem 0" }}
+            >
+              <button
+                data-testid="graph-zoom-fit"
+                type="button"
+                onClick={fitView}
+                aria-label="Fit the graph to the view"
+                style={{
+                  border: "1px solid #ddd",
+                  borderRadius: 5,
+                  background: "none",
+                  color: "#555",
+                  fontSize: "0.74rem",
+                  padding: "0.12rem 0.5rem",
+                  cursor: "pointer",
+                }}
+              >
+                Fit
+              </button>
+              <button
+                data-testid="graph-zoom-reset"
+                type="button"
+                onClick={fitView}
+                aria-label="Reset the graph view"
+                style={{
+                  border: "1px solid #ddd",
+                  borderRadius: 5,
+                  background: "none",
+                  color: "#555",
+                  fontSize: "0.74rem",
+                  padding: "0.12rem 0.5rem",
+                  cursor: "pointer",
+                }}
+              >
+                Reset
+              </button>
+            </div>
+
             {/* The visual graph. Decorative + redundant with the rail below -> aria-hidden. */}
             <div
               data-testid="graph-canvas"
@@ -255,6 +454,7 @@ function EgoGraph({ token, focusId, onFocusEntity, onOpenInCorpus }: EgoGraphPro
               }}
             >
               <ForceGraph2D
+                ref={graphRef}
                 graphData={{ nodes: graph.nodes, links: graph.links }}
                 height={340}
                 nodeId="id"
@@ -266,9 +466,14 @@ function EgoGraph({ token, focusId, onFocusEntity, onOpenInCorpus }: EgoGraphPro
                 cooldownTicks={reduced ? 0 : undefined}
                 warmupTicks={reduced ? 0 : undefined}
                 enableNodeDrag={!reduced}
+                onEngineStop={fitView}
                 onNodeClick={(n: NodeObject) => handleNodeClick(n as unknown as GraphNode)}
                 nodeCanvasObjectMode={() => "replace"}
-                nodeCanvasObject={(node: NodeObject, ctx: CanvasRenderingContext2D) => {
+                nodeCanvasObject={(
+                  node: NodeObject,
+                  ctx: CanvasRenderingContext2D,
+                  globalScale: number,
+                ) => {
                   const n = node as unknown as GraphNode & { x?: number; y?: number };
                   const r = Math.max(3, n.val);
                   const x = n.x ?? 0;
@@ -285,6 +490,16 @@ function EgoGraph({ token, focusId, onFocusEntity, onOpenInCorpus }: EgoGraphPro
                       ctx.strokeStyle = NER;
                       ctx.stroke();
                     }
+                  }
+                  // G-A: paint a name label only for the focus node + the top-degree neighbors
+                  // (pickLabeledNodeIds); the long tail stays bare dots with the hover tooltip.
+                  if (labeledIds.has(n.id)) {
+                    const fontPx = Math.max(9, 11 / globalScale);
+                    ctx.font = `${fontPx}px sans-serif`;
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "top";
+                    ctx.fillStyle = "#334155";
+                    ctx.fillText(n.label, x, y + r + 1);
                   }
                 }}
               />

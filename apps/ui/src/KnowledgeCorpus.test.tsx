@@ -2,13 +2,31 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 
-import { KnowledgeCorpusTab } from "./KnowledgeCorpus";
+import {
+  KnowledgeCorpusTab,
+  countByType,
+  mimeLabel,
+  sortFilterDocs,
+} from "./KnowledgeCorpus";
 import * as api from "./api";
 
 afterEach(() => vi.restoreAllMocks());
 
-function doc(id: string, name: string, chunk_count: number): api.DocumentInfo {
-  return { id, name, mime: "text/plain", size_bytes: 100, chunk_count, created_at: "2026-06-20T00:00:00Z" };
+function doc(
+  id: string,
+  name: string,
+  chunk_count: number,
+  extra: Partial<api.DocumentInfo> = {},
+): api.DocumentInfo {
+  return {
+    id,
+    name,
+    mime: "text/plain",
+    size_bytes: 100,
+    chunk_count,
+    created_at: "2026-06-20T00:00:00Z",
+    ...extra,
+  };
 }
 
 function entity(id: string): api.Entity {
@@ -45,6 +63,105 @@ test("renders stat cards and a per-document table with an indexed flag", async (
   const notIndexed = within(rows[1]).getByTestId("corpus-status");
   expect(notIndexed).toHaveTextContent("Not indexed");
   expect(notIndexed).toHaveAttribute("data-indexed", "false");
+});
+
+test("mimeLabel maps known types and falls back to extension then File", () => {
+  expect(mimeLabel("application/pdf")).toBe("PDF");
+  expect(mimeLabel("text/markdown")).toBe("Markdown");
+  expect(mimeLabel("text/plain")).toBe("Text");
+  expect(mimeLabel("image/png")).toBe("Image");
+  expect(mimeLabel("", "report.PDF")).toBe("PDF"); // extension fallback, uppercased
+  expect(mimeLabel(null, "noext")).toBe("File");
+});
+
+test("sortFilterDocs filters by name + status and sorts (tie-break always ascending)", () => {
+  const files = [
+    doc("a", "alpha.txt", 5, { size_bytes: 300 }),
+    doc("b", "beta.txt", 0, { size_bytes: 100 }),
+    doc("c", "carol.txt", 2, { size_bytes: 200 }),
+  ];
+  // Name search.
+  expect(sortFilterDocs(files, { sort: "name", dir: "asc", q: "car", status: "all" })).toHaveLength(1);
+  // Status filter: only unindexed (chunk_count 0).
+  const un = sortFilterDocs(files, { sort: "name", dir: "asc", q: "", status: "unindexed" });
+  expect(un.map((f) => f.id)).toEqual(["b"]);
+  // Sort by size desc.
+  const bySize = sortFilterDocs(files, { sort: "size", dir: "desc", q: "", status: "all" });
+  expect(bySize.map((f) => f.id)).toEqual(["a", "c", "b"]);
+});
+
+test("countByType tallies entities per type", () => {
+  const es = [
+    { id: "1", type: "person", name: "x", mention_count: 1 },
+    { id: "2", type: "person", name: "y", mention_count: 1 },
+    { id: "3", type: "org", name: "z", mention_count: 1 },
+  ] as api.Entity[];
+  expect(countByType(es)).toEqual({ person: 2, org: 1 });
+});
+
+test("table shows Type + Size columns and the corpus-size / unindexed stats", async () => {
+  vi.spyOn(api, "fetchFiles").mockResolvedValue([
+    doc("d1", "report.pdf", 5, { mime: "application/pdf", size_bytes: 1_200_000 }),
+    doc("d2", "raw.txt", 0, { mime: "text/plain", size_bytes: 0 }),
+  ]);
+  vi.spyOn(api, "fetchEntities").mockResolvedValue([entity("a")]);
+  render(<CorpusHarness />);
+
+  await waitFor(() => expect(screen.getByTestId("corpus-table")).toBeInTheDocument());
+  const types = screen.getAllByTestId("corpus-col-type").map((c) => c.textContent);
+  expect(types).toContain("PDF");
+  expect(types).toContain("Text");
+  // Size cell: a null/zero size renders "—", not "0 B".
+  expect(screen.getAllByTestId("corpus-col-size").some((c) => c.textContent === "—")).toBe(true);
+  // C-C: a corpus-size card + an unindexed sub-line (one doc has 0 chunks).
+  expect(screen.getByTestId("corpus-stat-size")).toBeInTheDocument();
+  expect(screen.getByTestId("corpus-stat-unindexed")).toHaveTextContent("1 not indexed");
+});
+
+test("no unindexed sub-line when every document is indexed", async () => {
+  vi.spyOn(api, "fetchFiles").mockResolvedValue([doc("d1", "a.txt", 3)]);
+  vi.spyOn(api, "fetchEntities").mockResolvedValue([]);
+  render(<CorpusHarness />);
+
+  await waitFor(() => expect(screen.getByTestId("corpus-table")).toBeInTheDocument());
+  expect(screen.queryByTestId("corpus-stat-unindexed")).toBeNull();
+});
+
+test("search + status filter narrow the table, and corpus-no-match shows when nothing matches", async () => {
+  vi.spyOn(api, "fetchFiles").mockResolvedValue([
+    doc("d1", "alpha.txt", 5),
+    doc("d2", "beta.txt", 0),
+  ]);
+  vi.spyOn(api, "fetchEntities").mockResolvedValue([]);
+  render(<CorpusHarness />);
+
+  await waitFor(() => expect(screen.getByTestId("corpus-table")).toBeInTheDocument());
+  // Search narrows to alpha.
+  fireEvent.change(screen.getByTestId("corpus-search"), { target: { value: "alpha" } });
+  expect(screen.getAllByTestId("corpus-row")).toHaveLength(1);
+  // A non-matching search shows the distinct no-match message (not corpus-empty).
+  fireEvent.change(screen.getByTestId("corpus-search"), { target: { value: "zzz" } });
+  expect(screen.getByTestId("corpus-no-match")).toBeInTheDocument();
+  expect(screen.queryByTestId("corpus-empty")).toBeNull();
+  // Reset + filter to unindexed.
+  fireEvent.change(screen.getByTestId("corpus-search"), { target: { value: "" } });
+  fireEvent.click(screen.getByTestId("corpus-filter-unindexed"));
+  const rows = screen.getAllByTestId("corpus-row");
+  expect(rows).toHaveLength(1);
+  expect(within(rows[0]).getByTestId("corpus-status")).toHaveTextContent("Not indexed");
+});
+
+test("the type breakdown lists each present type in TYPE_ORDER", async () => {
+  vi.spyOn(api, "fetchFiles").mockResolvedValue([doc("d1", "a.txt", 1)]);
+  vi.spyOn(api, "fetchEntities").mockResolvedValue([
+    { id: "1", type: "person", name: "p", mention_count: 1 },
+    { id: "2", type: "org", name: "o", mention_count: 1 },
+  ] as api.Entity[]);
+  render(<CorpusHarness />);
+
+  await waitFor(() => expect(screen.getByTestId("corpus-type-breakdown")).toBeInTheDocument());
+  const types = screen.getAllByTestId("corpus-type-row").map((r) => r.getAttribute("data-type"));
+  expect(types).toEqual(["person", "org"]); // present types only, in TYPE_ORDER
 });
 
 test("shows the empty state when there are no documents", async () => {
