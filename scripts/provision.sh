@@ -283,7 +283,7 @@ run_terraform() {
   else
     log_warn "This is a SPOT VM. Azure may evict it when capacity is needed."
   fi
-  log_warn "Stop GPU billing when idle:  scripts/deprovision.sh --deallocate"
+  log_warn "Stop GPU billing when idle:  scripts/stop.sh --name ${INSTANCE}"
 }
 
 main() {

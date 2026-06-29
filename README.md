@@ -18,7 +18,8 @@ named after the instance), so instances never collide:
 ./scripts/provision.sh --name eu    -r westeurope
 ./scripts/monitor.sh --all                          # all instances + total cost
 ./scripts/connect.sh --name train
-./scripts/deallocate.sh --name web
+./scripts/stop.sh    --name web                     # halt billing on one
+./scripts/destroy.sh --name eu                      # delete one entirely
 ```
 
 Key points:
@@ -43,25 +44,33 @@ hyphens, starting with a letter (validated by Terraform).
 
 ## Scripts at a glance
 
+The five core lifecycle verbs:
+
+| Verb (script)   | Purpose                                                                  |
+| --------------- | ------------------------------------------------------------------------ |
+| `provision.sh`  | **Create** the machine (terms, restrict SSH to your IP, init/plan/apply). |
+| `start.sh`      | **Start** a stopped (deallocated) machine.                               |
+| `stop.sh`       | **Stop** the machine: deallocate it - halts GPU billing, keeps disk + data. |
+| `destroy.sh`    | **Destroy** the machine and ALL its resources (irreversible).            |
+| `monitor.sh`    | **Monitor**: status + live cost; `--all` shows every instance + total.   |
+
+Access / support scripts:
+
 | Script              | Purpose                                                              |
 | ------------------- | ------------------------------------------------------------------- |
-| `provision.sh`      | Accept marketplace terms, restrict SSH to your IP, init/plan/apply.  |
-| `connect.sh`        | SSH into the VM (interactive shell, one-off command, or port-forward). |
-| `tunnel.sh`         | SSH local port-forwarding (Jupyter / TensorBoard / Ollama presets).  |
-| `monitor.sh`        | Read-only status dashboard; `--all` shows every instance + total cost. |
-| `deallocate.sh`     | Deallocate the VM to halt GPU billing. Keeps disk, IP, data.         |
-| `start.sh`          | Resume a stopped (deallocated) VM.                                   |
-| `deprovision.sh`    | Lifecycle: `--deallocate` / `--start` / `--destroy` (full teardown). |
-| `setup-devtools.sh` | Idempotent toolchain installer run on the VM (via cloud-init).       |
+| `connect.sh`        | SSH into the machine (shell, one-off command, or port-forward).     |
+| `tunnel.sh`         | SSH local port-forwarding (Jupyter / TensorBoard / Ollama presets). |
+| `check-quota.sh`    | Survey A100 quota + SKU availability across regions.                |
+| `setup-devtools.sh` | Idempotent toolchain installer run on the VM (via cloud-init).      |
 
 All instance-aware scripts accept `-n, --name <name>` (alias `--instance`,
-default `devel`) to target a specific instance. `monitor.sh` additionally
-accepts `--all` to inspect every instance at once.
+default `devel`) to target a specific machine. `monitor.sh` additionally accepts
+`--all` to inspect every instance at once.
 
-`deallocate.sh` and `start.sh` are convenience wrappers over
-`deprovision.sh --deallocate` and `deprovision.sh --start`. There is deliberately
-no plain "stop": a merely stopped VM stays allocated and keeps billing compute,
-so we always deallocate.
+`start.sh` / `stop.sh` / `destroy.sh` are thin verbs over a shared internal
+engine (`deprovision.sh`); call the verbs, not the engine. Note "stop" always
+**deallocates** (releases the GPU so compute billing stops) - there is
+deliberately no plain stop that keeps the VM allocated and still billing.
 
 ## What gets created
 
@@ -139,13 +148,16 @@ From the repository root:
 ./scripts/monitor.sh --gpu          # also runs nvidia-smi over SSH
 ./scripts/monitor.sh --watch 15     # refresh every 15 seconds
 
-# 4a. Halt GPU billing when idle (deallocate; keeps disk and IP, resume quickly)
-./scripts/deallocate.sh
+# 4a. Stop when idle (deallocate; halts GPU billing, keeps disk and data)
+./scripts/stop.sh
 ./scripts/start.sh                  # resume later
 
-# 4b. Tear everything down (DELETES the disk and all data)
-./scripts/deprovision.sh --destroy
+# 4b. Destroy everything (DELETES the disk and all data)
+./scripts/destroy.sh
 ```
+
+The default machine is `devel`. Add `--name <name>` to any verb to target a
+specific machine (e.g. `./scripts/stop.sh --name train`).
 
 ## Connecting to the VM
 
@@ -197,24 +209,20 @@ keeps the OS disk, so your data survives and you can start it again later
 keep important work in source control or on durable storage, not only on the
 local disk.
 
-## Cost-saving guidance: deallocate vs destroy
+## Cost-saving guidance: stop vs destroy
 
-| Action                  | GPU/compute charge | OS disk charge | Public IP charge | Data kept | Resume |
-| ----------------------- | ------------------ | -------------- | ---------------- | --------- | ------ |
-| `--deallocate` (default)| stopped            | still billed   | still billed     | yes       | fast   |
-| `--destroy`             | stopped            | removed        | removed          | no        | full reprovision |
+| Action          | GPU/compute charge | OS disk charge | Public IP charge | Data kept | Resume |
+| --------------- | ------------------ | -------------- | ---------------- | --------- | ------ |
+| `stop.sh`       | stopped            | still billed   | still billed     | yes       | fast   |
+| `destroy.sh`    | stopped            | removed        | removed          | no        | full reprovision |
 
-- Use `deallocate.sh` between work sessions: you stop paying for the
-  expensive A100 compute but keep a small bill for the Premium OS disk and the
-  Standard static public IP, and you can resume in minutes with `start.sh`.
-- Use `deprovision.sh --destroy` when you are done with the environment entirely:
-  it removes all resources and all charges, but the disk and its data are gone.
-- A `stopped` (but still allocated) VM can still incur compute charges. Always
-  prefer `deallocated`, which is exactly what `deallocate.sh` does. The monitor script
-  flags the difference.
-
-> Note: `deallocate.sh`/`start.sh` and `deprovision.sh --deallocate`/`--start` are the
-> same operation. Use whichever name you find clearer.
+- Use `stop.sh` between work sessions: you stop paying for the expensive A100
+  compute but keep a small bill for the Premium OS disk and the Standard static
+  public IP, and you can resume in minutes with `start.sh`.
+- Use `destroy.sh` when you are done with the machine entirely: it removes all
+  resources and all charges, but the disk and its data are gone.
+- `stop.sh` always **deallocates** (the right, cheap "off"). A VM that is merely
+  stopped-but-allocated still incurs compute charges - the scripts never do that.
 
 ## SSH source-IP security note
 
@@ -298,14 +306,14 @@ automatically, so multiple instances stay isolated there too.
 ├── README.md
 ├── .gitignore
 ├── scripts/
-│   ├── provision.sh      # accept terms, restrict SSH, init/plan/apply (--name)
-│   ├── connect.sh        # SSH into the VM (shell, command, or port-forward; --name)
+│   ├── provision.sh      # CREATE the machine (terms, SSH, init/plan/apply; --name)
+│   ├── start.sh          # START a stopped (deallocated) machine (--name)
+│   ├── stop.sh           # STOP (deallocate): halt GPU billing, keep data (--name)
+│   ├── destroy.sh        # DESTROY the machine and all resources (--name)
+│   ├── monitor.sh        # MONITOR: status + live cost (--name, --all)
+│   ├── connect.sh        # SSH into the machine (shell, command, port-forward; --name)
 │   ├── tunnel.sh         # SSH local port-forwarding presets (--name)
-│   ├── deallocate.sh     # deallocate the VM (halt GPU billing, keep data; --name)
-│   ├── start.sh          # resume a deallocated VM (--name)
-│   ├── stop.sh           # alias for deallocate
-│   ├── deprovision.sh    # deallocate | start | destroy (--name)
-│   ├── monitor.sh        # read-only status dashboard (--name, --all)
+│   ├── deprovision.sh    # internal engine behind start/stop/destroy (--name)
 │   ├── setup-devtools.sh # first-boot toolchain installer (runs on the VM)
 │   └── check-quota.sh    # report A100 vCPU quota by region
 └── terraform/
