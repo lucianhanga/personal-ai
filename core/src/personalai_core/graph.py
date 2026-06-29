@@ -126,6 +126,11 @@ TOOL_USING_AGENTS: frozenset[str] = frozenset({"researcher"})
 # (its tool loop) and the critic/verifier (their independent fact-check pass, gated by the judge
 # fact-check setting). The planner is genuinely tool-free.
 TOOL_CONFIGURABLE_AGENTS: frozenset[str] = frozenset({"researcher", "critic", "verifier"})
+# Tool capabilities that mutate user state. A judge's (critic/verifier) verify-only fact-check pass
+# confirms or refutes a draft and must never write/delete the user's data, so tools declaring any of
+# these are stripped from the judges by default (the researcher keeps them). Matched against
+# ToolManifest.capabilities, so future write tools are covered without listing tool names.
+MUTATING_TOOL_CAPABILITIES: frozenset[str] = frozenset({"memory.write"})
 
 # Default system prompt per agent. Exposed (not private) so the backend can echo them to the UI as
 # the editable defaults (#290), exactly like CoreConfig defaults for settings. A tenant's saved
@@ -412,7 +417,22 @@ def _build_graph(
     # reasoning-off and the researcher inherits the turn-level `think`. A tenant override wins.
     _default_reasoning = {"planner": "off", "critic": "off", "verifier": "off"}
 
-    _disabled = {a: frozenset(t) for a, t in (disabled_tools or {}).items()}
+    # Tenant-configured per-agent disabled tools (#290), as mutable sets so the built-in judge
+    # default below can be unioned in before they are frozen.
+    _disabled: dict[str, set[str]] = {a: set(t) for a, t in (disabled_tools or {}).items()}
+    # Built-in default: the critic/verifier run a verify-ONLY fact-check (#465) that must confirm or
+    # refute the draft, never mutate state -- so memory-WRITE tools (remember/update/forget, any
+    # `memory.write`-capable tool) are redundant and unsafe for a judge. Strip them by capability
+    # (not by name, so future write tools are caught too); the researcher keeps them for "remember
+    # this". A tenant can disable more, but can never re-enable a write tool for a judge.
+    _judge_blocked = {
+        rt.manifest.name
+        for rt in tools
+        if MUTATING_TOOL_CAPABILITIES & set(rt.manifest.capabilities)
+    }
+    for _judge in ("critic", "verifier"):
+        _disabled.setdefault(_judge, set()).update(_judge_blocked)
+    _frozen_disabled: dict[str, frozenset[str]] = {a: frozenset(t) for a, t in _disabled.items()}
 
     def _agent_model(agent: str) -> str:
         """The model this agent runs on: its per-agent override, else the turn's model."""
@@ -421,7 +441,7 @@ def _build_graph(
     def _agent_tools(agent: str) -> list[RegisteredTool]:
         """The tools offered to an agent: all tools minus the ones disabled for it (#290). The
         researcher uses this for its loop; the critic/verifier for their independent fact-check."""
-        off = _disabled.get(agent, frozenset())
+        off = _frozen_disabled.get(agent, frozenset())
         return [rt for rt in tools if rt.manifest.name not in off]
 
     def _agent_reasoning(agent: str) -> tuple[bool | None, list[ChatMessage]]:
