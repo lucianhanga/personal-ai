@@ -19,6 +19,33 @@ variable "subscription_id" {
 }
 
 ###############################################################################
+# Instance identity
+#
+# A single string that names this VM instance. ALL resource names are derived
+# from it in main.tf (see the locals block), so two different instance names
+# produce two fully independent stacks (resource group, network, VM) that can
+# coexist - even in the same region. Each instance also gets its own Terraform
+# state via a workspace named after it (the helper scripts manage this).
+#
+# The default "devel" reproduces the original fixed resource names exactly, so
+# existing behavior is unchanged when no name is given.
+###############################################################################
+
+variable "instance" {
+  description = "Instance name. All resource names derive from this (see locals in main.tf). Default 'devel' reproduces the original names. Each instance has its own resource group, network, VM, and Terraform workspace/state."
+  type        = string
+  default     = "devel"
+
+  validation {
+    # Lowercase letters, digits and hyphens; must start with a letter and end
+    # with a letter or digit; total length 2-24. This keeps every derived Azure
+    # resource name (and the Linux computer name) valid.
+    condition     = can(regex("^[a-z][a-z0-9-]{0,22}[a-z0-9]$", var.instance))
+    error_message = "instance must be 2-24 chars of lowercase letters, digits and hyphens, start with a letter, and not end with a hyphen."
+  }
+}
+
+###############################################################################
 # Core placement
 ###############################################################################
 
@@ -26,52 +53,6 @@ variable "location" {
   description = "Azure region for all resources."
   type        = string
   default     = "westeurope"
-}
-
-variable "resource_group_name" {
-  description = "Resource group that holds the A100 dev environment."
-  type        = string
-  default     = "ai-devel-a100-rg"
-}
-
-###############################################################################
-# Naming (defaults mirror the source ARM template exactly)
-###############################################################################
-
-variable "vm_name" {
-  description = "Name (and computer name) of the GPU virtual machine."
-  type        = string
-  default     = "vm-ai-a100-devel"
-}
-
-variable "vnet_name" {
-  description = "Virtual network name."
-  type        = string
-  default     = "vm-ai-a100-devel-vnet"
-}
-
-variable "subnet_name" {
-  description = "Subnet name."
-  type        = string
-  default     = "default"
-}
-
-variable "public_ip_name" {
-  description = "Public IP resource name."
-  type        = string
-  default     = "vm-ai-a100-devel-ip"
-}
-
-variable "nic_name" {
-  description = "Network interface name (kept identical to the ARM template)."
-  type        = string
-  default     = "vm-ai-a100-devel678"
-}
-
-variable "nsg_name" {
-  description = "Network security group name."
-  type        = string
-  default     = "vm-ai-a100-devel-nsg"
 }
 
 ###############################################################################

@@ -5,6 +5,26 @@
 locals {
   # Prefer inline key content if provided, otherwise read the public key file.
   ssh_public_key = var.ssh_public_key != "" ? var.ssh_public_key : file(pathexpand(var.ssh_public_key_path))
+
+  # -------------------------------------------------------------------------
+  # Resource names, all derived from var.instance.
+  #
+  # With instance = "devel" these reproduce the original fixed names exactly,
+  # EXCEPT the NIC, which is standardized to "...-nic" (it was an arbitrary
+  # "vm-ai-a100-devel678" before; the state is fresh, so this is a deliberate,
+  # one-time rename rather than a destructive change to a live resource).
+  # -------------------------------------------------------------------------
+  rg_name        = "ai-${var.instance}-a100-rg"      # devel -> ai-devel-a100-rg
+  vm_name        = "vm-ai-a100-${var.instance}"      # devel -> vm-ai-a100-devel
+  vnet_name      = "vm-ai-a100-${var.instance}-vnet" # devel -> vm-ai-a100-devel-vnet
+  subnet_name    = "default"                         # unchanged
+  public_ip_name = "vm-ai-a100-${var.instance}-ip"   # devel -> vm-ai-a100-devel-ip
+  nsg_name       = "vm-ai-a100-${var.instance}-nsg"  # devel -> vm-ai-a100-devel-nsg
+  nic_name       = "vm-ai-a100-${var.instance}-nic"  # devel -> vm-ai-a100-devel-nic (standardized)
+
+  # Tag every resource with its instance name so resources are attributable
+  # back to a specific instance in the portal / cost views.
+  tags = merge(var.tags, { instance = var.instance })
 }
 
 ###############################################################################
@@ -15,9 +35,9 @@ locals {
 ###############################################################################
 
 resource "azurerm_resource_group" "this" {
-  name     = var.resource_group_name
+  name     = local.rg_name
   location = var.location
-  tags     = var.tags
+  tags     = local.tags
 }
 
 ###############################################################################
@@ -25,15 +45,15 @@ resource "azurerm_resource_group" "this" {
 ###############################################################################
 
 resource "azurerm_virtual_network" "this" {
-  name                = var.vnet_name
+  name                = local.vnet_name
   location            = azurerm_resource_group.this.location
   resource_group_name = azurerm_resource_group.this.name
   address_space       = var.vnet_address_space
-  tags                = var.tags
+  tags                = local.tags
 }
 
 resource "azurerm_subnet" "default" {
-  name                 = var.subnet_name
+  name                 = local.subnet_name
   resource_group_name  = azurerm_resource_group.this.name
   virtual_network_name = azurerm_virtual_network.this.name
   address_prefixes     = var.subnet_address_prefixes
@@ -49,19 +69,19 @@ resource "azurerm_subnet" "default" {
 }
 
 resource "azurerm_public_ip" "this" {
-  name                = var.public_ip_name
+  name                = local.public_ip_name
   location            = azurerm_resource_group.this.location
   resource_group_name = azurerm_resource_group.this.name
   allocation_method   = "Static"
   sku                 = "Standard"
-  tags                = var.tags
+  tags                = local.tags
 }
 
 resource "azurerm_network_security_group" "this" {
-  name                = var.nsg_name
+  name                = local.nsg_name
   location            = azurerm_resource_group.this.location
   resource_group_name = azurerm_resource_group.this.name
-  tags                = var.tags
+  tags                = local.tags
 
   # SSH inbound. Source is restricted to var.ssh_source_address_prefix.
   # The ARM template used "*"; we deliberately do not.
@@ -79,11 +99,11 @@ resource "azurerm_network_security_group" "this" {
 }
 
 resource "azurerm_network_interface" "this" {
-  name                           = var.nic_name
+  name                           = local.nic_name
   location                       = azurerm_resource_group.this.location
   resource_group_name            = azurerm_resource_group.this.name
   accelerated_networking_enabled = true
-  tags                           = var.tags
+  tags                           = local.tags
 
   ip_configuration {
     name                          = "ipconfig1"
@@ -103,13 +123,13 @@ resource "azurerm_network_interface_security_group_association" "this" {
 ###############################################################################
 
 resource "azurerm_linux_virtual_machine" "this" {
-  name                = var.vm_name
-  computer_name       = var.vm_name
+  name                = local.vm_name
+  computer_name       = local.vm_name
   location            = azurerm_resource_group.this.location
   resource_group_name = azurerm_resource_group.this.name
   size                = var.vm_size
   admin_username      = var.admin_username
-  tags                = var.tags
+  tags                = local.tags
 
   network_interface_ids = [
     azurerm_network_interface.this.id,

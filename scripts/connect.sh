@@ -33,6 +33,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TF_DIR="$(cd "${SCRIPT_DIR}/../terraform" && pwd)"
 
 # --- Defaults --------------------------------------------------------------
+INSTANCE="devel"   # instance to connect to; selects its Terraform workspace.
 IDENTITY=""
 # Default to the dedicated project key (created by provision.sh) if present.
 # An explicit -i/--identity overrides this.
@@ -47,6 +48,7 @@ Usage: $(basename "$0") [options] [-- <ssh-args...>] [remote-command...]
 Open an SSH session to the A100 GPU dev VM.
 
 Options:
+  -n, --name <name>       Instance to connect to (alias: --instance). Default: devel.
   -i, --identity <path>   Private key to authenticate with (ssh -i).
   -h, --help              Show this help.
 
@@ -58,12 +60,15 @@ EOF
 # --- Parse args ------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -n|--name|--instance) INSTANCE="${2:-}"; shift 2 ;;
     -i|--identity) IDENTITY="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     --) shift; SSH_EXTRA_ARGS+=("$@"); break ;;
     *) REMOTE_CMD+=("$1"); shift ;;
   esac
 done
+
+[[ -z "$INSTANCE" ]] && { log_err "--name requires a non-empty value."; exit 2; }
 
 # --- Prerequisites ---------------------------------------------------------
 for tool in az terraform ssh; do
@@ -76,15 +81,17 @@ if ! az account show >/dev/null 2>&1; then
 fi
 
 # --- Resolve targets from Terraform outputs --------------------------------
+# Per-instance state: select (or create) the workspace for this instance first.
 cd "$TF_DIR"
+terraform workspace select "$INSTANCE" 2>/dev/null || terraform workspace new "$INSTANCE" >/dev/null 2>&1
 ADMIN="$(terraform output -raw admin_username 2>/dev/null || echo "azureuser")"
 PUBIP="$(terraform output -raw public_ip_address 2>/dev/null || echo "")"
 RG="$(terraform output -raw resource_group_name 2>/dev/null || echo "")"
 VM="$(terraform output -raw vm_name 2>/dev/null || echo "")"
 
 if [[ -z "$PUBIP" || -z "$RG" || -z "$VM" ]]; then
-  log_err "Could not read Terraform outputs. Has the environment been provisioned?"
-  log_err "Run: scripts/provision.sh"
+  log_err "Could not read Terraform outputs for instance '${INSTANCE}'. Has it been provisioned?"
+  log_err "Run: scripts/provision.sh --name ${INSTANCE}"
   exit 5
 fi
 

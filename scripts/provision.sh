@@ -40,6 +40,7 @@ IMG_SKU="ngc-base-version-25_9_1_gen2"
 SSH_KEY_PATH="${HOME}/.ssh/ai-a100-devel"
 
 # --- Defaults --------------------------------------------------------------
+INSTANCE="devel"    # instance name; selects the Terraform workspace + resource names.
 AUTO_APPROVE="false"
 SSH_CIDR=""
 REGION=""
@@ -60,6 +61,11 @@ Usage: $(basename "$0") [options]
 Provision the Azure A100 GPU development VM with Terraform.
 
 Options:
+  -n, --name <name>         Instance name (alias: --instance). Default: devel.
+                            Each name gets its own resource group, network, VM,
+                            and Terraform workspace/state, so you can run several
+                            instances at once - even in the same region. The
+                            default 'devel' reproduces the original names.
   -y, --auto-approve        Skip the interactive confirmation before apply.
   -r, --region <region>     Azure region to deploy into (alias: --location).
                             Overrides 'location' in terraform.tfvars for this run.
@@ -89,6 +95,8 @@ Regions (short-names):
 
 Examples:
   $(basename "$0") --region northeurope -y
+  $(basename "$0") --name train --region eastus
+  $(basename "$0") --name web   --region eastus     # second VM, same region
   $(basename "$0") --region eastus --on-demand
 
 Notes:
@@ -100,6 +108,7 @@ EOF
 # --- Parse args ------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -n|--name|--instance) INSTANCE="${2:-}"; shift 2 ;;
     -y|--auto-approve) AUTO_APPROVE="true"; shift ;;
     -r|--region|--location) REGION="${2:-}"; REGION_SET="true"; shift 2 ;;
     --on-demand|--regular|--no-spot) ON_DEMAND="true"; shift ;;
@@ -207,6 +216,12 @@ run_terraform() {
   log_info "Running terraform init..."
   terraform init -input=false
 
+  # Per-instance state: select (or create) the workspace named after the
+  # instance. Each instance therefore gets isolated state and never collides
+  # with another instance, even in the same region.
+  log_info "Selecting Terraform workspace: ${INSTANCE}"
+  terraform workspace select "$INSTANCE" 2>/dev/null || terraform workspace new "$INSTANCE"
+
   # Optional region override. When set, it is baked into the saved plan
   # (tfplan), so the subsequent apply uses it without re-specifying -var
   # (terraform forbids -var alongside a saved plan file).
@@ -235,6 +250,7 @@ run_terraform() {
 
   log_info "Running terraform plan..."
   terraform plan -input=false \
+    -var "instance=${INSTANCE}" \
     -var "ssh_source_address_prefix=${SSH_CIDR}" \
     -var "enable_devtools=${DEVTOOLS}" \
     -var "prepull_models=${prepull}" \
@@ -271,6 +287,8 @@ run_terraform() {
 }
 
 main() {
+  [[ -z "$INSTANCE" ]] && { log_err "--name requires a non-empty value."; exit 2; }
+  log_ok "Instance: ${INSTANCE}"
   validate_region
   check_prereqs
   ensure_ssh_key

@@ -39,11 +39,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TF_DIR="$(cd "${SCRIPT_DIR}/../terraform" && pwd)"
 
 # --- Defaults --------------------------------------------------------------
+INSTANCE="devel"    # instance to inspect; selects its Terraform workspace + RG.
+NAME_SET="false"    # whether --name was given explicitly (for --all conflict check).
+DO_ALL="false"      # iterate every named instance (workspace) instead of one.
 DO_GPU="false"
 WATCH_INTERVAL=""
 RG_OVERRIDE=""
 SUBSCRIPTION=""
 CURRENCY="USD"
+DASH_SUBTOTAL="0"   # set by dashboard(): this instance's accrued compute cost.
 
 usage() {
   cat <<EOF
@@ -52,12 +56,24 @@ Usage: $(basename "$0") [options]
 Read-only status and live cost dashboard for the A100 GPU dev VMs.
 
 Options:
-  -g, --resource-group <name>   Resource group to inspect.
-                                Default: from terraform output, else ai-devel-a100-rg.
+  -n, --name <name>             Instance to inspect (alias: --instance). Default: devel.
+                                Selects that instance's Terraform workspace and
+                                resource group.
+      --all                     Inspect EVERY named instance (every Terraform
+                                workspace except 'default') and print a combined
+                                total accrued cost. Cannot be combined with --name.
+  -g, --resource-group <name>   Resource group to inspect (overrides --name's RG).
+                                Default: from terraform output, else ai-<name>-a100-rg.
   -s, --subscription <id-name>  Subscription to use (default: az CLI default).
       --gpu                     SSH into each running VM and run nvidia-smi.
       --watch <secs>            Refresh continuously every <secs> seconds.
   -h, --help                    Show this help.
+
+Examples:
+  $(basename "$0")                       # the default 'devel' instance
+  $(basename "$0") --name train          # one named instance
+  $(basename "$0") --all                 # every instance + combined total
+  $(basename "$0") --all --watch 15      # live, all instances
 
 Cost note:
   The accrued cost is a COMPUTE-ONLY estimate (rate x running hours from the
@@ -69,6 +85,8 @@ EOF
 # --- Parse args ------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -n|--name|--instance) INSTANCE="${2:-}"; NAME_SET="true"; shift 2 ;;
+    --all) DO_ALL="true"; shift ;;
     -g|--resource-group) RG_OVERRIDE="${2:-}"; shift 2 ;;
     -s|--subscription)   SUBSCRIPTION="${2:-}"; shift 2 ;;
     --gpu) DO_GPU="true"; shift ;;
@@ -77,6 +95,14 @@ while [[ $# -gt 0 ]]; do
     *) log_err "Unknown argument: $1"; usage; exit 2 ;;
   esac
 done
+
+# --all and --name are mutually exclusive; refuse rather than guess.
+if [[ "$DO_ALL" == "true" && "$NAME_SET" == "true" ]]; then
+  log_err "Use either --name <name> or --all, not both."; exit 2
+fi
+if [[ "$DO_ALL" != "true" && -z "$INSTANCE" ]]; then
+  log_err "--name requires a non-empty value."; exit 2
+fi
 
 # Optional "--subscription" arguments appended to every az call. Guarded for
 # bash 3.2 (macOS) under set -u.
@@ -95,13 +121,20 @@ check_prereqs() {
   fi
 }
 
-# --- Resolve the resource group --------------------------------------------
+# --- Resolve the resource group for the current INSTANCE --------------------
+# Selects the instance's Terraform workspace (read-only; never creates one),
+# then prefers its resource_group_name output. Resource names are deterministic
+# from the instance name, so we fall back to "ai-<instance>-a100-rg" whenever the
+# output is unavailable (no terraform, no state, failed/destroyed instance).
 resolve_rg() {
   if [[ -n "$RG_OVERRIDE" ]]; then
     RG="$RG_OVERRIDE"; return
   fi
-  RG="$(terraform -chdir="$TF_DIR" output -raw resource_group_name 2>/dev/null || echo "")"
-  [[ -z "$RG" ]] && RG="ai-devel-a100-rg"
+  RG=""
+  if terraform -chdir="$TF_DIR" workspace select "$INSTANCE" >/dev/null 2>&1; then
+    RG="$(terraform -chdir="$TF_DIR" output -raw resource_group_name 2>/dev/null || echo "")"
+  fi
+  [[ -z "$RG" ]] && RG="ai-${INSTANCE}-a100-rg"
 }
 
 # --- SSH reachability ------------------------------------------------------
@@ -167,12 +200,14 @@ PY
 }
 
 dashboard() {
+  DASH_SUBTOTAL="0"   # this instance's accrued compute cost (for --all totals).
   resolve_rg
 
   echo "==============================================================="
   echo " A100 GPU dev VMs   ($(date '+%Y-%m-%d %H:%M:%S'))"
   local sub_name
   sub_name="$(az account show "${SUB_OPT[@]+"${SUB_OPT[@]}"}" --query name -o tsv 2>/dev/null || echo '?')"
+  printf " Instance       : %s\n" "$INSTANCE"
   printf " Subscription   : %s\n" "$sub_name"
   printf " Resource group : %s\n" "$RG"
   echo "==============================================================="
@@ -181,8 +216,8 @@ dashboard() {
   local vms
   vms="$(az vm list -g "$RG" "${SUB_OPT[@]+"${SUB_OPT[@]}"}" --query "[].name" -o tsv 2>/dev/null || echo "")"
   if [[ -z "$vms" ]]; then
-    c_warn " No virtual machines found in resource group '${RG}'."; echo
-    echo " (Has the environment been provisioned? Run scripts/provision.sh)"
+    c_warn " Instance '${INSTANCE}': no VM (resource group '${RG}' is empty or absent)."; echo
+    echo " (Provision it with: scripts/provision.sh --name ${INSTANCE})"
     echo "==============================================================="
     return
   fi
@@ -284,6 +319,9 @@ dashboard() {
     fi
   done <<<"$vms"
 
+  # Expose this instance's accrued total so --all can sum across instances.
+  DASH_SUBTOTAL="$total_cost"
+
   echo "==============================================================="
   if [[ "$accruing" == "true" ]]; then
     printf " TOTAL accrued (running VMs, compute only): "; c_ok "\$${total_cost}"; echo
@@ -294,19 +332,85 @@ dashboard() {
   echo "==============================================================="
 }
 
+# --- Inspect every named instance (workspace) ------------------------------
+# Enumerates Terraform workspaces, skips "default", and prints a dashboard for
+# each remaining instance, then a combined total. Handles the empty cases
+# (no terraform, no workspaces, only "default") gracefully and never aborts the
+# loop because one instance has no VM.
+run_all() {
+  local ws_raw all_ws ws grand="0" found="false"
+
+  ws_raw="$(terraform -chdir="$TF_DIR" workspace list 2>/dev/null || echo "")"
+  # Strip the "*" current-workspace marker and surrounding whitespace; drop
+  # blanks and the "default" workspace. One instance name per line.
+  all_ws="$(printf '%s\n' "$ws_raw" \
+    | sed 's/^[*[:space:]]*//; s/[[:space:]]*$//' \
+    | awk 'NF && $0 != "default"')"
+
+  if [[ -z "$all_ws" ]]; then
+    echo "==============================================================="
+    echo " A100 GPU dev VMs   ($(date '+%Y-%m-%d %H:%M:%S'))"
+    echo "==============================================================="
+    c_warn " No named instances found."; echo
+    echo " Create one: scripts/provision.sh --name <name>"
+    echo "==============================================================="
+    return 0
+  fi
+
+  while IFS= read -r ws; do
+    [[ -z "$ws" ]] && continue
+    INSTANCE="$ws"
+    RG_OVERRIDE=""        # always resolve each instance's own RG from its state.
+    dashboard
+    grand="$(awk -v a="$grand" -v b="${DASH_SUBTOTAL:-0}" 'BEGIN{printf "%.2f", a+b}')"
+    found="true"
+  done <<<"$all_ws"
+
+  echo "==============================================================="
+  if [[ "$found" == "true" ]]; then
+    printf " COMBINED TOTAL accrued across all instances (compute only): "
+    c_ok "\$${grand}"; echo
+  fi
+  c_warn " Estimate excludes disk, public IP, and bandwidth. Spot prices vary."; echo
+  echo "==============================================================="
+  return 0
+}
+
+# Render once: either one instance or all of them.
+render() {
+  if [[ "$DO_ALL" == "true" ]]; then
+    run_all
+  else
+    dashboard
+  fi
+}
+
+# Restore the originally-selected workspace on exit so the tool leaves no trace
+# of which workspace it switched to while inspecting instances.
+ORIG_WS=""
+restore_workspace() {
+  [[ -n "$ORIG_WS" ]] || return 0
+  terraform -chdir="$TF_DIR" workspace select "$ORIG_WS" >/dev/null 2>&1 || true
+}
+
 main() {
   check_prereqs
+
+  # Remember the active workspace (if terraform is usable) and restore it later.
+  ORIG_WS="$(terraform -chdir="$TF_DIR" workspace show 2>/dev/null || echo "")"
+  trap restore_workspace EXIT
+
   if [[ -n "$WATCH_INTERVAL" ]]; then
     if ! [[ "$WATCH_INTERVAL" =~ ^[0-9]+$ ]] || [[ "$WATCH_INTERVAL" -lt 1 ]]; then
       log_err "--watch requires a positive integer number of seconds."; exit 2
     fi
     while true; do
       clear
-      dashboard
+      render
       sleep "$WATCH_INTERVAL"
     done
   else
-    dashboard
+    render
   fi
 }
 

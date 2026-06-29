@@ -39,6 +39,7 @@ TF_DIR="$(cd "${SCRIPT_DIR}/../terraform" && pwd)"
 # --- Defaults --------------------------------------------------------------
 MODE="deallocate"
 AUTO_APPROVE="false"
+INSTANCE="devel"   # instance name; selects the Terraform workspace + targets.
 
 usage() {
   cat <<EOF
@@ -51,6 +52,9 @@ Modes (choose one):
   --destroy       Run 'terraform destroy'. DELETES the OS disk and ALL data.
 
 Options:
+  -n, --name <name>    Instance to act on (alias: --instance). Default: devel.
+                       Selects that instance's Terraform workspace, so only that
+                       instance is deallocated / started / destroyed.
   -y, --auto-approve   Skip confirmation prompts.
   -h, --help           Show this help.
 
@@ -67,11 +71,21 @@ while [[ $# -gt 0 ]]; do
     --deallocate) MODE="deallocate"; shift ;;
     --start)      MODE="start"; shift ;;
     --destroy)    MODE="destroy"; shift ;;
+    -n|--name|--instance) INSTANCE="${2:-}"; shift 2 ;;
     -y|--auto-approve) AUTO_APPROVE="true"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) log_err "Unknown argument: $1"; usage; exit 2 ;;
   esac
 done
+
+[[ -z "$INSTANCE" ]] && { log_err "--name requires a non-empty value."; exit 2; }
+
+# Per-instance state: select (or create) the workspace named after the instance
+# before any terraform output/destroy. Requires terraform to be initialized.
+select_workspace() {
+  terraform -chdir="$TF_DIR" workspace select "$INSTANCE" 2>/dev/null \
+    || terraform -chdir="$TF_DIR" workspace new "$INSTANCE" >/dev/null 2>&1
+}
 
 # --- Prerequisite checks ---------------------------------------------------
 check_prereqs() {
@@ -90,11 +104,12 @@ check_prereqs() {
 # --- Resolve RG and VM name from Terraform state ---------------------------
 resolve_targets() {
   cd "$TF_DIR"
+  select_workspace
   RG="$(terraform output -raw resource_group_name 2>/dev/null || echo "")"
   VM="$(terraform output -raw vm_name 2>/dev/null || echo "")"
   if [[ -z "$RG" || -z "$VM" ]]; then
-    log_err "Could not read resource group / VM name from Terraform outputs."
-    log_err "Has the environment been provisioned? Run scripts/provision.sh first."
+    log_err "Could not read resource group / VM name for instance '${INSTANCE}' from Terraform outputs."
+    log_err "Has this instance been provisioned? Run: scripts/provision.sh --name ${INSTANCE}"
     exit 5
   fi
 }
@@ -139,17 +154,18 @@ do_start() {
 do_destroy() {
   check_prereqs "true"
   cd "$TF_DIR"
-  printf "${RED}WARNING: 'terraform destroy' DELETES the OS disk and ALL DATA on the VM.${NC}\n"
+  select_workspace
+  printf "${RED}WARNING: 'terraform destroy' DELETES the OS disk and ALL DATA on instance '${INSTANCE}'.${NC}\n"
   printf "${RED}This is irreversible. The IP, NIC, NSG, VNet and resource group will be removed.${NC}\n"
-  if ! confirm "Proceed with full destroy?"; then
+  if ! confirm "Proceed with full destroy of instance '${INSTANCE}'?"; then
     log_warn "Aborted. Nothing destroyed."; exit 0
   fi
   if [[ "$AUTO_APPROVE" == "true" ]]; then
-    terraform destroy -input=false -auto-approve
+    terraform destroy -input=false -auto-approve -var "instance=${INSTANCE}"
   else
-    terraform destroy -input=false
+    terraform destroy -input=false -var "instance=${INSTANCE}"
   fi
-  log_ok "Destroy complete. All resources removed."
+  log_ok "Destroy complete. All resources for instance '${INSTANCE}' removed."
 }
 
 case "$MODE" in

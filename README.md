@@ -1,9 +1,45 @@
 # Azure A100 GPU Development Environment
 
 Terraform plus helper scripts to provision, connect to, monitor, stop/start, and
-tear down a single NVIDIA A100 GPU virtual machine on Azure for AI development.
-The VM runs as a Spot instance to keep costs low, and uses the NVIDIA NGC
-marketplace image so GPU drivers and the container toolkit are preinstalled.
+tear down NVIDIA A100 GPU virtual machines on Azure for AI development. Each VM
+runs as a Spot instance to keep costs low, and uses the NVIDIA NGC marketplace
+image so GPU drivers and the container toolkit are preinstalled.
+
+## Named instances (run several at once)
+
+You can run multiple independent machines at the same time - including several in
+the **same region** - each identified by a `--name`. Every name gets its own
+resource group, network, VM, and its own Terraform state (a Terraform workspace
+named after the instance), so instances never collide:
+
+```bash
+./scripts/provision.sh --name train -r eastus
+./scripts/provision.sh --name web   -r eastus       # second VM, same region
+./scripts/provision.sh --name eu    -r westeurope
+./scripts/monitor.sh --all                          # all instances + total cost
+./scripts/connect.sh --name train
+./scripts/deallocate.sh --name web
+```
+
+Key points:
+
+- The default name is **`devel`** (`--name` omitted), which reproduces the
+  original resource names exactly, so existing usage is unchanged.
+- For an instance named `<name>`, all resources derive from it:
+  `ai-<name>-a100-rg` (resource group), `vm-ai-a100-<name>` (VM),
+  `vm-ai-a100-<name>-vnet`, `vm-ai-a100-<name>-ip`, `vm-ai-a100-<name>-nsg`,
+  `vm-ai-a100-<name>-nic`; the subnet stays `default`. Each is tagged
+  `instance=<name>`.
+- Each name is a separate Terraform workspace (separate state). The scripts
+  select or create the right workspace for you; you never manage workspaces by
+  hand.
+- The **SSH key is shared** across all instances (one dedicated key, created
+  once - see Prerequisites).
+- Running several **regions** in parallel also helps with the A100 Spot capacity
+  problem: if one region cannot place a Spot VM, another often can.
+
+The instance name must be 2-24 characters: lowercase letters, digits and
+hyphens, starting with a letter (validated by Terraform).
 
 ## Scripts at a glance
 
@@ -11,11 +47,16 @@ marketplace image so GPU drivers and the container toolkit are preinstalled.
 | ------------------- | ------------------------------------------------------------------- |
 | `provision.sh`      | Accept marketplace terms, restrict SSH to your IP, init/plan/apply.  |
 | `connect.sh`        | SSH into the VM (interactive shell, one-off command, or port-forward). |
-| `monitor.sh`        | Read-only status dashboard (power state, SSH reachability, GPU).     |
+| `tunnel.sh`         | SSH local port-forwarding (Jupyter / TensorBoard / Ollama presets).  |
+| `monitor.sh`        | Read-only status dashboard; `--all` shows every instance + total cost. |
 | `deallocate.sh`     | Deallocate the VM to halt GPU billing. Keeps disk, IP, data.         |
 | `start.sh`          | Resume a stopped (deallocated) VM.                                   |
 | `deprovision.sh`    | Lifecycle: `--deallocate` / `--start` / `--destroy` (full teardown). |
 | `setup-devtools.sh` | Idempotent toolchain installer run on the VM (via cloud-init).       |
+
+All instance-aware scripts accept `-n, --name <name>` (alias `--instance`,
+default `devel`) to target a specific instance. `monitor.sh` additionally
+accepts `--all` to inspect every instance at once.
 
 `deallocate.sh` and `start.sh` are convenience wrappers over
 `deprovision.sh --deallocate` and `deprovision.sh --start`. There is deliberately
@@ -24,14 +65,15 @@ so we always deallocate.
 
 ## What gets created
 
-All resources live in resource group `ai-devel-a100-rg` in `westeurope`:
+For the default instance `devel`, all resources live in resource group
+`ai-devel-a100-rg` (for any other `--name`, substitute the name below):
 
 - Resource group `ai-devel-a100-rg`
 - Virtual network `vm-ai-a100-devel-vnet` (`10.0.0.0/16`)
 - Subnet `default` (`10.0.0.0/24`)
 - Public IP `vm-ai-a100-devel-ip` (Static, Standard SKU)
 - Network security group `vm-ai-a100-devel-nsg` (one inbound SSH rule)
-- Network interface `vm-ai-a100-devel678` (accelerated networking enabled)
+- Network interface `vm-ai-a100-devel-nic` (accelerated networking enabled)
 - Linux VM `vm-ai-a100-devel`
   - Size `Standard_NC24ads_A100_v4` (single NVIDIA A100)
   - Spot priority, eviction policy `Deallocate`, max price `-1` (pay up to on-demand)
@@ -41,7 +83,11 @@ All resources live in resource group `ai-devel-a100-rg` in `westeurope`:
   - Boot diagnostics enabled (platform-managed storage)
 
 All resources are tagged `project=ai-a100-devel`, `environment=dev`,
-`managed-by=terraform`.
+`managed-by=terraform`, and `instance=<name>`.
+
+> Note: the NIC is named `vm-ai-a100-<name>-nic`. The original template used an
+> arbitrary suffix (`vm-ai-a100-devel678`); it has been standardized to `-nic`
+> for consistency across instances.
 
 ## Architecture
 
@@ -193,9 +239,14 @@ The scripts are the recommended path, but you can drive Terraform yourself:
 cd terraform
 cp terraform.tfvars.example terraform.tfvars   # edit ssh_source_address_prefix
 terraform init
-terraform plan
-terraform apply
+# Pick the instance's workspace (the scripts do this for you). For the default:
+terraform workspace select devel || terraform workspace new devel
+terraform plan  -var "instance=devel"
+terraform apply -var "instance=devel"
 ```
+
+Use a different `instance` value (and a matching workspace) for each additional
+machine, e.g. `terraform workspace new train` and `-var "instance=train"`.
 
 Remember to accept the marketplace terms first if you skip `provision.sh`:
 
@@ -211,9 +262,8 @@ All defaults mirror the source ARM template. Override via `terraform.tfvars`,
 
 | Variable                       | Default                      | Description                                                  |
 | ------------------------------ | ---------------------------- | ------------------------------------------------------------ |
+| `instance`                     | `devel`                      | Instance name. ALL resource names derive from it; also the Terraform workspace. |
 | `location`                     | `westeurope`                 | Azure region for all resources.                              |
-| `resource_group_name`          | `ai-devel-a100-rg`           | Resource group that holds the environment.                   |
-| `vm_name`                      | `vm-ai-a100-devel`           | VM name (and computer name).                                 |
 | `vm_size`                      | `Standard_NC24ads_A100_v4`   | VM size (single NVIDIA A100, NC A100 v4 family).             |
 | `admin_username`               | `azureuser`                  | SSH login user.                                              |
 | `ssh_public_key_path`          | `~/.ssh/ai-a100-devel.pub`   | Dedicated public key (created once by provision.sh) used for every VM, when `ssh_public_key` empty. |
@@ -227,15 +277,19 @@ All defaults mirror the source ARM template. Override via `terraform.tfvars`,
 | `image_publisher` / `image_offer` / `image_sku` / `image_version` | NVIDIA NGC values | Marketplace image coordinates (and the required `plan`). |
 | `tags`                         | project/environment/managed-by | Tags applied to all resources.                            |
 
-Naming variables (`vnet_name`, `subnet_name`, `public_ip_name`, `nic_name`,
-`nsg_name`) also exist and default to the ARM template names. See
-`terraform/variables.tf` for the complete list and inline validation rules.
+All resource names are **derived** from `instance` in a `locals` block in
+`terraform/main.tf` (resource group, VM, VNet, public IP, NSG, NIC); the subnet
+stays `default`. There are no longer per-name variables - set `instance` (or use
+the scripts' `--name`) and every name follows. See `terraform/variables.tf` and
+`terraform/main.tf` for the complete list and inline validation rules.
 
 ## Remote state (team use)
 
-Default state is local (`terraform/terraform.tfstate`, gitignored). For shared
-use, enable the commented `azurerm` backend block in `terraform/versions.tf`
-and run `terraform init -migrate-state`.
+Default state is local and **per-workspace**: each instance keeps its state in
+`terraform/terraform.tfstate.d/<name>/` (all gitignored). For shared use, enable
+the commented `azurerm` backend block in `terraform/versions.tf` and run
+`terraform init -migrate-state`; the azurerm backend keys workspace state by name
+automatically, so multiple instances stay isolated there too.
 
 ## Repository layout
 
@@ -244,17 +298,21 @@ and run `terraform init -migrate-state`.
 ├── README.md
 ├── .gitignore
 ├── scripts/
-│   ├── provision.sh      # accept terms, restrict SSH, init/plan/apply
-│   ├── connect.sh        # SSH into the VM (shell, command, or port-forward)
-│   ├── deallocate.sh     # deallocate the VM (halt GPU billing, keep data)
-│   ├── start.sh          # resume a deallocated VM
-│   ├── deprovision.sh    # deallocate | start | destroy
-│   └── monitor.sh        # read-only status dashboard
+│   ├── provision.sh      # accept terms, restrict SSH, init/plan/apply (--name)
+│   ├── connect.sh        # SSH into the VM (shell, command, or port-forward; --name)
+│   ├── tunnel.sh         # SSH local port-forwarding presets (--name)
+│   ├── deallocate.sh     # deallocate the VM (halt GPU billing, keep data; --name)
+│   ├── start.sh          # resume a deallocated VM (--name)
+│   ├── stop.sh           # alias for deallocate
+│   ├── deprovision.sh    # deallocate | start | destroy (--name)
+│   ├── monitor.sh        # read-only status dashboard (--name, --all)
+│   ├── setup-devtools.sh # first-boot toolchain installer (runs on the VM)
+│   └── check-quota.sh    # report A100 vCPU quota by region
 └── terraform/
     ├── versions.tf          # provider/version pins, backend guidance
-    ├── variables.tf         # all inputs with template-matching defaults
-    ├── main.tf              # RG, network, NSG, NIC, VM, cloud-init
-    ├── outputs.tf           # IP, SSH string, names
+    ├── variables.tf         # all inputs (instance + the rest) with defaults
+    ├── main.tf              # locals (names from instance), RG, network, NSG, NIC, VM, cloud-init
+    ├── outputs.tf           # instance, IP, SSH string, names
     ├── cloud-init.yaml.tftpl # first-boot toolchain install template
     └── terraform.tfvars.example
 ```

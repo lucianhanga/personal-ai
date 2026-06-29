@@ -6,9 +6,16 @@
 # sensitive (the SSH source CIDR can reveal your network).
 ###############################################################################
 
+# --- Instance --------------------------------------------------------------
+# Names this stack. ALL resource names derive from it (resource group, network,
+# VM, etc.), so two different names give two independent stacks that can run at
+# the same time, even in the same region. The default "devel" reproduces the
+# original fixed names. The helper scripts set this via -n/--name and also put
+# each instance in its own Terraform workspace (separate state).
+# instance = "devel"
+
 # --- Placement -------------------------------------------------------------
-location            = "westeurope"
-resource_group_name = "ai-devel-a100-rg"
+location = "westeurope"
 
 # --- SSH access control ----------------------------------------------------
 # Restrict SSH to your current public IP. The provision script auto-detects

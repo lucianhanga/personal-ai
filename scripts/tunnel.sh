@@ -44,6 +44,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TF_DIR="$(cd "${SCRIPT_DIR}/../terraform" && pwd)"
 
 # --- Defaults --------------------------------------------------------------
+INSTANCE="devel"   # instance to tunnel to; selects its Terraform workspace.
 IDENTITY=""
 # Default to the dedicated project key (created by provision.sh) if present;
 # an explicit -i/--identity overrides it.
@@ -63,6 +64,7 @@ Options:
       --jupyter           Preset: forward 8888 (Jupyter).
       --tensorboard       Preset: forward 6006 (TensorBoard).
       --ollama            Preset: forward 11434 (Ollama API).
+  -n, --name <name>       Instance to tunnel to (alias: --instance). Default: devel.
   -i, --identity <path>   Private key to authenticate with (ssh -i).
   -h, --help              Show this help.
 
@@ -79,11 +81,14 @@ while [[ $# -gt 0 ]]; do
     --jupyter)     add_spec "8888"; shift ;;
     --tensorboard) add_spec "6006"; shift ;;
     --ollama)      add_spec "11434"; shift ;;
+    -n|--name|--instance) INSTANCE="${2:-}"; shift 2 ;;
     -i|--identity) IDENTITY="${2:-}"; shift 2 ;;
     -h|--help)     usage; exit 0 ;;
     *) log_err "Unknown argument: $1"; usage; exit 2 ;;
   esac
 done
+
+[[ -z "$INSTANCE" ]] && { log_err "--name requires a non-empty value."; exit 2; }
 
 if [[ ${#SPECS[@]} -eq 0 ]]; then
   log_err "No ports to forward. Use -L <spec> or a preset (--jupyter, etc.)."
@@ -127,15 +132,17 @@ if ! az account show >/dev/null 2>&1; then
 fi
 
 # --- Resolve targets from Terraform outputs --------------------------------
+# Per-instance state: select (or create) the workspace for this instance first.
 cd "$TF_DIR"
+terraform workspace select "$INSTANCE" 2>/dev/null || terraform workspace new "$INSTANCE" >/dev/null 2>&1
 ADMIN="$(terraform output -raw admin_username 2>/dev/null || echo "azureuser")"
 PUBIP="$(terraform output -raw public_ip_address 2>/dev/null || echo "")"
 RG="$(terraform output -raw resource_group_name 2>/dev/null || echo "")"
 VM="$(terraform output -raw vm_name 2>/dev/null || echo "")"
 
 if [[ -z "$PUBIP" || -z "$RG" || -z "$VM" ]]; then
-  log_err "Could not read Terraform outputs. Has the environment been provisioned?"
-  log_err "Run: scripts/provision.sh"
+  log_err "Could not read Terraform outputs for instance '${INSTANCE}'. Has it been provisioned?"
+  log_err "Run: scripts/provision.sh --name ${INSTANCE}"
   exit 5
 fi
 

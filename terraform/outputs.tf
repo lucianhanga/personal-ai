@@ -1,3 +1,8 @@
+output "instance" {
+  description = "Instance name this stack was provisioned for (all resource names derive from it)."
+  value       = var.instance
+}
+
 output "resource_group_name" {
   description = "Resource group containing the environment."
   value       = azurerm_resource_group.this.name
