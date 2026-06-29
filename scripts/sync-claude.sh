@@ -6,7 +6,10 @@
 # Syncs (both directions):
 #   - ~/.claude/agents/        agent definitions
 #   - ~/.claude/agent-memory/  user-level agent memories
+#   - ~/.claude/commands/      custom slash commands
 #   - ~/.claude/CLAUDE.md      global preferences
+#   - ~/.claude/settings.json  preferences (model, tui, ...)
+#   - MCP servers              user-scoped mcpServers from ~/.claude.json (merged)
 #   - per --project: ~/.claude/projects/<key>/memory/   project memory
 #
 # Project-key gotcha: a project's memory lives under a key derived from its
@@ -127,10 +130,39 @@ sync_path() {
 
 key_of() { printf '%s' "$1" | sed 's#/#-#g'; }   # /a/b -> -a-b
 
+# --- MCP servers (user-scoped, stored in ~/.claude.json, not ~/.claude/) ----
+# Extract the top-level mcpServers object on the source and MERGE it into the
+# destination's ~/.claude.json (other keys/history/auth are left untouched).
+# JSON is moved as base64 to avoid quoting issues.
+MERGE_PY='import json,base64,os,sys;inc=json.loads(base64.b64decode(sys.argv[1]));p=os.path.expanduser("~/.claude.json");d=json.load(open(p)) if os.path.exists(p) else {};d.setdefault("mcpServers",{}).update(inc);json.dump(d,open(p,"w"),indent=2);print("merged",len(inc),"MCP server(s)")'
+READ_PY='import json,base64,os,sys;p=os.path.expanduser("~/.claude.json");d=json.load(open(p)) if os.path.exists(p) else {};sys.stdout.write(base64.b64encode(json.dumps(d.get("mcpServers",{})).encode()).decode())'
+
+sync_mcp() {
+  command -v python3 >/dev/null 2>&1 || { log_warn "python3 not found; skipping MCP sync."; return; }
+  local b64 servers
+  if [[ "$DIRECTION" == "push" ]]; then
+    b64="$(python3 -c "$READ_PY" 2>/dev/null || echo "")"
+  else
+    b64="$($SSH_CMD "$REMOTE" "python3 -c '$READ_PY'" 2>/dev/null || echo "")"
+  fi
+  [[ -z "$b64" ]] && { log_info "MCP servers: none found (nothing to sync)."; return; }
+  servers="$(python3 -c "import base64,sys;sys.stdout.write(base64.b64decode('$b64').decode())" 2>/dev/null || echo "{}")"
+  if [[ -z "$servers" || "$servers" == "{}" ]]; then log_info "MCP servers: none configured (nothing to sync)."; return; fi
+  if [[ -n "$DRY" ]]; then log_info "(dry-run) would sync MCP servers ${DIRECTION}: ${servers}"; return; fi
+  if [[ "$DIRECTION" == "push" ]]; then
+    $SSH_CMD "$REMOTE" "python3 -c '$MERGE_PY' '$b64'" && log_ok "MCP servers pushed." || log_warn "MCP push failed."
+  else
+    python3 -c "$MERGE_PY" "$b64" && log_ok "MCP servers pulled." || log_warn "MCP pull failed."
+  fi
+}
+
 # --- 1) Global config ------------------------------------------------------
 sync_path "${HOME}/.claude/agents/"       "${RHOME}/.claude/agents/"
 sync_path "${HOME}/.claude/agent-memory/" "${RHOME}/.claude/agent-memory/"
+sync_path "${HOME}/.claude/commands/"     "${RHOME}/.claude/commands/"
 sync_path "${HOME}/.claude/CLAUDE.md"     "${RHOME}/.claude/CLAUDE.md"
+sync_path "${HOME}/.claude/settings.json" "${RHOME}/.claude/settings.json"
+sync_mcp
 
 # --- 2) Project memory -----------------------------------------------------
 for spec in ${PROJECTS[@]+"${PROJECTS[@]}"}; do

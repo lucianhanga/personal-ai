@@ -41,7 +41,14 @@ ADMIN="azureuser"
 HOST_OVERRIDE=""
 SUBSCRIPTION=""
 AUTO_APPROVE="false"
+EXCLUDE_DOCS="false"  # --no-docs: sync config/chats/memory but NOT the document corpus + KAG
 PG_MATCH="pgvector"   # substring matched against running container images
+
+# Document-corpus + knowledge-graph tables whose DATA is skipped with --no-docs (schemas are still
+# created, just left empty — re-ingest on the destination). No other table FK-references these, so a
+# partial restore is consistent; embeddings/KAG are re-derived on ingest anyway (and must be if the
+# embed model/dimension differs on the destination).
+EXCLUDE_TABLES=(documents vectors entities entity_documents entity_edges folder_sources folder_files)
 
 usage() {
   cat <<EOF
@@ -55,6 +62,8 @@ Options:
       --pull               Remote -> local.            Replaces LOCAL data.
       --db <name>          Database name (default: personalai).
       --user <name>        Database user (default: personalai).
+      --no-docs            Sync everything EXCEPT the document corpus + knowledge graph
+                           (documents, vectors, entities, folder sources) — re-ingest on the dest.
       --host <user@host>   Connect directly instead of resolving from --name.
   -i, --identity <path>    SSH private key (default: ~/.ssh/ai-a100-devel).
   -s, --subscription <id>  Azure subscription for IP lookup (default: CLI default).
@@ -73,6 +82,7 @@ while [[ $# -gt 0 ]]; do
     --pull) DIRECTION="pull"; shift ;;
     --db)   DBNAME="${2:-}"; shift 2 ;;
     --user) DBUSER="${2:-}"; shift 2 ;;
+    --no-docs|--exclude-docs|--exclude-knowledge) EXCLUDE_DOCS="true"; shift ;;
     --host) HOST_OVERRIDE="${2:-}"; shift 2 ;;
     -i|--identity) KEY="${2:-}"; shift 2 ;;
     -s|--subscription) SUBSCRIPTION="${2:-}"; shift 2 ;;
@@ -120,6 +130,7 @@ RCID="$($SSH_CMD "$REMOTE" "for c in \$(docker ps --format '{{.ID}} {{.Image}}' 
 log_info "Target    : ${REMOTE}"
 log_info "Direction : ${DIRECTION}   DB: ${DBNAME} (user ${DBUSER})"
 log_info "Local PG  : ${LCID:-<not running>}    Remote PG: ${RCID:-<not running>}"
+[[ "$EXCLUDE_DOCS" == "true" ]] && log_warn "Excluding document corpus + knowledge graph data (${EXCLUDE_TABLES[*]}) — re-ingest on the destination."
 
 need_local()  { [[ -n "$LCID" ]] || { log_err "Local Postgres container not running. Start it: (in the project) make db"; exit 5; }; }
 need_remote() { [[ -n "$RCID" ]] || { log_err "Remote Postgres container not running on ${INSTANCE}. Start it on the VM: make db"; exit 5; }; }
@@ -130,7 +141,14 @@ confirm() {
 }
 
 # --- Do the dump | restore -------------------------------------------------
-DUMP="pg_dump -U ${DBUSER} -Fc -d ${DBNAME}"
+# --no-docs: keep the table schemas but skip their DATA, so the destination gets every config/chat/
+# memory row and EMPTY document/knowledge tables (re-ingest there). pg_restore --clean still drops &
+# recreates those tables, so any stale docs/KAG already on the destination are cleared.
+EXCLUDES=""
+if [[ "$EXCLUDE_DOCS" == "true" ]]; then
+  for t in "${EXCLUDE_TABLES[@]}"; do EXCLUDES+=" --exclude-table-data=${t}"; done
+fi
+DUMP="pg_dump -U ${DBUSER} -Fc -d ${DBNAME}${EXCLUDES}"
 RESTORE="pg_restore -U ${DBUSER} -d ${DBNAME} --clean --if-exists --no-owner"
 
 if [[ "$DIRECTION" == "push" ]]; then
