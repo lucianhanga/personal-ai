@@ -12,12 +12,14 @@ marketplace image so GPU drivers and the container toolkit are preinstalled.
 | `provision.sh`      | Accept marketplace terms, restrict SSH to your IP, init/plan/apply.  |
 | `connect.sh`        | SSH into the VM (interactive shell, one-off command, or port-forward). |
 | `monitor.sh`        | Read-only status dashboard (power state, SSH reachability, GPU).     |
-| `stop.sh`           | Stop the VM (deallocate) to halt GPU billing. Keeps disk, IP, data.  |
+| `deallocate.sh`     | Deallocate the VM to halt GPU billing. Keeps disk, IP, data.         |
 | `start.sh`          | Resume a stopped (deallocated) VM.                                   |
 | `deprovision.sh`    | Lifecycle: `--deallocate` / `--start` / `--destroy` (full teardown). |
 
-`stop.sh` and `start.sh` are convenience wrappers over
-`deprovision.sh --deallocate` and `deprovision.sh --start`.
+`deallocate.sh` and `start.sh` are convenience wrappers over
+`deprovision.sh --deallocate` and `deprovision.sh --start`. There is deliberately
+no plain "stop": a merely stopped VM stays allocated and keeps billing compute,
+so we always deallocate.
 
 ## What gets created
 
@@ -66,9 +68,11 @@ All resources are tagged `project=ai-a100-devel`, `environment=dev`,
   if `terraform apply` fails with a quota error.
 - Azure CLI (`az`) installed and logged in: `az login`
 - Terraform `>= 1.6.0`
-- An SSH key pair. Default public key path is `~/.ssh/id_rsa.pub`. Create one
-  with `ssh-keygen -t ed25519` if needed (update `ssh_public_key_path` if you
-  use a non-default path).
+- An SSH key pair. This project uses a **dedicated key created once** at
+  `~/.ssh/ai-a100-devel` and reused for every VM it provisions. `provision.sh`
+  generates it automatically on first run if it does not exist, and `connect.sh`
+  / `tunnel.sh` default to it (override with `-i <path>`). To use your own key
+  instead, set `ssh_public_key_path` (or `ssh_public_key`).
 - `curl` (provision script uses it to detect your public IP), and `nc` or bash
   `/dev/tcp` for the SSH reachability check in the monitor script.
 
@@ -88,8 +92,8 @@ From the repository root:
 ./scripts/monitor.sh --gpu          # also runs nvidia-smi over SSH
 ./scripts/monitor.sh --watch 15     # refresh every 15 seconds
 
-# 4a. Stop GPU billing when idle (keeps disk and IP, resume quickly)
-./scripts/stop.sh
+# 4a. Halt GPU billing when idle (deallocate; keeps disk and IP, resume quickly)
+./scripts/deallocate.sh
 ./scripts/start.sh                  # resume later
 
 # 4b. Tear everything down (DELETES the disk and all data)
@@ -129,16 +133,16 @@ local disk.
 | `--deallocate` (default)| stopped            | still billed   | still billed     | yes       | fast   |
 | `--destroy`             | stopped            | removed        | removed          | no        | full reprovision |
 
-- Use `stop.sh` (deallocate) between work sessions: you stop paying for the
+- Use `deallocate.sh` between work sessions: you stop paying for the
   expensive A100 compute but keep a small bill for the Premium OS disk and the
   Standard static public IP, and you can resume in minutes with `start.sh`.
 - Use `deprovision.sh --destroy` when you are done with the environment entirely:
   it removes all resources and all charges, but the disk and its data are gone.
 - A `stopped` (but still allocated) VM can still incur compute charges. Always
-  prefer `deallocated`, which is exactly what `stop.sh` does. The monitor script
+  prefer `deallocated`, which is exactly what `deallocate.sh` does. The monitor script
   flags the difference.
 
-> Note: `stop.sh`/`start.sh` and `deprovision.sh --deallocate`/`--start` are the
+> Note: `deallocate.sh`/`start.sh` and `deprovision.sh --deallocate`/`--start` are the
 > same operation. Use whichever name you find clearer.
 
 ## SSH source-IP security note
@@ -187,7 +191,7 @@ All defaults mirror the source ARM template. Override via `terraform.tfvars`,
 | `vm_name`                      | `vm-ai-a100-devel`           | VM name (and computer name).                                 |
 | `vm_size`                      | `Standard_NC24ads_A100_v4`   | VM size (single NVIDIA A100, NC A100 v4 family).             |
 | `admin_username`               | `azureuser`                  | SSH login user.                                              |
-| `ssh_public_key_path`          | `~/.ssh/id_rsa.pub`          | Public key file used for VM auth (when `ssh_public_key` empty). |
+| `ssh_public_key_path`          | `~/.ssh/ai-a100-devel.pub`   | Dedicated public key (created once by provision.sh) used for every VM, when `ssh_public_key` empty. |
 | `ssh_public_key`               | `""`                         | Inline public key; takes precedence over the path.          |
 | `ssh_source_address_prefix`    | `127.0.0.1/32`               | Source CIDR allowed on port 22. `provision.sh` sets this to your IP. `*` is rejected. |
 | `os_disk_storage_account_type` | `Premium_LRS`                | OS disk type.                                                |
@@ -217,7 +221,7 @@ and run `terraform init -migrate-state`.
 ├── scripts/
 │   ├── provision.sh      # accept terms, restrict SSH, init/plan/apply
 │   ├── connect.sh        # SSH into the VM (shell, command, or port-forward)
-│   ├── stop.sh           # deallocate the VM (halt GPU billing, keep data)
+│   ├── deallocate.sh     # deallocate the VM (halt GPU billing, keep data)
 │   ├── start.sh          # resume a deallocated VM
 │   ├── deprovision.sh    # deallocate | start | destroy
 │   └── monitor.sh        # read-only status dashboard

@@ -45,6 +45,9 @@ TF_DIR="$(cd "${SCRIPT_DIR}/../terraform" && pwd)"
 
 # --- Defaults --------------------------------------------------------------
 IDENTITY=""
+# Default to the dedicated project key (created by provision.sh) if present;
+# an explicit -i/--identity overrides it.
+DEFAULT_KEY="${HOME}/.ssh/ai-a100-devel"
 SPECS=()   # raw port specs to translate into -L arguments
 
 usage() {
@@ -147,6 +150,7 @@ if [[ "$POWER" != "running" ]]; then
 fi
 
 # --- Build and run the tunnel ----------------------------------------------
+[[ -z "$IDENTITY" && -f "$DEFAULT_KEY" ]] && IDENTITY="$DEFAULT_KEY"
 SSH_CMD=(ssh -N -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new
          -o ServerAliveInterval=30 -o ExitOnForwardFailure=yes)
 [[ -n "$IDENTITY" ]] && SSH_CMD+=(-i "$IDENTITY")

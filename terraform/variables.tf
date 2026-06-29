@@ -128,9 +128,9 @@ variable "admin_username" {
 }
 
 variable "ssh_public_key_path" {
-  description = "Path to the SSH public key used for VM auth. Used when ssh_public_key is empty."
+  description = "Path to the SSH public key used for VM auth. Used when ssh_public_key is empty. Defaults to a dedicated key created once by provision.sh and reused for every VM."
   type        = string
-  default     = "~/.ssh/id_rsa.pub"
+  default     = "~/.ssh/ai-a100-devel.pub"
 }
 
 variable "ssh_public_key" {

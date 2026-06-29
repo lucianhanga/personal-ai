@@ -37,6 +37,15 @@ resource "azurerm_subnet" "default" {
   resource_group_name  = azurerm_resource_group.this.name
   virtual_network_name = azurerm_virtual_network.this.name
   address_prefixes     = var.subnet_address_prefixes
+
+  # The subnet references the vnet by NAME, so a region change (which force-
+  # replaces the vnet) would otherwise leave the subnet untouched in the plan -
+  # but replacing the vnet physically destroys the subnet, so the NIC then fails
+  # with "subnet not found". Tie the subnet's lifecycle to the vnet: whenever the
+  # vnet is replaced, recreate the subnet too (after the new vnet exists).
+  lifecycle {
+    replace_triggered_by = [azurerm_virtual_network.this.id]
+  }
 }
 
 resource "azurerm_public_ip" "this" {

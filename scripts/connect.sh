@@ -34,6 +34,9 @@ TF_DIR="$(cd "${SCRIPT_DIR}/../terraform" && pwd)"
 
 # --- Defaults --------------------------------------------------------------
 IDENTITY=""
+# Default to the dedicated project key (created by provision.sh) if present.
+# An explicit -i/--identity overrides this.
+DEFAULT_KEY="${HOME}/.ssh/ai-a100-devel"
 SSH_EXTRA_ARGS=()
 REMOTE_CMD=()
 
@@ -108,6 +111,7 @@ case "$POWER" in
 esac
 
 # --- Build and run SSH command ---------------------------------------------
+[[ -z "$IDENTITY" && -f "$DEFAULT_KEY" ]] && IDENTITY="$DEFAULT_KEY"
 SSH_CMD=(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
 [[ -n "$IDENTITY" ]] && SSH_CMD+=(-i "$IDENTITY")
 [[ ${#SSH_EXTRA_ARGS[@]} -gt 0 ]] && SSH_CMD+=("${SSH_EXTRA_ARGS[@]}")

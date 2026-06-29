@@ -39,6 +39,7 @@ SIZE="Standard_NC24ads_A100_v4"
 REQUIRED=24            # vCPUs needed by the size above.
 GEO="all"              # us | europe | india | all
 CUSTOM_REGIONS=""
+SUBSCRIPTION=""        # Optional explicit subscription id or name. Empty = CLI default.
 
 # Region lists limited to where NC24ads_A100_v4 is actually offered to this
 # subscription. Regions that returned 'absent'/'error' in the survey were
@@ -59,7 +60,13 @@ Options:
       --regions <list>   Comma-separated regions to check instead of a geo set.
       --size <name>      VM size to check (default: ${SIZE}).
       --required <n>     vCPUs required (default: ${REQUIRED}, the size's vCPU count).
+  -s, --subscription <id-or-name>
+                         Run the whole survey against this subscription instead
+                         of the az CLI default. Applied to every az call.
   -h, --help             Show this help.
+
+Example:
+  $(basename "$0") --subscription 2b86de39-5593-4d95-8e43-529f13606065 --regions northeurope
 
 Columns:
   SKU           available / restricted / absent for your subscription.
@@ -77,17 +84,29 @@ while [[ $# -gt 0 ]]; do
     --regions)  CUSTOM_REGIONS="${2:-}"; shift 2 ;;
     --size)     SIZE="${2:-}"; shift 2 ;;
     --required) REQUIRED="${2:-}"; shift 2 ;;
+    -s|--subscription) SUBSCRIPTION="${2:-}"; shift 2 ;;
     -h|--help)  usage; exit 0 ;;
     *) log_err "Unknown argument: $1"; usage; exit 2 ;;
   esac
 done
 
+# --- Subscription scoping --------------------------------------------------
+# SUB_OPT holds the optional "--subscription <id>" arguments appended to every
+# az call. Empty when no --subscription was given (CLI default is used). The
+# guarded expansion "${SUB_OPT[@]+...}" keeps this safe under bash 3.2's
+# "set -u" (macOS default), where expanding an empty array would otherwise
+# fail with an unbound-variable error.
+SUB_OPT=()
+if [[ -n "$SUBSCRIPTION" ]]; then
+  SUB_OPT=(--subscription "$SUBSCRIPTION")
+fi
+
 # --- Prerequisites ---------------------------------------------------------
 if ! command -v az >/dev/null 2>&1; then
   log_err "Required tool not found: az"; exit 3
 fi
-if ! az account show >/dev/null 2>&1; then
-  log_err "Not logged in to Azure. Run: az login"; exit 4
+if ! az account show "${SUB_OPT[@]+"${SUB_OPT[@]}"}" >/dev/null 2>&1; then
+  log_err "Not logged in to Azure (or the requested subscription is not accessible). Run: az login"; exit 4
 fi
 
 # --- Build region list -----------------------------------------------------
@@ -104,8 +123,9 @@ else
   esac
 fi
 
-SUB="$(az account show --query name -o tsv)"
-log_info "Subscription : ${SUB}"
+SUB_NAME="$(az account show "${SUB_OPT[@]+"${SUB_OPT[@]}"}" --query name -o tsv)"
+SUB_ID="$(az account show "${SUB_OPT[@]+"${SUB_OPT[@]}"}" --query id -o tsv)"
+log_info "Subscription : ${SUB_NAME} (${SUB_ID})"
 log_info "Size         : ${SIZE} (requires ${REQUIRED} vCPUs)"
 log_info "Regions      : ${#REGIONS[@]} (${GEO}${CUSTOM_REGIONS:+ custom})"
 log_info ""
@@ -135,7 +155,7 @@ check_region() {
 
   # One call returns the three quota rows we care about.
   local usage
-  if ! usage="$(az vm list-usage -l "$region" \
+  if ! usage="$(az vm list-usage -l "$region" "${SUB_OPT[@]+"${SUB_OPT[@]}"}" \
         --query "[?name.value=='lowPriorityCores' || name.value=='cores' || contains(name.value,'NCADSA100v4')].[name.value, currentValue, limit]" \
         -o tsv 2>/dev/null)"; then
     printf "%-18s " "$region"; cell "error" 12 "$RED"; printf "  (region unavailable / no access)\n"
@@ -159,7 +179,7 @@ check_region() {
 
   # SKU availability (use --all to include restricted SKUs).
   local skuline sku_name sku_reason sku_status sku_color
-  skuline="$(az vm list-skus -l "$region" --size "$SIZE" --all \
+  skuline="$(az vm list-skus -l "$region" --size "$SIZE" --all "${SUB_OPT[@]+"${SUB_OPT[@]}"}" \
     --query "[?name=='$SIZE'].[name, restrictions[0].reasonCode] | [0]" \
     -o tsv 2>/dev/null || true)"
   IFS=$'\t' read -r sku_name sku_reason <<<"${skuline:-}"
