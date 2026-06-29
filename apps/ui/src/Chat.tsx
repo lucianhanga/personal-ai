@@ -1643,6 +1643,7 @@ export function Chat({
           flexWrap: "wrap",
           borderBottom: "1px solid #ddd",
           paddingBottom: "0.5rem",
+          flexShrink: 0,
         }}
       >
         <h1 style={{ margin: 0, fontSize: "1.3rem" }}>Personal AI</h1>
@@ -1739,6 +1740,13 @@ export function Chat({
         )}
       </header>
 
+      {/* Body: the one scroll region (3-section shell = title / body / status). The chat workspace
+          fills it (flex:1, internal transcript scroll); long Settings content scrolls HERE, so the
+          status bar below stays pinned and never rides over the content. */}
+      <div
+        data-testid="app-body"
+        style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column" }}
+      >
       {tab === "settings" ? (
         <SettingsView
           token={token}
@@ -2283,8 +2291,20 @@ export function Chat({
           />
         </div>
       )}
+      </div>
 
-      <p data-testid="security-note" style={{ color: "#555", fontSize: "0.8rem" }}>
+      {/* Status bar (pinned bottom section): never scrolls, sits below the body. */}
+      <p
+        data-testid="security-note"
+        style={{
+          margin: 0,
+          flexShrink: 0,
+          color: "#555",
+          fontSize: "0.8rem",
+          borderTop: "1px solid #eee",
+          paddingTop: "0.5rem",
+        }}
+      >
         Local-first: network egress is disabled by default; remote providers are opt-in.
       </p>
     </div>
