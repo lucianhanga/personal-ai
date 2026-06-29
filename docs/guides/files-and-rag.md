@@ -47,6 +47,14 @@ With **Use my documents** on (or `"use_rag": true` via the API), the retrieval q
 top-k chunks are retrieved from pgvector, and they are passed to the model as **reference context**
 with `[n]` citations. The UI shows a **Sources** line under the answer.
 
+Retrieval is **hybrid**: dense (vector) and lexical matches are fused with **Reciprocal Rank Fusion**
+before ranking, so an exact term and a semantic match both surface. In the **multi-agent graph** the
+planner can also fan out over **multiple retrieval sources** (the durable corpus, a large attachment
+indexed into this conversation, the KAG entity graph for "how many X" enumeration, memory) and the
+results are fused **cross-source** (RRF + a per-source token budget) into one evidence set; the
+citations are then tagged with their `source_kind`. You can inspect what was retrieved in the
+**Retrieval Explorer** under Settings → Knowledge.
+
 For a **follow-up** message, retrieval is anchored on the **contextualized standalone query** (the
 last message rewritten into a self-contained request using recent history) rather than the raw
 elliptical message, so *"and the second one?"* still retrieves the right chunks. The original

@@ -18,12 +18,33 @@ from personalai_contracts.ports import (
     Citation,
     Evidence,
     Role,
+    ToolResult,
 )
+from personalai_contracts.schemas.tools import Provenance, RiskLevel, ToolManifest
 from personalai_contracts.testing import FakeModelProvider
 from personalai_core import AgentEvent, InProcessExecutor, Registry, ToolGateway, run_graph
 from personalai_core.gateway import RegisteredTool
 from personalai_core.security.audit import AuditLog
 from personalai_core.sources import GraphSource
+
+
+class _VerifyTool:
+    name = "lookup"
+
+    async def invoke(self, call: object) -> ToolResult:
+        return ToolResult(ok=True, output={"ok": True})
+
+
+_LOOKUP_TOOL = RegisteredTool(
+    ToolManifest(
+        name="lookup",
+        version="1.0.0",
+        provenance=Provenance(maintainer="tests"),
+        description="lookup",
+        risk=RiskLevel.LOW,
+    ),
+    _VerifyTool(),
+)
 
 
 def _gateway() -> ToolGateway:
@@ -210,6 +231,10 @@ class _CapturingVerifier(FakeModelProvider):
 
         sys_text = " ".join(m.content for m in request.messages if m.role == Role.SYSTEM)
         last = request.messages[-1].content if request.messages else ""
+        if "fact-checking a draft answer" in sys_text:  # the bounded verify-only tool pass
+            return GenerationResult(
+                text="Verified: the figure matches the source.", model=request.model
+            )
         if "You are the verifier" in sys_text or "Draft answer to verify" in last:
             self.verifier_system = sys_text
             return GenerationResult(text='{"verdict": "pass", "reason": "r"}', model=request.model)
@@ -231,6 +256,10 @@ class _CapturingCritic(FakeModelProvider):
 
         sys_text = " ".join(m.content for m in request.messages if m.role == Role.SYSTEM)
         last = request.messages[-1].content if request.messages else ""
+        if "fact-checking a draft answer" in sys_text:  # the bounded verify-only tool pass
+            return GenerationResult(
+                text="Verified: the figure matches the source.", model=request.model
+            )
         if "Draft answer to review" in last:
             self.critic_system = sys_text
             return GenerationResult(text="OK: looks sound", model=request.model)
@@ -272,6 +301,39 @@ def test_critic_runs_independent_lookup_when_it_is_the_last_judge() -> None:
     )
     assert "Independent verification lookup" in provider.critic_system
     assert "doc fact" in provider.critic_system  # the fresh evidence reached the critic
+
+
+def test_judge_runs_a_bounded_tool_verify_when_armed_with_tools() -> None:
+    # Tool-armed judge (#465): the critic/verifier are otherwise tool-free, so they couldn't check
+    # web/tool-derived claims. When tools are available + verifier_tools is on, the last judge runs
+    # a bounded verify-ONLY tool pass and folds its finding into the judging context. Standard mode,
+    # NO retrieval sources -> the ONLY independent check is the tool pass.
+    provider = _CapturingCritic()
+    _drain(
+        messages=[ChatMessage(Role.USER, "how much did I spend at Amazon?")],
+        provider=provider,
+        model="m",
+        gateway=_gateway(),
+        tools=[_LOOKUP_TOOL],
+        verifier_tools=True,
+    )
+    assert "Independent tool verification" in provider.critic_system
+    assert "Verified: the figure matches" in provider.critic_system
+
+
+def test_judge_tool_verify_off_when_no_tools() -> None:
+    # With verifier_tools on but NO tools available, there is nothing to fact-check with -> no tool
+    # verification block (and, with no sources either, no independent check at all).
+    provider = _CapturingCritic()
+    _drain(
+        messages=[ChatMessage(Role.USER, "how much did I spend at Amazon?")],
+        provider=provider,
+        model="m",
+        gateway=_gateway(),
+        tools=[],
+        verifier_tools=True,
+    )
+    assert "Independent tool verification" not in provider.critic_system
 
 
 def test_critic_skips_lookup_in_accurate_mode_verifier_does_it() -> None:

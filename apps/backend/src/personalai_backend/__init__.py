@@ -5,7 +5,7 @@ M0-4 added the composition root (:func:`bootstrap`); M0-5 adds the loopback Fast
 (:func:`create_app`).
 """
 
-__version__ = "0.8.3"
+__version__ = "0.9.0"
 
 # Imported after __version__ is defined (app.py reads it) to avoid a circular import.
 from personalai_backend.app import create_app

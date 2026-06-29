@@ -11,6 +11,131 @@ generated OpenAPI document.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-06-29
+
+Milestone **M11 (knowledge graph / KAG)** — the entity knowledge graph over your corpus — brought
+forward ahead of M10, together with **Documents v2** (on-device OCR + continuously-synced local
+folders), **multi-source RAG** (a planner-chosen set of retrieval sources fused into one evidence
+set), and a **multi-agent redesign** (a tool-armed judge fact-check + evaluator-optimizer
+re-planning). The MV3 browser extension (M10) remains next.
+
+> Scope note: this is the **first** delivery of M11. It ships a relational entity store
+> (`entities` / `entity_documents` / `entity_edges`) populated by local LLM-NER over the document
+> corpus — not the originally-sketched Apache AGE graph, and not yet a graph upgrade of long-term
+> memory. See [ADR-0014](docs/architecture/adr/0014-kag-entity-store.md).
+
+### Added
+- **Knowledge graph (KAG) over your corpus (#451)**: a new entity store (`entities`,
+  `entity_documents`, `entity_edges`) populated by **local LLM named-entity extraction** wired into
+  global document ingest. Extraction is corpus-global (an entity can span many documents/folders),
+  windowed over the whole document, and never reaches the network. Documents attached to a single
+  chat are not added to the graph. See [ADR-0014](docs/architecture/adr/0014-kag-entity-store.md) and
+  [Documents & folders](docs/guides/documents-and-folders.md#5-the-knowledge-graph-entities).
+- **Dedicated NER model + memory-aware admission (#469, #470)**: entity extraction runs on its own
+  small, fast local model (`ner_model`, `PERSONALAI_NER_MODEL`) at a small context window; before
+  loading it the app checks the **global** Ollama load against `ner_memory_fraction` and **defers**
+  rather than evict a resident model. The window is **model-aware** (large for dense models, small
+  for the MoE). A deterministic junk filter drops IBANs/BICs/codes the local model mislabels (#464),
+  and post-NER **entity resolution** merges near-duplicate names conservatively (#477).
+- **Multi-source retrieval (#420, #442)**: a `RetrievalSource` seam — the planner emits a
+  `SourcePlan`, two LangGraph nodes (`gather`, `merge`) fan out over the chosen sources in bounded
+  parallel and fuse the results with **cross-source RRF** + a per-source token budget, and the
+  answer carries **unified citations** tagged with `source_kind` / `merged_from`. With no sources the
+  graph topology is unchanged.
+- **Hybrid (dense + lexical) scoped retrieval (#435)**: vector RAG retrieval now fuses dense and
+  lexical matches with Reciprocal Rank Fusion (via `langchain-core`) before the cross-source merge.
+- **Conversation-scoped RAG for large attachments (#438) + eager ingest-at-attach (#420)**: a large
+  document is indexed into the conversation's own RAG scope and retrieved (with citations) instead of
+  being dumped into the prompt; the indexing now happens **when the file is attached**, not on send,
+  so the first large-doc turn is not slow. Small documents still fold inline behind a token gate
+  (#422).
+- **KAG aggregation source — answer "how many X" (#475)**: an enumeration source over the entity
+  graph that counts/enumerates entities of a type, with name resolution so a query phrase resolves to
+  stored entities (#476).
+- **Settings → Knowledge — graph + corpus explorer (#471, #473, #474, #483, #485, #487)**: a new
+  **Knowledge** settings section (between Memory and Network) with a **KAG graph** tab and a **RAG
+  corpus** tab — an entity browser (grouped by type, name search), a **co-occurrence** toggle, a
+  **chunk inspector**, deep-links, a **Retrieval Explorer**, a full-corpus view, on-canvas labels,
+  Fit/Reset, a legend, a Top-entities launcher, and corpus columns (Type / Size / Entities, with
+  sort / search / status filter and stat cards). Exact entity counts come from a new
+  `GET /api/v1/entities/stats` plus a per-document `entity_count` (#485).
+- **On-device OCR for scanned PDFs (#450)**: a scanned / image-only PDF (no text layer) is rendered
+  and read with **RapidOCR** (PaddleOCR models via ONNX Runtime) so it becomes searchable like any
+  other document — fully offline. A PDF with no recoverable text reports "no text found" rather than
+  failing.
+- **Continuously-synced folder sources (#456, #458)**: point Settings → Documents at a local folder
+  (by absolute path, validated server-side) and the backend keeps it indexed as files are added /
+  changed / deleted — a native filesystem watcher (`watchdog`), a periodic safety-net scan, and a
+  startup reconcile, with the database as the source of truth. New schema (`folder_sources`,
+  `folder_files`, `documents.manual_pin`), `GET`/`POST /api/v1/folders` (+ detail / delete / resync /
+  pause / resume) and a live `events` SSE, plus a folder UI (status cards, a nested directory tree,
+  file drill-down). The sync is **fail-closed to local providers** — it never sends a document off
+  device. See [Documents & folders](docs/guides/documents-and-folders.md).
+- **Tool-armed judge fact-check (#479, #482)**: in the multi-agent graph the final answer is
+  fact-checked against **fresh, independently-gathered** ground truth — the verifier (accurate mode)
+  and the critic (when it is the last judge, in standard mode) run a bounded independent RAG/KAG/memory
+  **retrieval lookup** PLUS a **verify-only tool pass** (a tiny run with the researcher's web/MCP
+  tools, prompted to confirm/refute the draft's claims — not re-research), so even tool/web-derived
+  answers get checked, not only source-grounded ones. Both halves are fail-open; exactly one judge
+  runs them per turn.
+- **Evaluator-optimizer re-planning (#484)**: the critic can return a `replan` verdict that routes
+  back to the **planner** (the plan itself was the fault → re-plan + re-retrieve), distinct from
+  `revise` (sound plan, poor execution → back to the researcher). Both share the bounded
+  `MAX_ATTEMPTS` budget so the loop stays bounded.
+- **Source-agnostic agents + a configurable verifier (#481)**: the default agent prompts are now
+  generic (not tied to a specific source), and the **verifier** is promoted to a first-class,
+  tenant-overridable agent with its own distinct trace color — joining planner / researcher / critic
+  in **Settings → Agents**.
+- **Live agent collaboration graph (#482)**: Settings → Agents shows a diagram of how the configured
+  agents collaborate, redrawn for the selected agentic design (single / multi / accurate).
+- **Document-pipeline visibility in the Activity timeline (#439, #450, #462)**: the
+  indexing / retrieval / NER pipeline (OCR → extract → vectorize → index) is surfaced as Activity
+  events, the planner now **streams**, and universal **stage heartbeats** plus live retrieval
+  progress mean a long turn never reads as frozen (#465).
+- **Stop button + message management (#412, #441)**: stop an in-flight answer, and **copy / edit /
+  delete** chat messages.
+- **Multimodal attachments (#421, #422, #430, #408, #405)**: attach **images** (downscaled, eagerly
+  described, hover/copy), **documents** (inline-fold or RAG by size), and **audio** (drag-drop chips
+  with a hover transcript panel; upload → transcript → **one-tap summarize**); sent-message
+  attachments render as prompt + hover chips rather than folded text.
+- **Configurable web_search providers (#407)**: choose **DuckDuckGo**, **SearXNG**, or **Tavily** for
+  the built-in `web_search` tool.
+- **Runaway-generation guard (#415)**: sampling penalties, an output cap, and a repetition watchdog
+  stop a local model from looping forever.
+- **One-command bootstrap — `make dev` (#413)**: a single command checks tooling, installs deps,
+  starts the database, and runs the backend + UI together.
+- **NER extraction playground (#464, #468)**: a dev-only `tools/test` harness to compare Ollama vs
+  OpenAI named-entity extraction (live per-window progress, token usage, configurable model/context).
+
+### Changed
+- **Multi-agent graph topology**: the graph is now
+  `planner → [gather → merge →] researcher → [egress_gate →] critic → [verifier →] [human_gate] →
+  finalize`, with the critic routing `replan → planner` / `revise → researcher`. The critic and
+  verifier judge against the **fused multi-source evidence**, preserved in a distinct state key so a
+  researcher answer that doesn't re-call tools can't clobber it (#480).
+- **3-section app shell (#486)**: the title and the status bar are **pinned**; only the conversation
+  body scrolls.
+- **Honest scanned-PDF empty state (#446)**: an attached PDF with no embedded text explains the
+  situation (and that OCR runs on the durable-ingest path) instead of silently producing nothing.
+- **413 handling**: oversize uploads now return `HTTP_413_CONTENT_TOO_LARGE` (Starlette deprecation).
+
+### Fixed
+- **The "unknown tool" denial is now actionable (#488)**: a call to an unregistered tool returns a
+  gateway denial that **suggests the closest registered name** instead of a bare rejection.
+- **Merged multi-source evidence is no longer clobbered before the critic/verifier judged (#480)**.
+- **The planner no longer refuses private-data questions (#478)**: it is taught that the researcher
+  has RAG / KAG / memory, so it stops declining "what do my documents say…" questions.
+- **The KAG count source resolves entity phrases (#476)**: a query like "M-Net invoices" that matched
+  nothing now resolves to the stored entities.
+- **Structured-output repair hardening (#443, #444)**: a non-dict `invalid_payload` no longer crashes
+  the repair path; MoE structured output omits `think` so the `format` constraint is honored.
+- **An earlier question's image no longer leaks onto a later turn (#400)**.
+- **The KAG is never wiped on a failed extraction (#466)**: a failed NER run leaves the existing graph
+  intact (the document stays searchable; it is just not added to the graph), with a configurable
+  Ollama timeout.
+- **Embed query length is bounded (#432)** so a folded document can't overflow the embedding input.
+- **Folder-synced files no longer appear under Individual uploads (#451)**.
+
 ## [0.8.3] — 2026-06-24
 
 Milestones **M8.1 → M8.3** (multi-agent quality, per-tenant configuration, the durable
@@ -302,7 +427,8 @@ Milestones **M0–M6** complete.
 - The HTTP API is now served under **`/api/v1`** (the `/health` and `/version` infrastructure
   endpoints stay unversioned); OpenAPI `info.version` reflects the project version.
 
-[Unreleased]: https://github.com/lucianhanga/personal-ai/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/lucianhanga/personal-ai/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/lucianhanga/personal-ai/compare/v0.8.3...v0.9.0
 [0.8.3]: https://github.com/lucianhanga/personal-ai/compare/v0.7.0...v0.8.3
 [0.7.0]: https://github.com/lucianhanga/personal-ai/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/lucianhanga/personal-ai/releases/tag/v0.6.0

@@ -72,21 +72,36 @@ as a LangGraph graph instead of the single loop. The graph is defined in
 `core/src/personalai_core/graph.py`:
 
 ```
-START → planner → researcher → [egress_gate? → researcher] → critic → [revise? → researcher]
-        → [human_gate] → finalize → END
+START → planner → [gather → merge →] researcher → [egress_gate → researcher]
+        → critic → (replan → planner) | (revise → researcher) | [verifier →] [human_gate]
+        → finalize → END
 ```
 
 - **planner** — one tool-free model call producing a short 1–3 bullet plan; emits a `plan` step.
-  It's told a tool-capable researcher will execute the plan, so it never claims a lack of tools.
-- **researcher** — the single-agent loop (`run_agent`), informed by the plan; streams reasoning,
-  answer, and tool steps exactly as the M6 loop does. **It is the only agent that uses tools.**
-- **critic** — one model call reviewing the answer against the request; it begins with `OK` or
-  `REVISE` and adds a short explanation, then emits a `critique` step. The critique streams to the
-  **reasoning pane only and never modifies the answer** — the agents' result stands; their review
-  is shown, not applied.
-- **bounded reflection loop** — on a `REVISE` verdict the researcher **retries once** (the critique
-  is fed back so it takes a different path); `MAX_ATTEMPTS = 2` (initial attempt + one retry), after
-  which the turn proceeds regardless of the verdict.
+  It's told a tool-capable researcher (with RAG / KAG / memory) will execute the plan, so it never
+  claims a lack of tools or refuses a private-data question. When **multiple retrieval sources** are
+  available it also emits a `SourcePlan` (which sources to query).
+- **gather → merge** (only when retrieval sources exist) — **multi-source retrieval** (#420): the
+  `gather` node fans out over the planner's chosen `RetrievalSource`s in **bounded parallel**, and
+  `merge` fuses the results with **cross-source RRF** + a per-source token budget into one evidence
+  set, streaming **unified citations** tagged with `source_kind` / `merged_from`. The fused evidence
+  is kept in a distinct state key so a later researcher answer can't clobber it — the critic and
+  verifier judge against it. With no sources these nodes aren't added and the topology is unchanged.
+- **researcher** — the single-agent loop (`run_agent`), informed by the plan and grounded on the
+  merged evidence; streams reasoning, answer, and tool steps exactly as the M6 loop does. **It is the
+  only agent that uses tools** in the loop sense.
+- **critic** — one model call reviewing the answer **against the retrieved sources as ground truth**;
+  it begins with `OK`, `REVISE`, or `REPLAN` and adds a short explanation, then emits a `critique`
+  step. The critique streams to the **reasoning pane only and never modifies the answer** — the
+  agents' result stands; their review is shown, not applied. When the critic is the **last judge**
+  (standard mode, no verifier downstream) it also runs the shared [judge fact-check](#judge-fact-check).
+- **bounded evaluator-optimizer loop** — on a `REVISE` verdict the researcher retries (sound plan,
+  poor execution); on a `REPLAN` verdict the graph routes back to the **planner** (the plan itself
+  was the fault → re-plan + re-retrieve). Both share `MAX_ATTEMPTS = 2` (initial attempt + one
+  retry), after which the turn proceeds regardless of the verdict.
+- **verifier** (accurate mode only) — a first-class LLM-judge agent that returns a schema-validated
+  `Verdict` and runs the [judge fact-check](#judge-fact-check); a non-`pass` verdict routes one more
+  researcher pass (sharing the attempt cap). See [Verification ladder](#verification-ladder-m82).
 - **egress_gate** (only when a checkpointer is wired) — if the researcher's tools try to reach a
   **non-allowlisted host**, the run **pauses for egress approval** before that call is allowed. This
   is the second durable gate. See [Durable gates](#durable-gates-answer-approval--egress-approval).
@@ -103,10 +118,12 @@ the normal loop, **it makes ~2+ extra model calls per turn and is noticeably slo
 
 ### Per-agent configuration (Settings → Agents)
 
-Each agent (planner / researcher / critic) has an **editable system prompt** and, for the
-**researcher only**, **per-agent tool/MCP scoping** (which tools it may call). Defaults ship in
-`DEFAULT_AGENT_PROMPTS`; an empty override falls back to the default for that agent. Configure these
-in the UI **Agents** panel, or over the API:
+Each agent (planner / researcher / critic / **verifier**) has an **editable system prompt** and, for
+the **researcher only**, **per-agent tool/MCP scoping** (which tools it may call). The default
+prompts are now **source-agnostic** (not tied to a specific source) and ship in
+`DEFAULT_AGENT_PROMPTS`; an empty override falls back to the default for that agent. The **Agents**
+panel also draws a **live collaboration graph** showing how the configured agents hand off for the
+selected agentic design (single / multi / accurate). Configure these in the UI, or over the API:
 
 ```bash
 curl -H "Authorization: Bearer demo" http://127.0.0.1:8765/api/v1/agents/config   # roster + defaults + saved overrides
@@ -129,7 +146,7 @@ With the graph on, the per-message **Details** trace shows the extra steps, colo
 | Tool | violet | a gateway tool call |
 | Result | green / red | tool success / failure |
 | Critic | amber | the critique |
-| Verify | green / red | verification verdict (M8.2) |
+| Verify | rose (verdict word green / red) | the verifier agent's identity; the verdict keeps pass=green / fail=red |
 
 ### Durable gates (answer-approval + egress-approval)
 
@@ -241,6 +258,7 @@ deployment default. The env vars below set those deployment defaults (all prefix
 | `PERSONALAI_AGENT_GRAPH_ENABLED` | false | legacy flag; `true` maps to `agent_mode=multi` |
 | `PERSONALAI_AGENT_HUMAN_GATE` | false | with the graph + a DB: suspend each turn for approve/reject |
 | `PERSONALAI_AGENT_ACCURACY_MODE` | standard | `standard` / `accurate` — verification-ladder depth (M8.2) |
+| `PERSONALAI_AGENT_VERIFIER_CHECK` | true | arm the [judge fact-check](#judge-fact-check) (a bounded independent RAG/KAG/memory lookup + a verify-only tool pass) |
 
 ## Verify against a real model
 
@@ -260,11 +278,32 @@ setting) controls how deeply the multi-agent graph verifies an answer:
   `Verdict` (`pass` / `needs_revision` / `fail`, via the bounded, fail-closed `generate_structured`
   primitive) and, on a non-`pass` verdict, routes **one more** researcher pass (sharing the same
   bounded attempt cap as the reflection loop) before finalizing. The verdict streams to the
-  reasoning pane as the green/red **Verify** step.
+  reasoning pane as the **Verify** step (rose identity; verdict word green/red).
 
 **Security gates are never accuracy-gated**: both durable gates — the answer-approval gate and the
 [egress-approval gate](#2-egress-approval-gate-blocking) — always run regardless of the verification
 depth.
+
+### Judge fact-check
+
+Independently of the accuracy mode, the multi-agent graph fact-checks the final answer against
+**fresh, independently-gathered** ground truth — not just the researcher's own evidence. The judge
+runs two bounded, independent checks and judges the draft against what they find:
+
+1. a **retrieval lookup** — one re-query of the wired RAG / KAG / memory sources; and
+2. a **verify-only tool pass** — a tiny (`VERIFIER_TOOL_ITERS`-bounded) run with the *researcher's
+   tools* (web / MCP / etc.), prompted to confirm or refute the draft's specific claims, **not** to
+   re-research. This is what lets the otherwise tool-free judge check **tool/web-derived** answers,
+   not only source-grounded ones.
+
+Each half is independently **fail-open** and may return nothing (no sources wired → no lookup; no
+tools available → no tool pass). Exactly one *judge* runs the checks per turn: the **verifier** in
+accurate mode (it is the last judge), and the **critic** in standard mode (when it is the last
+judge), so there is never a redundant second pass.
+
+It is controlled by `agent_verifier_check` (env `PERSONALAI_AGENT_VERIFIER_CHECK`, per-tenant in
+Settings → Agents), **on by default**. The lookup is **fail-open**: any retrieval error falls back to
+judging against the researcher's evidence, so it never blocks finalizing.
 
 ## What's next
 

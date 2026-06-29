@@ -4,7 +4,7 @@ The PersonalAI backend is a FastAPI app that binds to **loopback by default** an
 through the composition root. Application endpoints are **versioned under `/api/v1`**; `/health`
 and `/version` are unversioned infrastructure endpoints. The OpenAPI document's `info.version`
 tracks the project version (see [`VERSION`](../../VERSION) / [`CHANGELOG.md`](../../CHANGELOG.md);
-currently `0.6.0`).
+currently `0.9.0`).
 
 ## Running it
 
@@ -62,7 +62,7 @@ Authentication above). `/health` and `/version` stay unversioned and public.
 | Method | Path | Response | Notes |
 |---|---|---|---|
 | POST | `/api/v1/files` | `StructuredResult` | Upload a file (txt/md/pdf/docx) → parse/chunk/embed/store. Scanned PDFs are OCR'd on-device; global documents also get named-entity extraction. |
-| GET | `/api/v1/files` | `StructuredResult` | List ingested documents. |
+| GET | `/api/v1/files` | `StructuredResult` | List ingested documents (each carries an `entity_count`). |
 | DELETE | `/api/v1/files/{document_id}` | `StructuredResult` | Delete a document, its vectors, and its entity mentions. |
 | POST | `/api/v1/files/extract` | `StructuredResult` | Extract text from an uploaded doc (no storage) for the per-question attachment flow. Data includes `ocr` (bool) + `pages` when a scanned PDF was OCR'd. |
 | POST | `/api/v1/conversations/{id}/documents` | `StructuredResult` | Tier-2 ingest-at-attach: index a large attachment into the conversation's RAG scope (idempotent by content hash). |
@@ -86,8 +86,12 @@ Continuously-synced local folders → the global RAG corpus. All require_context
 | Method | Path | Response | Notes |
 |---|---|---|---|
 | GET | `/api/v1/entities` | `StructuredResult` | List entities (`?type=&q=&limit=`); `q` is a fuzzy name search. |
+| GET | `/api/v1/entities/stats` | `StructuredResult` | Corpus-wide entity stats (exact total + per-type breakdown) for the Knowledge corpus view. |
 | GET | `/api/v1/entities/{id}` | `StructuredResult` | An entity + its source `documents` + graph `edges` (`{relation, dst_entity_id}`). |
+| GET | `/api/v1/entities/{id}/neighborhood` | `StructuredResult` | The entity's co-occurrence/edge neighborhood for the graph view. |
+| POST | `/api/v1/entities/reconcile` | `StructuredResult` | Run conservative post-NER entity resolution (merge near-duplicate names). |
 | GET | `/api/v1/documents/{document_id}/entities` | `StructuredResult` | Entities extracted from one document. |
+| GET | `/api/v1/documents/{document_id}/chunks` | `StructuredResult` | The document's stored chunks (the Knowledge chunk inspector). |
 
 ### Conversations
 
@@ -147,8 +151,10 @@ curl -N -X POST http://127.0.0.1:8765/api/v1/chat \
   - `event: citations` — RAG sources (when `use_rag` is on).
   - `event: tool` — `{phase: "call"|"result", tool, args, ok, output, error}` (when `use_tools`).
     In the agent loop, reasoning streams as `data: {thinking}` frames.
-  - `event: plan` / `event: critique` — `{kind, text}` planner/critic steps (M8 typed graph, when
-    `PERSONALAI_AGENT_GRAPH_ENABLED`).
+  - `event: plan` / `event: critique` / `event: verification` — `{kind, text}` planner / critic /
+    verifier steps, emitted on the multi-agent path (`agent_mode="multi"`, or the legacy
+    `PERSONALAI_AGENT_GRAPH_ENABLED`). The `citations` frame on this path carries multi-source
+    provenance (`source_kind` / `merged_from`).
   - `event: approval_request` — a durable gate suspended the turn; the stream ends without `done`.
     Two shapes by `reason` (continue with `POST /api/v1/chat/{run_id}/resume`):
     - **answer gate** (`PERSONALAI_AGENT_HUMAN_GATE`) — `{run_id, reason:"approve_answer", answer,
