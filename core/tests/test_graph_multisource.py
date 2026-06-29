@@ -218,6 +218,44 @@ class _CapturingVerifier(FakeModelProvider):
         return GenerationResult(text="answer", model=request.model)
 
 
+class _CapturingCritic(FakeModelProvider):
+    """Records the SYSTEM context the critic sees (so a test can assert merged multi-source evidence
+    survived to the judge even when the researcher called no tools). Critic returns OK."""
+
+    def __init__(self) -> None:
+        super().__init__(name="cap-critic")
+        self.critic_system = ""
+
+    async def generate(self, request):  # type: ignore[no-untyped-def]
+        from personalai_contracts.ports import GenerationResult
+
+        sys_text = " ".join(m.content for m in request.messages if m.role == Role.SYSTEM)
+        last = request.messages[-1].content if request.messages else ""
+        if "Draft answer to review" in last:
+            self.critic_system = sys_text
+            return GenerationResult(text="OK: looks sound", model=request.model)
+        return GenerationResult(text="answer", model=request.model)
+
+
+def test_merged_evidence_reaches_the_critic_when_researcher_calls_no_tools() -> None:
+    # Regression (#420): the merge node's fused evidence lives in `merged_evidence`, a key the
+    # researcher never overwrites — so the critic judges against it even when the researcher answers
+    # from the grounded block WITHOUT calling tools (the FakeModelProvider never calls tools, so the
+    # researcher's own `evidence` is empty). Before the fix the researcher clobbered `evidence` to
+    # [] and the critic judged blind.
+    provider = _CapturingCritic()
+    _drain(
+        messages=[ChatMessage(Role.USER, "what do you know")],
+        provider=provider,
+        model="m",
+        gateway=_gateway(),
+        tools=[],
+        sources=[_vector_source()],
+        query="what do you know",
+    )
+    assert "doc fact" in provider.critic_system  # the merged vector evidence reached the judge
+
+
 def test_tool_armed_verifier_runs_an_independent_lookup() -> None:
     # Tool-armed verifier (#465): in accurate mode with verifier_tools on and sources present, the
     # verifier runs ONE fresh retrieval and folds it into the judging context as an independent
