@@ -76,6 +76,18 @@ def test_unknown_tool_denied() -> None:
     gw, _ = _gateway(RegisteredTool(_manifest(), _Echo()))
     result = _run(gw.invoke(ToolCall("nope", "1.0.0")))
     assert not result.ok and "unknown tool" in (result.error or "")
+    # No close match -> the denial lists what IS available so the model can recover.
+    assert "available tools: echo" in (result.error or "")
+
+
+def test_unknown_tool_suggests_closest_name() -> None:
+    # A mis-named namespaced MCP tool (the common failure: 'srv.sequentialthought' vs the real
+    # 'srv.sequentialthinking') gets a "did you mean" hint so the model self-corrects next round.
+    real = "sequentialthinking.sequentialthinking"
+    gw, _ = _gateway(RegisteredTool(_manifest(name=real), _Echo()))
+    result = _run(gw.invoke(ToolCall("sequentialthinking.sequentialthought", "1.0.0")))
+    assert not result.ok
+    assert f"did you mean '{real}'?" in (result.error or "")
 
 
 def test_version_mismatch_denied() -> None:
