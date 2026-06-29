@@ -24,31 +24,14 @@
 #
 set -euo pipefail
 
-# --- Colors ----------------------------------------------------------------
-if [[ -t 1 ]]; then
-  GREEN='\033[0;32m'
-  RED='\033[0;31m'
-  YELLOW='\033[0;33m'
-  NC='\033[0m'
-else
-  GREEN=''; RED=''; YELLOW=''; NC=''
-fi
-
-log_ok()   { printf "${GREEN}[ OK ]${NC} %s\n" "$*"; }
-log_warn() { printf "${YELLOW}[WARN]${NC} %s\n" "$*"; }
-log_err()  { printf "${RED}[FAIL]${NC} %s\n" "$*" >&2; }
-log_info() { printf "%s\n" "$*"; }
-
-# --- Paths -----------------------------------------------------------------
+# --- Shared helpers --------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TF_DIR="$(cd "${SCRIPT_DIR}/../terraform" && pwd)"
+source "${SCRIPT_DIR}/lib/common.sh"
 
 # --- Defaults --------------------------------------------------------------
-INSTANCE="devel"   # instance to tunnel to; selects its Terraform workspace.
+INSTANCE="devel"   # instance to tunnel to.
 IDENTITY=""
-# Default to the dedicated project key (created by provision.sh) if present;
-# an explicit -i/--identity overrides it.
-DEFAULT_KEY="${HOME}/.ssh/ai-a100-devel"
+SUBSCRIPTION=""    # optional az subscription (id or name); empty = CLI default.
 SPECS=()   # raw port specs to translate into -L arguments
 
 usage() {
@@ -69,6 +52,7 @@ Options:
       --dev               Preset bundle: --ui + --api (UI 5173 + backend 8765).
   -n, --name <name>       Instance to tunnel to (alias: --instance). Default: devel.
   -i, --identity <path>   Private key to authenticate with (ssh -i).
+  -s, --subscription <id|name>  Azure subscription to resolve the VM in. Default: CLI default.
   -h, --help              Show this help.
 
 Everything is forwarded to the VM's localhost over the SSH tunnel, so the
@@ -95,6 +79,7 @@ while [[ $# -gt 0 ]]; do
     --dev)         add_spec "5173"; add_spec "8765"; shift ;;
     -n|--name|--instance) INSTANCE="${2:-}"; shift 2 ;;
     -i|--identity) IDENTITY="${2:-}"; shift 2 ;;
+    -s|--subscription) SUBSCRIPTION="${2:-}"; shift 2 ;;
     -h|--help)     usage; exit 0 ;;
     *) log_err "Unknown argument: $1"; usage; exit 2 ;;
   esac
@@ -133,44 +118,21 @@ for spec in "${SPECS[@]}"; do
   esac
 done
 
-# --- Prerequisites ---------------------------------------------------------
-for tool in az terraform ssh; do
-  if ! command -v "$tool" >/dev/null 2>&1; then
-    log_err "Required tool not found: $tool"; exit 3
-  fi
-done
-if ! az account show >/dev/null 2>&1; then
-  log_err "Not logged in to Azure. Run: az login"; exit 4
-fi
-
-# --- Resolve targets from Terraform outputs --------------------------------
-# Per-instance state: select (or create) the workspace for this instance first.
-cd "$TF_DIR"
-terraform workspace select "$INSTANCE" 2>/dev/null || terraform workspace new "$INSTANCE" >/dev/null 2>&1
-ADMIN="$(terraform output -raw admin_username 2>/dev/null || echo "azureuser")"
-PUBIP="$(terraform output -raw public_ip_address 2>/dev/null || echo "")"
-RG="$(terraform output -raw resource_group_name 2>/dev/null || echo "")"
-VM="$(terraform output -raw vm_name 2>/dev/null || echo "")"
-
-if [[ -z "$PUBIP" || -z "$RG" || -z "$VM" ]]; then
-  log_err "Could not read Terraform outputs for instance '${INSTANCE}'. Has it been provisioned?"
-  log_err "Run: scripts/provision.sh --name ${INSTANCE}"
-  exit 5
-fi
+# --- Prerequisites & resolution --------------------------------------------
+require_tools az ssh
+require_az_login
+resolve_instance "$INSTANCE"
 
 # --- Check power state ------------------------------------------------------
-POWER="$(az vm get-instance-view --resource-group "$RG" --name "$VM" \
-         --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" \
-         -o tsv 2>/dev/null | sed 's#PowerState/##' || echo "unknown")"
-
+POWER="$(vm_power_state "$RG" "$VM")"
 if [[ "$POWER" != "running" ]]; then
-  log_warn "VM power state is '${POWER}'. Start it first: scripts/start.sh"
+  log_warn "VM power state is '${POWER}'. Start it first: scripts/start.sh --name ${INSTANCE}"
   [[ "$POWER" == "deallocated" || "$POWER" == "stopped" ]] && exit 6
 fi
 
 # --- Build and run the tunnel ----------------------------------------------
 [[ -z "$IDENTITY" && -f "$DEFAULT_KEY" ]] && IDENTITY="$DEFAULT_KEY"
-SSH_CMD=(ssh -N -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new
+SSH_CMD=(ssh -N "${SSH_BASE_OPTS[@]}"
          -o ServerAliveInterval=30 -o ExitOnForwardFailure=yes)
 [[ -n "$IDENTITY" ]] && SSH_CMD+=(-i "$IDENTITY")
 SSH_CMD+=("${FORWARDS[@]}" "${ADMIN}@${PUBIP}")

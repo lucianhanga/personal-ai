@@ -60,13 +60,22 @@ Access / support scripts:
 | ------------------- | ------------------------------------------------------------------- |
 | `connect.sh`        | SSH into the machine (shell, one-off command, or port-forward).     |
 | `tunnel.sh`         | SSH local port-forwarding (Jupyter / TensorBoard / Ollama presets). |
+| `upload.sh`         | Copy local file(s) to the machine (default `/tmp`); resolves a bare instance name, an SSH alias, or `user@host`. |
 | `check-quota.sh`    | Survey A100 quota + SKU availability across regions.                |
 | `setup-devtools.sh` | Idempotent toolchain installer run on the VM (via cloud-init).      |
 
 All instance-aware scripts accept `-n, --name <name>` (alias `--instance`,
-default `devel`) to target a specific machine.
+default `devel`) to target a specific machine, and `-s, --subscription <id|name>`
+to pin the Azure subscription.
 
-`monitor.sh` is the exception and is a pure read-only **Azure** tool: it
+Host resolution is **Azure-native** and Terraform-free: resource names are
+deterministic (`ai-<name>-a100-rg`, `vm-ai-a100-<name>`, `vm-ai-a100-<name>-ip`),
+so `connect.sh`, `tunnel.sh`, `upload.sh`, `start.sh`, and `stop.sh` find the VM
+via `az` alone and keep working even in a fresh checkout where Terraform has not
+been initialized. Only `destroy.sh` (which runs `terraform destroy`) needs
+initialized Terraform state. The shared helpers live in `scripts/lib/common.sh`.
+
+`monitor.sh` is likewise a pure read-only **Azure** tool: it
 discovers instances directly from Azure resource groups (those named
 `ai-<name>-a100-rg`), independent of local Terraform state or workspaces. A bare
 `monitor.sh` therefore inspects **every** instance that exists in the
@@ -184,9 +193,9 @@ specific machine (e.g. `infra/scripts/stop.sh --name train`).
 
 ## Connecting to the VM
 
-`connect.sh` reads the public IP and admin user from the Terraform outputs,
-verifies the VM is running, and opens an SSH session. It accepts a flag, but no
-arguments are required:
+`connect.sh` resolves the public IP from Azure (deterministic resource names, no
+Terraform state required), verifies the VM is running, and opens an SSH session.
+It accepts a flag, but no arguments are required:
 
 ```bash
 infra/scripts/connect.sh                          # interactive shell

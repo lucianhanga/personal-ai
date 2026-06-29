@@ -10,6 +10,10 @@
 #   --destroy               Full 'terraform destroy'. DELETES the OS disk and
 #                           ALL data on it. Irreversible.
 #
+# deallocate / start resolve the VM directly from Azure (deterministic resource
+# names), so they work even when Terraform is not initialized in this checkout.
+# Only --destroy needs initialized Terraform state.
+#
 # Cost note:
 #   deallocate -> you stop paying for the GPU compute, but you STILL pay for the
 #                 Premium OS disk and the Standard static public IP.
@@ -17,29 +21,16 @@
 #
 set -euo pipefail
 
-# --- Colors ----------------------------------------------------------------
-if [[ -t 1 ]]; then
-  GREEN='\033[0;32m'
-  RED='\033[0;31m'
-  YELLOW='\033[0;33m'
-  NC='\033[0m'
-else
-  GREEN=''; RED=''; YELLOW=''; NC=''
-fi
-
-log_ok()   { printf "${GREEN}[ OK ]${NC} %s\n" "$*"; }
-log_warn() { printf "${YELLOW}[WARN]${NC} %s\n" "$*"; }
-log_err()  { printf "${RED}[FAIL]${NC} %s\n" "$*" >&2; }
-log_info() { printf "%s\n" "$*"; }
-
-# --- Paths -----------------------------------------------------------------
+# --- Shared helpers --------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/common.sh"
 TF_DIR="$(cd "${SCRIPT_DIR}/../terraform" && pwd)"
 
 # --- Defaults --------------------------------------------------------------
 MODE="deallocate"
 AUTO_APPROVE="false"
-INSTANCE="devel"   # instance name; selects the Terraform workspace + targets.
+INSTANCE="devel"   # instance name; selects resource names + Terraform workspace.
+SUBSCRIPTION=""    # optional az subscription (id or name); empty = CLI default.
 
 usage() {
   cat <<EOF
@@ -53,8 +44,7 @@ Modes (choose one):
 
 Options:
   -n, --name <name>    Instance to act on (alias: --instance). Default: devel.
-                       Selects that instance's Terraform workspace, so only that
-                       instance is deallocated / started / destroyed.
+  -s, --subscription <id|name>  Azure subscription to act in. Default: CLI default.
   -y, --auto-approve   Skip confirmation prompts.
   -h, --help           Show this help.
 
@@ -72,6 +62,7 @@ while [[ $# -gt 0 ]]; do
     --start)      MODE="start"; shift ;;
     --destroy)    MODE="destroy"; shift ;;
     -n|--name|--instance) INSTANCE="${2:-}"; shift 2 ;;
+    -s|--subscription) SUBSCRIPTION="${2:-}"; shift 2 ;;
     -y|--auto-approve) AUTO_APPROVE="true"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) log_err "Unknown argument: $1"; usage; exit 2 ;;
@@ -79,40 +70,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -z "$INSTANCE" ]] && { log_err "--name requires a non-empty value."; exit 2; }
-
-# Per-instance state: select (or create) the workspace named after the instance
-# before any terraform output/destroy. Requires terraform to be initialized.
-select_workspace() {
-  terraform -chdir="$TF_DIR" workspace select "$INSTANCE" 2>/dev/null \
-    || terraform -chdir="$TF_DIR" workspace new "$INSTANCE" >/dev/null 2>&1
-}
-
-# --- Prerequisite checks ---------------------------------------------------
-check_prereqs() {
-  local need_tf="$1"
-  if ! command -v az >/dev/null 2>&1; then
-    log_err "Required tool not found: az"; exit 3
-  fi
-  if [[ "$need_tf" == "true" ]] && ! command -v terraform >/dev/null 2>&1; then
-    log_err "Required tool not found: terraform"; exit 3
-  fi
-  if ! az account show >/dev/null 2>&1; then
-    log_err "Not logged in to Azure. Run: az login"; exit 4
-  fi
-}
-
-# --- Resolve RG and VM name from Terraform state ---------------------------
-resolve_targets() {
-  cd "$TF_DIR"
-  select_workspace
-  RG="$(terraform output -raw resource_group_name 2>/dev/null || echo "")"
-  VM="$(terraform output -raw vm_name 2>/dev/null || echo "")"
-  if [[ -z "$RG" || -z "$VM" ]]; then
-    log_err "Could not read resource group / VM name for instance '${INSTANCE}' from Terraform outputs."
-    log_err "Has this instance been provisioned? Run: scripts/provision.sh --name ${INSTANCE}"
-    exit 5
-  fi
-}
 
 confirm() {
   local prompt="$1"
@@ -123,26 +80,40 @@ confirm() {
 }
 
 do_deallocate() {
-  check_prereqs "true"
-  resolve_targets
+  require_tools az
+  require_az_login
+  resolve_names "$INSTANCE"
+  if ! vm_exists "$RG" "$VM"; then
+    log_err "VM '${VM}' not found in resource group '${RG}'."
+    log_err "Wrong instance/subscription, or it was never provisioned. Nothing deallocated."
+    exit 5
+  fi
   log_info "Target: VM '${VM}' in resource group '${RG}'."
   if ! confirm "Deallocate the VM (stops GPU billing, keeps disk and IP)?"; then
     log_warn "Aborted. No changes made."; exit 0
   fi
   log_info "Deallocating..."
-  az vm deallocate --resource-group "$RG" --name "$VM" --output none
+  az vm deallocate --resource-group "$RG" --name "$VM" \
+    ${SUB_OPT[@]+"${SUB_OPT[@]}"} --output none
   log_ok "VM deallocated. GPU compute billing stopped."
   log_warn "You still pay for the Premium OS disk and the static public IP."
-  log_info "Resume later with: scripts/deprovision.sh --start"
+  log_info "Resume later with: scripts/start.sh --name ${INSTANCE}"
 }
 
 do_start() {
-  check_prereqs "true"
-  resolve_targets
+  require_tools az
+  require_az_login
+  resolve_names "$INSTANCE"
+  if ! vm_exists "$RG" "$VM"; then
+    log_err "VM '${VM}' not found in resource group '${RG}'."
+    log_err "Wrong instance/subscription, or it was never provisioned. Nothing started."
+    exit 5
+  fi
   log_info "Target: VM '${VM}' in resource group '${RG}'."
   log_info "Starting..."
   # Note: as a Spot VM, start can fail if there is no spot capacity right now.
-  if az vm start --resource-group "$RG" --name "$VM" --output none; then
+  if az vm start --resource-group "$RG" --name "$VM" \
+       ${SUB_OPT[@]+"${SUB_OPT[@]}"} --output none; then
     log_ok "VM started."
   else
     log_err "Start failed. For a Spot VM this often means no spot capacity is"
@@ -152,9 +123,22 @@ do_start() {
 }
 
 do_destroy() {
-  check_prereqs "true"
+  require_tools az terraform
+  require_az_login
+  # --destroy is the only mode that genuinely needs Terraform state. Surface a
+  # clear error if it is not initialized, instead of failing silently.
+  if [[ ! -d "${TF_DIR}/.terraform" ]]; then
+    log_err "Terraform is not initialized in ${TF_DIR}; cannot destroy from this checkout."
+    log_err "Initialize it first: (cd infra/terraform && terraform init)"
+    log_err "To only stop billing without Terraform, use: scripts/stop.sh --name ${INSTANCE}"
+    exit 5
+  fi
   cd "$TF_DIR"
-  select_workspace
+  if ! terraform workspace select "$INSTANCE" 2>/dev/null; then
+    log_err "Terraform workspace '${INSTANCE}' does not exist. Available:"
+    terraform workspace list >&2 || true
+    exit 5
+  fi
   printf "${RED}WARNING: 'terraform destroy' DELETES the OS disk and ALL DATA on instance '${INSTANCE}'.${NC}\n"
   printf "${RED}This is irreversible. The IP, NIC, NSG, VNet and resource group will be removed.${NC}\n"
   if ! confirm "Proceed with full destroy of instance '${INSTANCE}'?"; then
