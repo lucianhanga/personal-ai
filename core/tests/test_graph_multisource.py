@@ -321,6 +321,23 @@ def test_judge_runs_a_bounded_tool_verify_when_armed_with_tools() -> None:
     assert "Verified: the figure matches" in provider.critic_system
 
 
+def test_judge_tool_verify_skipped_when_judges_tool_is_disabled() -> None:
+    # Per-judge disabled tools (#290): the critic/verifier fact-check with their OWN tool set. The
+    # lookup tool is available to the turn but disabled for the critic, so its bounded verify pass
+    # has nothing to check with -> no tool verification block (the researcher's loop is unaffected).
+    provider = _CapturingCritic()
+    _drain(
+        messages=[ChatMessage(Role.USER, "how much did I spend at Amazon?")],
+        provider=provider,
+        model="m",
+        gateway=_gateway(),
+        tools=[_LOOKUP_TOOL],
+        verifier_tools=True,
+        disabled_tools={"critic": ["lookup"]},
+    )
+    assert "Independent tool verification" not in provider.critic_system
+
+
 def test_judge_tool_verify_off_when_no_tools() -> None:
     # With verifier_tools on but NO tools available, there is nothing to fact-check with -> no tool
     # verification block (and, with no sources either, no independent check at all).

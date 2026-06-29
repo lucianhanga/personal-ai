@@ -85,7 +85,7 @@ from personalai_core import (
     EGRESS_DENY,
     EGRESS_RESUME_DECISION,
     EGRESS_RESUME_FRAME,
-    TOOL_USING_AGENTS,
+    TOOL_CONFIGURABLE_AGENTS,
     CoreConfig,
     GraphSource,
     MemorySource,
@@ -1790,7 +1790,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         agent_prompts = agent_cfg.prompt_overrides()
         agent_reasoning = agent_cfg.reasoning_levels()
         agent_models = agent_cfg.model_overrides()
-        researcher_disabled = agent_cfg.disabled_tools("researcher")
+        # Per-agent disabled tools (#290): the researcher's loop AND each judge's fact-check are
+        # filtered by their OWN disabled set inside the graph, so pass the full tool list + the map.
+        agent_disabled = {a: list(agent_cfg.disabled_tools(a)) for a in AGENT_NAMES}
 
         # Durable human gate (M8.1c): active only when the graph is enabled, the gate is on, and a
         # DB is available for the tenant-scoped checkpoint. thread_id = a fresh run id the client
@@ -2051,10 +2053,6 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 # In graph mode, drop the tools the researcher has been disabled from using (#290).
                 registries: Registries = app.state.bootstrap.registries
                 tool_list = [registries.tools.get(n) for n in registries.tools.names()]
-                if graph_enabled and researcher_disabled:
-                    tool_list = [
-                        rt for rt in tool_list if rt.manifest.name not in researcher_disabled
-                    ]
                 grants = [p for rt in tool_list for p in rt.manifest.permissions]
                 try:
                     # Orchestration lives in run_turn (FastAPI-independent, fake-testable); the
@@ -2073,6 +2071,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                             agent_prompts=agent_prompts,
                             agent_reasoning=agent_reasoning,
                             agent_models=agent_models,
+                            agent_disabled_tools=agent_disabled,
                             accuracy_mode=config.agent_accuracy_mode,
                             verifier_tools=config.agent_verifier_check,
                             context=_agent_context(req.conversation_id),
@@ -2513,7 +2512,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         agent_prompts = agent_cfg.prompt_overrides()
         agent_reasoning = agent_cfg.reasoning_levels()
         agent_models = agent_cfg.model_overrides()
-        researcher_disabled = agent_cfg.disabled_tools("researcher")
+        # Per-agent disabled tools (#290): the researcher's loop AND each judge's fact-check are
+        # filtered by their OWN disabled set inside the graph, so pass the full tool list + the map.
+        agent_disabled = {a: list(agent_cfg.disabled_tools(a)) for a in AGENT_NAMES}
 
         # Assemble the generation context exactly like /chat (minus persistence + STM-from-a-conv).
         last_user = next((m.content for m in reversed(chat_req.messages) if m.role == "user"), None)
@@ -2557,8 +2558,6 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         tool_list = [registries.tools.get(n) for n in registries.tools.names()]
         if not req.use_mcp:  # honour "no MCP" by keeping only the built-in tools
             tool_list = [rt for rt in tool_list if rt.manifest.name in BUILTIN_TOOL_NAMES]
-        if graph_enabled and researcher_disabled:
-            tool_list = [rt for rt in tool_list if rt.manifest.name not in researcher_disabled]
         grants = [p for rt in tool_list for p in rt.manifest.permissions]
 
         answer = ""
@@ -2590,6 +2589,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     agent_prompts=agent_prompts,
                     agent_reasoning=agent_reasoning,
                     agent_models=agent_models,
+                    agent_disabled_tools=agent_disabled,
                     accuracy_mode=config.agent_accuracy_mode,
                     verifier_tools=config.agent_verifier_check,
                     context=_agent_context(None),
@@ -3787,7 +3787,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 # shows each default where a tenant override is unset.
                 "defaults": {n: DEFAULT_AGENT_PROMPTS[n] for n in AGENT_NAMES},
                 "agents": [
-                    {"name": name, "uses_tools": name in TOOL_USING_AGENTS} for name in AGENT_NAMES
+                    {"name": name, "uses_tools": name in TOOL_CONFIGURABLE_AGENTS}
+                    for name in AGENT_NAMES
                 ],
                 "available_tools": list(registries.tools.names()),
             },

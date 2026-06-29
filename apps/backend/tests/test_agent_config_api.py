@@ -57,13 +57,15 @@ def test_agent_config_roster_defaults_and_round_trip() -> None:
         _signup_login(user, f"u-{uuid.uuid4().hex[:8]}@example.com")
 
         body = user.get("/api/v1/agents/config").json()["data"]
-        # Roster: planner/researcher/critic/verifier, only the researcher uses tools.
+        # Roster: planner/researcher/critic/verifier. The researcher (its tool loop) plus the
+        # critic/verifier (their independent fact-check pass) have a configurable tool set; only
+        # the planner is genuinely tool-free.
         roster = {a["name"]: a["uses_tools"] for a in body["agents"]}
         assert roster == {
             "planner": False,
             "researcher": True,
-            "critic": False,
-            "verifier": False,
+            "critic": True,
+            "verifier": True,
         }
         assert set(body["defaults"]) == {"planner", "researcher", "critic", "verifier"}
         assert isinstance(body["available_tools"], list)

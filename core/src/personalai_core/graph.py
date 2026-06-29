@@ -122,6 +122,10 @@ def _state_subject(state: GraphState) -> str:
 # per-agent tool grant). All four prompts are tenant-overridable.
 AGENT_NAMES: tuple[str, ...] = ("planner", "researcher", "critic", "verifier")
 TOOL_USING_AGENTS: frozenset[str] = frozenset({"researcher"})
+# Agents whose tool set is user-configurable (their card shows the Tools/MCPs list): the researcher
+# (its tool loop) and the critic/verifier (their independent fact-check pass, gated by the judge
+# fact-check setting). The planner is genuinely tool-free.
+TOOL_CONFIGURABLE_AGENTS: frozenset[str] = frozenset({"researcher", "critic", "verifier"})
 
 # Default system prompt per agent. Exposed (not private) so the backend can echo them to the UI as
 # the editable defaults (#290), exactly like CoreConfig defaults for settings. A tenant's saved
@@ -379,6 +383,7 @@ def _build_graph(
     prompts: Mapping[str, str] | None = None,
     reasoning_levels: Mapping[str, str] | None = None,
     model_overrides: Mapping[str, str] | None = None,
+    disabled_tools: Mapping[str, Sequence[str]] | None = None,
     accuracy_mode: str = "standard",
     runaway: RunawayConfig | None = None,
     sources: Sequence[RetrievalSource] = (),
@@ -407,9 +412,17 @@ def _build_graph(
     # reasoning-off and the researcher inherits the turn-level `think`. A tenant override wins.
     _default_reasoning = {"planner": "off", "critic": "off", "verifier": "off"}
 
+    _disabled = {a: frozenset(t) for a, t in (disabled_tools or {}).items()}
+
     def _agent_model(agent: str) -> str:
         """The model this agent runs on: its per-agent override, else the turn's model."""
         return _models.get(agent) or model
+
+    def _agent_tools(agent: str) -> list[RegisteredTool]:
+        """The tools offered to an agent: all tools minus the ones disabled for it (#290). The
+        researcher uses this for its loop; the critic/verifier for their independent fact-check."""
+        off = _disabled.get(agent, frozenset())
+        return [rt for rt in tools if rt.manifest.name not in off]
 
     def _agent_reasoning(agent: str) -> tuple[bool | None, list[ChatMessage]]:
         """(think, nudge messages) for an agent from its configured level (or per-agent default)."""
@@ -587,6 +600,7 @@ def _build_graph(
         _emit_stage(writer, "researcher", "Researching")
         r_think, r_nudge = _agent_reasoning("researcher")
         r_model = _agent_model("researcher")
+        r_tools = _agent_tools("researcher")
 
         answer, usage = "", {}
         evidence: list[str] = []
@@ -636,7 +650,7 @@ def _build_graph(
                 provider=provider,
                 model=r_model,
                 gateway=gateway,
-                tools=tools,
+                tools=r_tools,
                 grants=grants,
                 approved=approved,
                 think=r_think,
@@ -684,7 +698,7 @@ def _build_graph(
                 provider=provider,
                 model=r_model,
                 gateway=gateway,
-                tools=tools,
+                tools=r_tools,
                 grants=grants,
                 approved=approved,
                 think=r_think,
@@ -762,13 +776,17 @@ def _build_graph(
         except Exception:  # noqa: BLE001 - fail-open: the check must never block finalizing
             return []
 
-    async def _independent_tool_check(answer: str, state: GraphState) -> list[ChatMessage]:
+    async def _independent_tool_check(
+        answer: str, state: GraphState, judge: str
+    ) -> list[ChatMessage]:
         # Bounded, verify-ONLY tool pass (#465): the critic/verifier are otherwise tool-free, so
         # they cannot check web-/tool-derived claims (the retrieval lookup only covers RAG/KAG/mem).
-        # Give the judge the researcher's tools for a tiny (VERIFIER_TOOL_ITERS) run prompted to
-        # confirm/refute the draft's claims, NOT re-research. No durable gate: an egress/approval
-        # block just yields no finding (fail-open). Skipped when off or no tools are available.
-        if not (verifier_tools and tools and answer):
+        # Give THIS judge its own tools (minus the ones disabled for it) for a tiny
+        # (VERIFIER_TOOL_ITERS) run prompted to confirm/refute the draft's claims, NOT re-research.
+        # No durable gate: an egress/approval block just yields no finding (fail-open). Skipped when
+        # off or no tools are available.
+        j_tools = _agent_tools(judge)
+        if not (verifier_tools and j_tools and answer):
             return []
         _emit_stage(get_stream_writer(), "verifier", "Fact-checking")
         findings, tool_hits = "", []
@@ -781,9 +799,9 @@ def _build_graph(
             async for ev in run_agent(
                 messages=verify_msgs,
                 provider=provider,
-                model=model,
+                model=_agent_model(judge),
                 gateway=gateway,
-                tools=tools,
+                tools=j_tools,
                 grants=grants,
                 approved=approved,
                 think=False,
@@ -813,11 +831,14 @@ def _build_graph(
             )
         ]
 
-    async def _independent_checks(answer: str, state: GraphState) -> list[ChatMessage]:
+    async def _independent_checks(answer: str, state: GraphState, judge: str) -> list[ChatMessage]:
         # The judge's full independent fact-check: the RAG/KAG/memory retrieval lookup PLUS the
-        # bounded verify-only tool pass, so it covers BOTH source-grounded and tool/web-derived
-        # claims. Either half is independently fail-open / may return nothing.
-        return [*await _independent_lookup(state), *await _independent_tool_check(answer, state)]
+        # bounded verify-only tool pass (using THIS judge's own tools), so it covers BOTH
+        # source-grounded and tool/web-derived claims. Either half is fail-open / may return [].
+        return [
+            *await _independent_lookup(state),
+            *await _independent_tool_check(answer, state, judge),
+        ]
 
     async def critic(state: GraphState) -> dict[str, Any]:
         # The draft goes in a USER message, not an ASSISTANT one: with the draft as an assistant
@@ -828,7 +849,7 @@ def _build_graph(
         # Arm the critic with the independent fact-check ONLY when it is the last judge (standard
         # mode -- no verifier downstream), so the final answer is checked in every multi-agent
         # config without a redundant second lookup in accurate mode (the verifier does it there).
-        independent = [] if verify else await _independent_checks(answer, state)
+        independent = [] if verify else await _independent_checks(answer, state, "critic")
         c_think, c_nudge = _agent_reasoning("critic")
         review = [
             ChatMessage(Role.SYSTEM, agent_prompts["critic"]),
@@ -874,7 +895,7 @@ def _build_graph(
         # standard mode) -- a RAG/KAG/memory retrieval lookup PLUS a verify-only tool pass, so it
         # covers tool/web-derived claims too, not just source-grounded ones. The verifier always
         # runs it when armed (it is the last judge in accurate mode). Fail-open: any error -> [].
-        independent = await _independent_checks(answer, state)
+        independent = await _independent_checks(answer, state, "verifier")
         judged = await generate_structured(
             provider=provider,
             model=_agent_model("verifier"),
@@ -1064,6 +1085,7 @@ async def run_graph(
     prompts: Mapping[str, str] | None = None,
     reasoning_levels: Mapping[str, str] | None = None,
     model_overrides: Mapping[str, str] | None = None,
+    disabled_tools: Mapping[str, Sequence[str]] | None = None,
     accuracy_mode: str = "standard",
     runaway: RunawayConfig | None = None,
     sources: Sequence[RetrievalSource] = (),
@@ -1099,6 +1121,7 @@ async def run_graph(
         prompts=prompts,
         reasoning_levels=reasoning_levels,
         model_overrides=model_overrides,
+        disabled_tools=disabled_tools,
         accuracy_mode=accuracy_mode,
         runaway=runaway,
         sources=sources,
