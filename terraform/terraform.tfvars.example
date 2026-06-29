@@ -1,0 +1,42 @@
+###############################################################################
+# Example variable values. Copy to terraform.tfvars and edit as needed:
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# terraform.tfvars is gitignored. Do not commit real values you consider
+# sensitive (the SSH source CIDR can reveal your network).
+###############################################################################
+
+# --- Placement -------------------------------------------------------------
+location            = "westeurope"
+resource_group_name = "ai-devel-a100-rg"
+
+# --- SSH access control ----------------------------------------------------
+# Restrict SSH to your current public IP. The provision script auto-detects
+# this for you; set it manually here only if you are running terraform directly.
+# Example (single host):
+# ssh_source_address_prefix = "203.0.113.10/32"
+# Example (office CIDR):
+# ssh_source_address_prefix = "198.51.100.0/24"
+ssh_source_address_prefix = "203.0.113.10/32"
+
+# --- SSH key ---------------------------------------------------------------
+# Default reads ~/.ssh/id_rsa.pub. Override the path or paste the key inline.
+ssh_public_key_path = "~/.ssh/id_rsa.pub"
+# ssh_public_key    = "ssh-ed25519 AAAA... you@host"
+
+# --- VM --------------------------------------------------------------------
+vm_size        = "Standard_NC24ads_A100_v4"
+admin_username = "azureuser"
+
+# --- Spot ------------------------------------------------------------------
+# -1 = pay up to on-demand price (only evicted on capacity, not price).
+spot_max_bid_price   = -1
+spot_eviction_policy = "Deallocate"
+
+# --- Tags ------------------------------------------------------------------
+# tags = {
+#   project      = "ai-a100-devel"
+#   environment  = "dev"
+#   "managed-by" = "terraform"
+#   owner        = "you@example.com"
+# }
