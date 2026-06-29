@@ -1,0 +1,49 @@
+###############################################################################
+# Example variable values. Copy to terraform.tfvars and edit as needed:
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# terraform.tfvars is gitignored. Do not commit real values you consider
+# sensitive (the SSH source CIDR can reveal your network).
+###############################################################################
+
+# --- Instance --------------------------------------------------------------
+# Names this stack. ALL resource names derive from it (resource group, network,
+# VM, etc.), so two different names give two independent stacks that can run at
+# the same time, even in the same region. The default "devel" reproduces the
+# original fixed names. The helper scripts set this via -n/--name and also put
+# each instance in its own Terraform workspace (separate state).
+# instance = "devel"
+
+# --- Placement -------------------------------------------------------------
+location = "westeurope"
+
+# --- SSH access control ----------------------------------------------------
+# Restrict SSH to your current public IP. The provision script auto-detects
+# this for you; set it manually here only if you are running terraform directly.
+# Example (single host):
+# ssh_source_address_prefix = "203.0.113.10/32"
+# Example (office CIDR):
+# ssh_source_address_prefix = "198.51.100.0/24"
+ssh_source_address_prefix = "203.0.113.10/32"
+
+# --- SSH key ---------------------------------------------------------------
+# Default reads ~/.ssh/id_rsa.pub. Override the path or paste the key inline.
+ssh_public_key_path = "~/.ssh/id_rsa.pub"
+# ssh_public_key    = "ssh-ed25519 AAAA... you@host"
+
+# --- VM --------------------------------------------------------------------
+vm_size        = "Standard_NC24ads_A100_v4"
+admin_username = "azureuser"
+
+# --- Spot ------------------------------------------------------------------
+# -1 = pay up to on-demand price (only evicted on capacity, not price).
+spot_max_bid_price   = -1
+spot_eviction_policy = "Deallocate"
+
+# --- Tags ------------------------------------------------------------------
+# tags = {
+#   project      = "ai-a100-devel"
+#   environment  = "dev"
+#   "managed-by" = "terraform"
+#   owner        = "you@example.com"
+# }
