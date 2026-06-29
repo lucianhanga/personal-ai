@@ -23,6 +23,59 @@ const MAX_NODES = 200;
 
 const NER = "#a21caf"; // entity-category hue, shared with EntityBrowser so the feature reads as one.
 
+// Shared visual tokens so the canvas frame, toolbar, legend, chips, and detail rail read as one
+// cohesive panel. Neutral greys only; per-entity-type hues still come exclusively from TYPE_META.
+const BORDER = "#e2e8f0"; // slate-200 hairline — every frame/divider in this view uses it
+const PANEL_BG = "#fafbfc"; // very light panel fill
+const INK = "#334155"; // slate-700 body text on chips/buttons
+const CANVAS_H = 360; // canvas height, kept in sync between the frame and the ForceGraph2D prop
+
+// Hover affordance for the chips + toolbar buttons. Inline styles can't express :hover, so a single
+// scoped stylesheet carries only the hover transition; all base styles stay inline as before.
+const GRAPH_CSS = `
+.kg-chip{transition:background-color 120ms ease,border-color 120ms ease}
+.kg-chip:hover{background-color:#f1f5f9;border-color:#cbd5e1}
+.kg-btn{transition:background-color 120ms ease,border-color 120ms ease}
+.kg-btn:hover{background-color:#f1f5f9;border-color:#cbd5e1}
+`;
+
+function GraphStyles(): React.ReactElement {
+  return <style>{GRAPH_CSS}</style>;
+}
+
+// A cohesive small toolbar button (Fit/Reset), consistent with the rest of the app: neutral grey,
+// white fill, text label, no icon/emoji. Hover comes from the `kg-btn` class.
+const toolbarBtnStyle: React.CSSProperties = {
+  border: `1px solid ${BORDER}`,
+  borderRadius: 6,
+  background: "#fff",
+  color: INK,
+  fontSize: "0.74rem",
+  fontWeight: 500,
+  padding: "0.2rem 0.65rem",
+  cursor: "pointer",
+  lineHeight: 1.4,
+};
+
+// A consistent section label for the detail rail (Documents / Co-occurring entities / ...).
+const railHeadingStyle: React.CSSProperties = {
+  fontSize: "0.68rem",
+  fontWeight: 700,
+  letterSpacing: "0.04em",
+  textTransform: "uppercase",
+  color: MUTED,
+  margin: "0 0 0.3rem",
+};
+
+/** Translucent fill from a TYPE_META hex hue (for the focus halo) — keeps node color = type hue. */
+function hexAlpha(hex: string, alpha: number): string {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 // A renderable graph node — an entity CIRCLE (colored by type) or a document SQUARE (slate). Shape,
 // not color, distinguishes the two classes, so the graph is readable without color.
 interface GraphNode {
@@ -152,21 +205,44 @@ function prefersReducedMotion(): boolean {
 }
 
 /** Text-first legend rows for the size + edge-weight encodings (G-C). Word-only — no color or shape
- * carries meaning here, so it reads identically without color. */
+ * carries meaning here, so it reads identically without color. A hairline separates it from the type
+ * key above so the two read as one compact legend. */
 function ScaleLegend(): React.ReactElement {
   return (
     <div
       style={{
         display: "flex",
         flexWrap: "wrap",
-        gap: "0.75rem",
-        marginTop: "0.35rem",
-        fontSize: "0.72rem",
+        gap: "0.3rem 1.25rem",
+        paddingTop: "0.45rem",
+        borderTop: `1px solid ${BORDER}`,
+        fontSize: "0.7rem",
         color: MUTED,
       }}
     >
-      <span data-testid="graph-legend-size">small dot = few mentions, large dot = many</span>
-      <span data-testid="graph-legend-edge">thin line = 1 shared doc, thick line = many</span>
+      <span data-testid="graph-legend-size">Dot size: fewer → more mentions</span>
+      <span data-testid="graph-legend-edge">Line weight: 1 → more shared documents</span>
+    </div>
+  );
+}
+
+/** The type key + the size/edge scale rows, framed as one compact, aligned legend panel rather than
+ * two stacked lines. Shared by both the cold-start and focused views. */
+function LegendPanel(): React.ReactElement {
+  return (
+    <div
+      style={{
+        border: `1px solid ${BORDER}`,
+        borderRadius: 8,
+        background: PANEL_BG,
+        padding: "0.5rem 0.6rem",
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.45rem",
+      }}
+    >
+      <GraphLegend />
+      <ScaleLegend />
     </div>
   );
 }
@@ -183,13 +259,17 @@ function TopEntities({
   const top = [...entities].sort((a, b) => b.mention_count - a.mention_count).slice(0, 12);
   return (
     <div data-testid="graph-top-entities">
-      <p style={{ color: MUTED, fontSize: "0.85rem", margin: "0 0 0.4rem" }}>
-        Pick an entity to see how it connects, or start with your most-mentioned:
+      <p style={{ color: INK, fontSize: "0.82rem", fontWeight: 600, margin: "0 0 0.15rem" }}>
+        Start the graph
       </p>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+      <p style={{ color: MUTED, fontSize: "0.78rem", margin: "0 0 0.55rem" }}>
+        Pick one of your most-mentioned entities to see how it connects.
+      </p>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
         {top.map((e) => (
           <button
             key={e.id}
+            className="kg-chip"
             data-testid="graph-top-entity"
             data-entity-id={e.id}
             type="button"
@@ -197,13 +277,13 @@ function TopEntities({
             style={{
               display: "inline-flex",
               alignItems: "center",
-              gap: "0.3rem",
-              border: "1px solid #e2e8f0",
-              borderRadius: 6,
+              gap: "0.35rem",
+              border: `1px solid ${BORDER}`,
+              borderRadius: 999,
               background: "#fff",
-              padding: "0.18rem 0.45rem",
+              padding: "0.2rem 0.55rem",
               fontSize: "0.78rem",
-              color: "#334155",
+              color: INK,
               cursor: "pointer",
             }}
           >
@@ -352,8 +432,8 @@ function EgoGraph({ token, focusId, onFocusEntity, onOpenInCorpus }: EgoGraphPro
   if (!focusId) {
     return (
       <section data-testid="ego-graph" aria-label="Entity graph">
-        <GraphLegend />
-        <ScaleLegend />
+        <GraphStyles />
+        <LegendPanel />
         <div aria-live="polite" aria-busy={topEntities === null} style={{ marginTop: "0.75rem" }}>
           {topError ? (
             <p data-testid="graph-top-error" role="alert" style={{ color: RED, fontSize: "0.85rem" }}>
@@ -364,9 +444,21 @@ function EgoGraph({ token, focusId, onFocusEntity, onOpenInCorpus }: EgoGraphPro
               Loading entities…
             </p>
           ) : topEntities.length === 0 ? (
-            <p data-testid="graph-empty" style={{ color: MUTED, fontSize: "0.85rem" }}>
+            <div
+              data-testid="graph-empty"
+              style={{
+                border: `1px solid ${BORDER}`,
+                borderRadius: 8,
+                background: PANEL_BG,
+                padding: "1.1rem 0.9rem",
+                textAlign: "center",
+                color: MUTED,
+                fontSize: "0.82rem",
+                lineHeight: 1.5,
+              }}
+            >
               No entities yet — add documents to your corpus and they’ll appear here as they’re indexed.
-            </p>
+            </div>
           ) : (
             <TopEntities entities={topEntities} onFocusEntity={onFocusEntity} />
           )}
@@ -377,8 +469,8 @@ function EgoGraph({ token, focusId, onFocusEntity, onOpenInCorpus }: EgoGraphPro
 
   return (
     <section data-testid="ego-graph" aria-label="Entity graph">
-      <GraphLegend />
-      <ScaleLegend />
+      <GraphStyles />
+      <LegendPanel />
 
       <div aria-live="polite" aria-busy={loading} style={{ marginTop: "0.5rem" }}>
         {loading ? (
@@ -403,39 +495,25 @@ function EgoGraph({ token, focusId, onFocusEntity, onOpenInCorpus }: EgoGraphPro
                 canvas itself stays aria-hidden, with the detail rail as the accessible equivalent. */}
             <div
               data-testid="graph-controls"
-              style={{ display: "flex", gap: "0.4rem", margin: "0.3rem 0" }}
+              style={{ display: "flex", gap: "0.4rem", margin: "0.4rem 0 0.5rem" }}
             >
               <button
+                className="kg-btn"
                 data-testid="graph-zoom-fit"
                 type="button"
                 onClick={fitView}
                 aria-label="Fit the graph to the view"
-                style={{
-                  border: "1px solid #ddd",
-                  borderRadius: 5,
-                  background: "none",
-                  color: "#555",
-                  fontSize: "0.74rem",
-                  padding: "0.12rem 0.5rem",
-                  cursor: "pointer",
-                }}
+                style={toolbarBtnStyle}
               >
                 Fit
               </button>
               <button
+                className="kg-btn"
                 data-testid="graph-zoom-reset"
                 type="button"
                 onClick={fitView}
                 aria-label="Reset the graph view"
-                style={{
-                  border: "1px solid #ddd",
-                  borderRadius: 5,
-                  background: "none",
-                  color: "#555",
-                  fontSize: "0.74rem",
-                  padding: "0.12rem 0.5rem",
-                  cursor: "pointer",
-                }}
+                style={toolbarBtnStyle}
               >
                 Reset
               </button>
@@ -446,17 +524,17 @@ function EgoGraph({ token, focusId, onFocusEntity, onOpenInCorpus }: EgoGraphPro
               data-testid="graph-canvas"
               aria-hidden="true"
               style={{
-                border: "1px solid #eee",
-                borderRadius: 8,
-                background: "#fbfbfc",
-                height: 340,
+                border: `1px solid ${BORDER}`,
+                borderRadius: 10,
+                background: PANEL_BG,
+                height: CANVAS_H,
                 overflow: "hidden",
               }}
             >
               <ForceGraph2D
                 ref={graphRef}
                 graphData={{ nodes: graph.nodes, links: graph.links }}
-                height={340}
+                height={CANVAS_H}
                 nodeId="id"
                 nodeVal="val"
                 nodeLabel="label"
@@ -478,28 +556,56 @@ function EgoGraph({ token, focusId, onFocusEntity, onOpenInCorpus }: EgoGraphPro
                   const r = Math.max(3, n.val);
                   const x = n.x ?? 0;
                   const y = n.y ?? 0;
+                  // Keep separators/rings a constant ~px regardless of the current zoom.
+                  const hairline = 1.5 / globalScale;
+
+                  // Focus halo: a soft category-hue glow so the focused node reads instantly,
+                  // without overriding its type color.
+                  if (n.focus) {
+                    ctx.beginPath();
+                    ctx.arc(x, y, r + 4, 0, 2 * Math.PI);
+                    ctx.fillStyle = hexAlpha(NER, 0.15);
+                    ctx.fill();
+                  }
+
                   ctx.fillStyle = n.color;
                   if (n.kind === "document") {
                     ctx.fillRect(x - r, y - r, r * 2, r * 2);
+                    // Thin white edge so overlapping squares separate cleanly.
+                    ctx.lineWidth = hairline;
+                    ctx.strokeStyle = "#ffffff";
+                    ctx.strokeRect(x - r, y - r, r * 2, r * 2);
                   } else {
                     ctx.beginPath();
                     ctx.arc(x, y, r, 0, 2 * Math.PI);
                     ctx.fill();
+                    // Thin white stroke so overlapping dots stay visually distinct.
+                    ctx.lineWidth = hairline;
+                    ctx.strokeStyle = "#ffffff";
+                    ctx.stroke();
                     if (n.focus) {
-                      ctx.lineWidth = 2;
+                      ctx.beginPath();
+                      ctx.arc(x, y, r + 2, 0, 2 * Math.PI);
+                      ctx.lineWidth = 2 / globalScale;
                       ctx.strokeStyle = NER;
                       ctx.stroke();
                     }
                   }
                   // G-A: paint a name label only for the focus node + the top-degree neighbors
-                  // (pickLabeledNodeIds); the long tail stays bare dots with the hover tooltip.
+                  // (pickLabeledNodeIds); the long tail stays bare dots with the hover tooltip. A
+                  // white text-halo keeps the label legible over edges and other nodes.
                   if (labeledIds.has(n.id)) {
                     const fontPx = Math.max(9, 11 / globalScale);
-                    ctx.font = `${fontPx}px sans-serif`;
+                    ctx.font = `${n.focus ? "600 " : ""}${fontPx}px sans-serif`;
                     ctx.textAlign = "center";
                     ctx.textBaseline = "top";
-                    ctx.fillStyle = "#334155";
-                    ctx.fillText(n.label, x, y + r + 1);
+                    const ty = y + r + 2 / globalScale + 1;
+                    ctx.lineJoin = "round";
+                    ctx.lineWidth = 3 / globalScale;
+                    ctx.strokeStyle = "rgba(255, 255, 255, 0.92)";
+                    ctx.strokeText(n.label, x, ty);
+                    ctx.fillStyle = "#1e293b";
+                    ctx.fillText(n.label, x, ty);
                   }
                 }}
               />
@@ -543,7 +649,7 @@ function LayoutToggle({ layout, onChange }: LayoutToggleProps): React.ReactEleme
       style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginTop: "0.5rem" }}
     >
       <span style={{ fontSize: "0.74rem", color: MUTED }}>Layout</span>
-      <div style={{ display: "inline-flex", border: "1px solid #ddd", borderRadius: 6, overflow: "hidden" }}>
+      <div style={{ display: "inline-flex", border: `1px solid ${BORDER}`, borderRadius: 6, overflow: "hidden" }}>
         {options.map((o) => {
           const active = layout === o.id;
           return (
@@ -596,6 +702,26 @@ function GraphDetailRail({
   docError,
 }: GraphDetailRailProps): React.ReactElement {
   const f = nb.focus;
+  // One pill style shared by the co-occurring + document-entity chips so the rail reads consistently.
+  const entityChipStyle: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "0.35rem",
+    border: `1px solid ${BORDER}`,
+    borderRadius: 999,
+    background: "#fff",
+    fontSize: "0.76rem",
+    padding: "0.16rem 0.5rem",
+    cursor: "pointer",
+    color: INK,
+  };
+  // Each rail section after the header gets a hairline divider above it, so the hierarchy
+  // (focus -> documents -> co-occurring entities) reads as distinct, scannable blocks.
+  const sectionStyle: React.CSSProperties = {
+    borderTop: `1px solid ${BORDER}`,
+    paddingTop: "0.55rem",
+    marginTop: "0.55rem",
+  };
   return (
     <div
       data-testid="graph-detail"
@@ -603,40 +729,42 @@ function GraphDetailRail({
       aria-label="Graph detail"
       style={{
         marginTop: "0.6rem",
-        border: "1px solid #eee",
+        border: `1px solid ${BORDER}`,
         borderLeft: `3px solid ${TYPE_META[f.type].hue}`,
-        borderRadius: 6,
-        padding: "0.5rem 0.6rem",
+        borderRadius: 8,
+        background: "#fff",
+        padding: "0.65rem 0.75rem",
       }}
     >
       <div
         data-testid="graph-focus"
         aria-live="polite"
-        style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.4rem" }}
+        style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "0.4rem 0.5rem" }}
       >
-        <TypeBadge type={f.type} />
-        <strong style={{ fontSize: "0.9rem" }}>{f.name}</strong>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+          <TypeBadge type={f.type} />
+          <strong style={{ fontSize: "0.95rem", color: INK }}>{f.name}</strong>
+        </span>
         <span style={{ color: MUTED, fontSize: "0.74rem" }}>
           {TYPE_META[f.type].label} · {f.mention_count} {f.mention_count === 1 ? "mention" : "mentions"}
         </span>
       </div>
 
       {/* Documents the focus appears in. */}
-      <div style={{ marginBottom: "0.5rem" }}>
-        <div style={{ fontSize: "0.74rem", fontWeight: 600, color: MUTED, marginBottom: "0.2rem" }}>
-          Documents ({nb.documents.length})
-        </div>
+      <div style={sectionStyle}>
+        <div style={railHeadingStyle}>Documents ({nb.documents.length})</div>
         {nb.documents.length === 0 ? (
           <span data-testid="graph-docs-empty" style={{ color: MUTED, fontSize: "0.78rem" }}>
             No source documents.
           </span>
         ) : (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
             {nb.documents.map((d) => {
               const active = selDoc?.id === d.id;
               return (
                 <button
                   key={d.id}
+                  className="kg-chip"
                   data-testid="graph-doc"
                   data-doc-id={d.id}
                   type="button"
@@ -645,13 +773,14 @@ function GraphDetailRail({
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: "0.3rem",
-                    border: `1px solid ${active ? DOC_HUE : "#ddd"}`,
-                    borderRadius: 5,
-                    background: active ? "rgba(51,65,85,0.08)" : "none",
-                    color: "#334155",
+                    gap: "0.35rem",
+                    border: `1px solid ${active ? DOC_HUE : BORDER}`,
+                    borderRadius: 6,
+                    background: active ? "rgba(51,65,85,0.08)" : "#fff",
+                    color: INK,
                     fontSize: "0.74rem",
-                    padding: "0.12rem 0.4rem",
+                    fontWeight: active ? 600 : 400,
+                    padding: "0.16rem 0.45rem",
                     cursor: "pointer",
                   }}
                 >
@@ -668,36 +797,24 @@ function GraphDetailRail({
       </div>
 
       {/* Co-occurring entities (shared-document weight). */}
-      <div>
-        <div style={{ fontSize: "0.74rem", fontWeight: 600, color: MUTED, marginBottom: "0.2rem" }}>
-          Co-occurring entities ({nb.neighbors.length})
-        </div>
+      <div style={sectionStyle}>
+        <div style={railHeadingStyle}>Co-occurring entities ({nb.neighbors.length})</div>
         {nb.neighbors.length === 0 ? (
           <span data-testid="graph-neighbors-empty" style={{ color: MUTED, fontSize: "0.78rem" }}>
             No co-occurring entities yet.
           </span>
         ) : (
-          <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
+          <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
             {nb.neighbors.map((n) => (
               <li key={n.entity.id}>
                 <button
+                  className="kg-chip"
                   data-testid="graph-neighbor"
                   data-entity-id={n.entity.id}
                   type="button"
                   onClick={() => onFocusEntity(n.entity.id)}
                   title={`Focus ${n.entity.name}`}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "0.3rem",
-                    border: "1px solid #ddd",
-                    borderRadius: 14,
-                    background: "rgba(127,127,127,0.04)",
-                    fontSize: "0.76rem",
-                    padding: "0.14rem 0.45rem",
-                    cursor: "pointer",
-                    color: "#333",
-                  }}
+                  style={entityChipStyle}
                 >
                   <TypeBadge type={n.entity.type} />
                   {n.entity.name}
@@ -713,25 +830,20 @@ function GraphDetailRail({
 
       {/* Selected document -> its entities (the "document's entities" rail view). */}
       {selDoc && (
-        <div
-          data-testid="graph-doc-detail"
-          aria-live="polite"
-          style={{ marginTop: "0.5rem", borderTop: "1px solid #eee", paddingTop: "0.4rem" }}
-        >
+        <div data-testid="graph-doc-detail" aria-live="polite" style={sectionStyle}>
           <div
             style={{
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
               gap: "0.4rem",
-              marginBottom: "0.2rem",
+              marginBottom: "0.3rem",
             }}
           >
-            <span style={{ fontSize: "0.74rem", fontWeight: 600, color: MUTED }}>
-              Entities in “{selDoc.name}”
-            </span>
+            <span style={railHeadingStyle}>Entities in “{selDoc.name}”</span>
             {onOpenInCorpus && (
               <button
+                className="kg-btn"
                 data-testid="graph-open-in-corpus"
                 data-doc-id={selDoc.id}
                 type="button"
@@ -739,12 +851,12 @@ function GraphDetailRail({
                 title={`Open “${selDoc.name}” in the Corpus chunk inspector`}
                 style={{
                   border: `1px solid ${DOC_HUE}`,
-                  borderRadius: 5,
-                  background: "none",
-                  color: "#334155",
+                  borderRadius: 6,
+                  background: "#fff",
+                  color: INK,
                   fontSize: "0.72rem",
                   fontWeight: 600,
-                  padding: "0.12rem 0.45rem",
+                  padding: "0.16rem 0.5rem",
                   cursor: "pointer",
                   flex: "0 0 auto",
                 }}
@@ -762,26 +874,16 @@ function GraphDetailRail({
               {docError}
             </span>
           ) : docEntities && docEntities.length > 0 ? (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
               {docEntities.map((e) => (
                 <button
                   key={e.id}
+                  className="kg-chip"
                   data-testid="graph-doc-entity"
                   data-entity-id={e.id}
                   type="button"
                   onClick={() => onFocusEntity(e.id)}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "0.3rem",
-                    border: "1px solid #ddd",
-                    borderRadius: 14,
-                    background: "rgba(127,127,127,0.04)",
-                    fontSize: "0.76rem",
-                    padding: "0.14rem 0.45rem",
-                    cursor: "pointer",
-                    color: "#333",
-                  }}
+                  style={entityChipStyle}
                 >
                   <TypeBadge type={e.type} />
                   {e.name}
