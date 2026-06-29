@@ -71,7 +71,7 @@ re-planning). The MV3 browser extension (M10) remains next.
   pause / resume) and a live `events` SSE, plus a folder UI (status cards, a nested directory tree,
   file drill-down). The sync is **fail-closed to local providers** — it never sends a document off
   device. See [Documents & folders](docs/guides/documents-and-folders.md).
-- **Tool-armed judge fact-check (#479, #482)**: in the multi-agent graph the final answer is
+- **Tool-armed judge fact-check (#479, #482, #489)**: in the multi-agent graph the final answer is
   fact-checked against **fresh, independently-gathered** ground truth — the verifier (accurate mode)
   and the critic (when it is the last judge, in standard mode) run a bounded independent RAG/KAG/memory
   **retrieval lookup** PLUS a **verify-only tool pass** (a tiny run with the researcher's web/MCP
