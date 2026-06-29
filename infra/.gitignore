@@ -1,0 +1,45 @@
+# ---- Terraform ----
+# Local state and backups (may contain sensitive values)
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Provider plugins, modules, lock dirs
+**/.terraform/*
+.terraform.tfstate.lock.info
+
+# Plan output files
+*.tfplan
+tfplan
+
+# Variable files with real values (the example is committed)
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Terraform CLI config / sensitive overrides
+*_override.tf
+*_override.tf.json
+override.tf
+override.tf.json
+
+# ---- Secrets / keys (never commit) ----
+*.pem
+*.key
+id_rsa
+id_rsa.*
+*.pub
+credentials.json
+secrets.json
+kubeconfig
+.env
+.env.*
+
+# ---- Claude Code local settings (may contain credentials/paths) ----
+.claude/
+
+# ---- OS / editor noise ----
+.DS_Store
+*.swp
+*~

@@ -1,0 +1,12 @@
+#cloud-config
+# Renders the developer toolchain installer onto the VM and runs it on first
+# boot. The script content is injected (base64) from scripts/setup-devtools.sh
+# so there is a single source of truth.
+write_files:
+  - path: /opt/devtools/setup-devtools.sh
+    permissions: '0755'
+    owner: root:root
+    encoding: b64
+    content: ${setup_script_b64}
+runcmd:
+  - [ bash, -lc, "TARGET_USER=${admin_username} PREPULL_MODELS=${prepull_models} /opt/devtools/setup-devtools.sh >> /var/log/devtools-setup.log 2>&1 || true" ]
