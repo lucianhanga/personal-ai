@@ -13,13 +13,13 @@ resource group, network, VM, and its own Terraform state (a Terraform workspace
 named after the instance), so instances never collide:
 
 ```bash
-./scripts/provision.sh --name train -r eastus
-./scripts/provision.sh --name web   -r eastus       # second VM, same region
-./scripts/provision.sh --name eu    -r westeurope
-./scripts/monitor.sh --all                          # all instances + total cost
-./scripts/connect.sh --name train
-./scripts/stop.sh    --name web                     # halt billing on one
-./scripts/destroy.sh --name eu                      # delete one entirely
+infra/scripts/provision.sh --name train -r eastus
+infra/scripts/provision.sh --name web   -r eastus       # second VM, same region
+infra/scripts/provision.sh --name eu    -r westeurope
+infra/scripts/monitor.sh --all                          # all instances + total cost
+infra/scripts/connect.sh --name train
+infra/scripts/stop.sh    --name web                     # halt billing on one
+infra/scripts/destroy.sh --name eu                      # delete one entirely
 ```
 
 Key points:
@@ -160,27 +160,27 @@ From the repository root:
 
 ```bash
 # 1. Provision (accepts marketplace terms, restricts SSH to your IP, applies)
-./scripts/provision.sh
+infra/scripts/provision.sh
 
 # 2. Connect to the VM
-./scripts/connect.sh                # interactive SSH shell
+infra/scripts/connect.sh                # interactive SSH shell
 
 # 3. Check status any time (read-only; discovers all instances from Azure)
-./scripts/monitor.sh                # ALL instances + standing IP/disk monthly cost
-./scripts/monitor.sh --name devel   # just one instance
-./scripts/monitor.sh --gpu          # also runs nvidia-smi over SSH
-./scripts/monitor.sh --watch 15     # refresh every 15 seconds
+infra/scripts/monitor.sh                # ALL instances + standing IP/disk monthly cost
+infra/scripts/monitor.sh --name devel   # just one instance
+infra/scripts/monitor.sh --gpu          # also runs nvidia-smi over SSH
+infra/scripts/monitor.sh --watch 15     # refresh every 15 seconds
 
 # 4a. Stop when idle (deallocate; halts GPU billing, keeps disk and data)
-./scripts/stop.sh
-./scripts/start.sh                  # resume later
+infra/scripts/stop.sh
+infra/scripts/start.sh                  # resume later
 
 # 4b. Destroy everything (DELETES the disk and all data)
-./scripts/destroy.sh
+infra/scripts/destroy.sh
 ```
 
 The default machine is `devel`. Add `--name <name>` to any verb to target a
-specific machine (e.g. `./scripts/stop.sh --name train`).
+specific machine (e.g. `infra/scripts/stop.sh --name train`).
 
 ## Connecting to the VM
 
@@ -189,21 +189,21 @@ verifies the VM is running, and opens an SSH session. It accepts a flag, but no
 arguments are required:
 
 ```bash
-./scripts/connect.sh                          # interactive shell
-./scripts/connect.sh nvidia-smi               # run one command and exit
-./scripts/connect.sh -i ~/.ssh/mykey          # use a specific private key
-./scripts/connect.sh -- -L 8888:localhost:8888  # forward a port (e.g. Jupyter)
+infra/scripts/connect.sh                          # interactive shell
+infra/scripts/connect.sh nvidia-smi               # run one command and exit
+infra/scripts/connect.sh -i ~/.ssh/mykey          # use a specific private key
+infra/scripts/connect.sh -- -L 8888:localhost:8888  # forward a port (e.g. Jupyter)
 ```
 
-If the VM is stopped/deallocated, `connect.sh` tells you to run `./scripts/start.sh`
+If the VM is stopped/deallocated, `connect.sh` tells you to run `infra/scripts/start.sh`
 first. You can also connect manually with the command printed by `provision.sh`
-or shown by `terraform -chdir=terraform output ssh_connection_string`.
+or shown by `terraform -chdir=infra/terraform output ssh_connection_string`.
 
 ## Developer toolchain (auto-installed on first boot)
 
 By default `provision.sh` installs a developer toolchain on the VM via cloud-init
-(`terraform/cloud-init.yaml.tftpl` runs `scripts/setup-devtools.sh` on first
-boot). It installs the tools needed by the `doktokNG` and `personalAI` projects
+(`infra/terraform/cloud-init.yaml.tftpl` runs `infra/scripts/setup-devtools.sh` on
+first boot). It installs the tools needed by the `doktokNG` and `personalAI` projects
 (tools only - it does not clone the repos):
 
 - build libs + native deps (`libpq`, `libmagic`, `libGL`, `libgomp`, ...)
@@ -283,7 +283,7 @@ For a corporate range, pass a wider CIDR, for example
 The scripts are the recommended path, but you can drive Terraform yourself:
 
 ```bash
-cd terraform
+cd infra/terraform
 cp terraform.tfvars.example terraform.tfvars   # edit ssh_source_address_prefix
 terraform init
 # Pick the instance's workspace (the scripts do this for you). For the default:

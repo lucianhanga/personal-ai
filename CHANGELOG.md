@@ -11,6 +11,12 @@ generated OpenAPI document.
 
 ## [Unreleased]
 
+### Added
+- **A100 dev-env infra consolidated into `infra/` (#500)**: the standalone
+  `dev.env.ai.a100` repo (Terraform for an Azure A100 80GB dev VM plus the
+  provision/start/stop/destroy/sync/monitor ops scripts) was melted into this
+  monorepo under `infra/`. See [Remote A100 dev VM](docs/development/remote-dev-a100.md).
+
 ## [0.9.0] — 2026-06-29
 
 Milestone **M11 (knowledge graph / KAG)** — the entity knowledge graph over your corpus — brought

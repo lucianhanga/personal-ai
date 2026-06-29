@@ -163,6 +163,7 @@ The complete provenance register (maintainer, license, maturity, security notes)
 | [Dependency policy](./docs/policies/DEPENDENCY-POLICY.md) | Provenance, verification, SBOM, scanning rules. |
 | [Supply-chain register](./docs/supply-chain/SUPPLY-CHAIN.md) | Living inventory of every dependency + creator. |
 | [Onboarding / dev guide](./docs/ONBOARDING.md) | How to work in this repo. |
+| [Remote A100 dev VM](./docs/development/remote-dev-a100.md) | Provision/sync/teardown an Azure A100 GPU dev VM (Terraform + ops scripts in [`infra/`](./infra/)). |
 | [Releasing & versioning](./docs/development/releasing.md) | Version source of truth, release & signing. |
 | [Contributing](./CONTRIBUTING.md) | GitHub flow, branching, commits, PRs. |
 | [Changelog](./CHANGELOG.md) | Per-release history and the versioning policy. |
