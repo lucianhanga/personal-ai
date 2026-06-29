@@ -45,6 +45,8 @@ SSH_CIDR=""
 REGION=""
 REGION_SET="false"
 ON_DEMAND="false"   # true -> provision a Regular (on-demand) VM instead of Spot.
+DEVTOOLS="true"     # false -> skip the cloud-init developer toolchain install.
+SKIP_MODELS="false" # true -> install tools but do not pre-pull Ollama models.
 
 # Known Azure region short-names, grouped. Used for --help discoverability and
 # to warn (not block) on an unrecognized --region value.
@@ -69,6 +71,11 @@ Options:
                             is not evictable. Default is Spot.
       --ssh-cidr <CIDR>     Source CIDR allowed to reach SSH (port 22).
                             Default: auto-detected current public IP as /32.
+      --no-devtools         Do NOT install the developer toolchain on first boot
+                            (default: install uv/Python, Node/pnpm, Docker,
+                            Ollama, gh and pre-pull the shared Ollama models).
+      --skip-models         Install the toolchain but do NOT pre-pull the ~21 GB
+                            Ollama models (pull them on first use instead).
   -h, --help                Show this help.
 
 Regions (short-names):
@@ -96,6 +103,8 @@ while [[ $# -gt 0 ]]; do
     -y|--auto-approve) AUTO_APPROVE="true"; shift ;;
     -r|--region|--location) REGION="${2:-}"; REGION_SET="true"; shift 2 ;;
     --on-demand|--regular|--no-spot) ON_DEMAND="true"; shift ;;
+    --no-devtools) DEVTOOLS="false"; shift ;;
+    --skip-models) SKIP_MODELS="true"; shift ;;
     --ssh-cidr) SSH_CIDR="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) log_err "Unknown argument: $1"; usage; exit 2 ;;
@@ -215,9 +224,20 @@ run_terraform() {
     log_info "Purchasing model for this run: Regular (on-demand, not evictable)."
   fi
 
+  # Developer toolchain toggles (cloud-init). Defaults install tools + models.
+  local prepull="true"
+  [[ "$SKIP_MODELS" == "true" ]] && prepull="false"
+  if [[ "$DEVTOOLS" == "true" ]]; then
+    log_info "Developer toolchain: install on first boot (prepull models: ${prepull})."
+  else
+    log_info "Developer toolchain: skipped (--no-devtools)."
+  fi
+
   log_info "Running terraform plan..."
   terraform plan -input=false \
     -var "ssh_source_address_prefix=${SSH_CIDR}" \
+    -var "enable_devtools=${DEVTOOLS}" \
+    -var "prepull_models=${prepull}" \
     "${tf_region_var[@]+"${tf_region_var[@]}"}" \
     "${tf_priority_var[@]+"${tf_priority_var[@]}"}" \
     -out=tfplan

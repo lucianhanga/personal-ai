@@ -206,6 +206,22 @@ variable "image_version" {
 }
 
 ###############################################################################
+# Developer toolchain (cloud-init)
+###############################################################################
+
+variable "enable_devtools" {
+  description = "Install the developer toolchain (uv/Python 3.12, Node 22/pnpm, Docker, Ollama, gh, build libs) on first boot via cloud-init. Tools only; does not clone the project repos."
+  type        = bool
+  default     = true
+}
+
+variable "prepull_models" {
+  description = "Pre-pull the shared Ollama models (qwen3-embedding:0.6b + qwen3.6:35b-a3b, ~21 GB) during first-boot setup. Only applies when enable_devtools is true."
+  type        = bool
+  default     = true
+}
+
+###############################################################################
 # Tagging
 ###############################################################################
 

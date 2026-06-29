@@ -115,6 +115,14 @@ resource "azurerm_linux_virtual_machine" "this" {
     azurerm_network_interface.this.id,
   ]
 
+  # First-boot developer toolchain install via cloud-init (tools only; does not
+  # clone repos). Disabled by setting enable_devtools = false.
+  custom_data = var.enable_devtools ? base64encode(templatefile("${path.module}/cloud-init.yaml.tftpl", {
+    setup_script_b64 = base64encode(file("${path.module}/../scripts/setup-devtools.sh"))
+    admin_username   = var.admin_username
+    prepull_models   = var.prepull_models ? "true" : "false"
+  })) : null
+
   # SSH key auth only; no password login.
   disable_password_authentication = true
 

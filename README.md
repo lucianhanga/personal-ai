@@ -15,6 +15,7 @@ marketplace image so GPU drivers and the container toolkit are preinstalled.
 | `deallocate.sh`     | Deallocate the VM to halt GPU billing. Keeps disk, IP, data.         |
 | `start.sh`          | Resume a stopped (deallocated) VM.                                   |
 | `deprovision.sh`    | Lifecycle: `--deallocate` / `--start` / `--destroy` (full teardown). |
+| `setup-devtools.sh` | Idempotent toolchain installer run on the VM (via cloud-init).       |
 
 `deallocate.sh` and `start.sh` are convenience wrappers over
 `deprovision.sh --deallocate` and `deprovision.sh --start`. There is deliberately
@@ -116,6 +117,30 @@ arguments are required:
 If the VM is stopped/deallocated, `connect.sh` tells you to run `./scripts/start.sh`
 first. You can also connect manually with the command printed by `provision.sh`
 or shown by `terraform -chdir=terraform output ssh_connection_string`.
+
+## Developer toolchain (auto-installed on first boot)
+
+By default `provision.sh` installs a developer toolchain on the VM via cloud-init
+(`terraform/cloud-init.yaml.tftpl` runs `scripts/setup-devtools.sh` on first
+boot). It installs the tools needed by the `doktokNG` and `personalAI` projects
+(tools only - it does not clone the repos):
+
+- build libs + native deps (`libpq`, `libmagic`, `libGL`, `libgomp`, ...)
+- git + GitHub CLI (`gh`)
+- Docker + compose v2
+- `uv` + Python 3.12
+- Node.js 22 + `pnpm` 11.5.1
+- Ollama (uses the A100 GPU automatically)
+- pre-pulls the shared Ollama models `qwen3-embedding:0.6b` and
+  `qwen3.6:35b-a3b` (~21 GB)
+
+Flags:
+- `provision.sh --no-devtools` - skip the toolchain entirely.
+- `provision.sh --skip-models` - install tools but do not pre-pull the models.
+
+Progress is logged on the VM at `/var/log/devtools-setup.log`; a summary marker
+is written to `/var/lib/devtools-setup.done` when it finishes. The install is
+idempotent and can be re-run: `sudo TARGET_USER=azureuser bash /opt/devtools/setup-devtools.sh`.
 
 ## Spot VM caveat (read this)
 
@@ -226,10 +251,11 @@ and run `terraform init -migrate-state`.
 │   ├── deprovision.sh    # deallocate | start | destroy
 │   └── monitor.sh        # read-only status dashboard
 └── terraform/
-    ├── versions.tf       # provider/version pins, backend guidance
-    ├── variables.tf      # all inputs with template-matching defaults
-    ├── main.tf           # RG, network, NSG, NIC, VM
-    ├── outputs.tf        # IP, SSH string, names
+    ├── versions.tf          # provider/version pins, backend guidance
+    ├── variables.tf         # all inputs with template-matching defaults
+    ├── main.tf              # RG, network, NSG, NIC, VM, cloud-init
+    ├── outputs.tf           # IP, SSH string, names
+    ├── cloud-init.yaml.tftpl # first-boot toolchain install template
     └── terraform.tfvars.example
 ```
 
