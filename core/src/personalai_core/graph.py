@@ -52,6 +52,7 @@ from personalai_core.agent import (
     run_agent,
 )
 from personalai_core.gateway import RegisteredTool, ToolGateway
+from personalai_core.reasoning import resolve_reasoning
 from personalai_core.runaway import RunawayConfig
 from personalai_core.sources import (
     deserialize_evidence,
@@ -121,6 +122,10 @@ def _state_subject(state: GraphState) -> str:
 # per-agent tool grant). All four prompts are tenant-overridable.
 AGENT_NAMES: tuple[str, ...] = ("planner", "researcher", "critic", "verifier")
 TOOL_USING_AGENTS: frozenset[str] = frozenset({"researcher"})
+# Agents whose tool set is user-configurable (their card shows the Tools/MCPs list): the researcher
+# (its tool loop) and the critic/verifier (their independent fact-check pass, gated by the judge
+# fact-check setting). The planner is genuinely tool-free.
+TOOL_CONFIGURABLE_AGENTS: frozenset[str] = frozenset({"researcher", "critic", "verifier"})
 
 # Default system prompt per agent. Exposed (not private) so the backend can echo them to the UI as
 # the editable defaults (#290), exactly like CoreConfig defaults for settings. A tenant's saved
@@ -340,12 +345,15 @@ async def _stream_text(
     model: str,
     messages: Sequence[ChatMessage],
     emit: Callable[[str], None],
+    *,
+    think: bool | None = False,
 ) -> str:
-    """A tool-free, reasoning-off model call. Calls ``emit(delta)`` for each delta so the planner/
-    critic stream like the researcher, and returns the full concatenated text."""
+    """A tool-free model call (reasoning off by default). Calls ``emit(delta)`` for each delta so
+    the planner/critic stream like the researcher, and returns the full concatenated text. ``think``
+    enables the model's reasoning trace for this call (per-agent reasoning levels)."""
     text = ""
     async for chunk in provider.stream(
-        GenerationRequest(messages=messages, model=model, think=False)
+        GenerationRequest(messages=messages, model=model, think=think)
     ):
         if chunk.delta:
             text += chunk.delta
@@ -373,6 +381,9 @@ def _build_graph(
     max_iterations: int,
     checkpointer: BaseCheckpointSaver[Any] | None,
     prompts: Mapping[str, str] | None = None,
+    reasoning_levels: Mapping[str, str] | None = None,
+    model_overrides: Mapping[str, str] | None = None,
+    disabled_tools: Mapping[str, Sequence[str]] | None = None,
     accuracy_mode: str = "standard",
     runaway: RunawayConfig | None = None,
     sources: Sequence[RetrievalSource] = (),
@@ -395,6 +406,32 @@ def _build_graph(
     topology is exactly today's (planner -> researcher -> ...) — a strict, safe superset.
     """
     agent_prompts = resolve_prompts(prompts)
+    _levels = dict(reasoning_levels or {})
+    _models = dict(model_overrides or {})
+    # Default per-agent reasoning preserves today's behavior: planner/critic/verifier are
+    # reasoning-off and the researcher inherits the turn-level `think`. A tenant override wins.
+    _default_reasoning = {"planner": "off", "critic": "off", "verifier": "off"}
+
+    _disabled = {a: frozenset(t) for a, t in (disabled_tools or {}).items()}
+
+    def _agent_model(agent: str) -> str:
+        """The model this agent runs on: its per-agent override, else the turn's model."""
+        return _models.get(agent) or model
+
+    def _agent_tools(agent: str) -> list[RegisteredTool]:
+        """The tools offered to an agent: all tools minus the ones disabled for it (#290). The
+        researcher uses this for its loop; the critic/verifier for their independent fact-check."""
+        off = _disabled.get(agent, frozenset())
+        return [rt for rt in tools if rt.manifest.name not in off]
+
+    def _agent_reasoning(agent: str) -> tuple[bool | None, list[ChatMessage]]:
+        """(think, nudge messages) for an agent from its configured level (or per-agent default)."""
+        level = _levels.get(agent) or _default_reasoning.get(agent)
+        agent_think, nudge = resolve_reasoning(level)
+        if agent_think is None:  # no per-agent opinion (researcher default) -> inherit turn `think`
+            agent_think = think
+        return agent_think, [ChatMessage(Role.SYSTEM, nudge)] if nudge else []
+
     verify = accuracy_mode == "accurate"
     multi_source = bool(sources)
 
@@ -420,11 +457,18 @@ def _build_graph(
                     "which sources/tools to use or how the question is framed; do not repeat it.",
                 )
             ]
+        p_think, p_nudge = _agent_reasoning("planner")
         plan = await _stream_text(
             provider,
-            model,
-            [ChatMessage(Role.SYSTEM, agent_prompts["planner"]), *messages, *replan_msgs],
+            _agent_model("planner"),
+            [
+                ChatMessage(Role.SYSTEM, agent_prompts["planner"]),
+                *p_nudge,
+                *messages,
+                *replan_msgs,
+            ],
             lambda d: writer(AgentEvent(type="plan", text=d)),
+            think=p_think,
         )
         out: dict[str, Any] = {"plan": plan}
         if multi_source:
@@ -554,6 +598,9 @@ def _build_graph(
         # suspend, so a block degrades to today's behavior inline (retry denied -> egress error).
         writer = get_stream_writer()
         _emit_stage(writer, "researcher", "Researching")
+        r_think, r_nudge = _agent_reasoning("researcher")
+        r_model = _agent_model("researcher")
+        r_tools = _agent_tools("researcher")
 
         answer, usage = "", {}
         evidence: list[str] = []
@@ -601,12 +648,12 @@ def _build_graph(
             return run_agent(
                 messages=(),
                 provider=provider,
-                model=model,
+                model=r_model,
                 gateway=gateway,
-                tools=tools,
+                tools=r_tools,
                 grants=grants,
                 approved=approved,
-                think=think,
+                think=r_think,
                 max_iterations=max_iterations,
                 runaway=runaway,
                 resume_from=ResumeFrame(
@@ -626,7 +673,7 @@ def _build_graph(
             # current_egress, or left it denied). The frame is the durably-persisted ``pending``.
             agent_iter: AsyncIterator[AgentEvent] = _resume_iter(pending)
         else:
-            convo = [ChatMessage(Role.SYSTEM, agent_prompts["researcher"]), *messages]
+            convo = [ChatMessage(Role.SYSTEM, agent_prompts["researcher"]), *r_nudge, *messages]
             # Multi-source grounded block (#420): the merge node's fused, budget-fitted,
             # [n]-numbered evidence — the researcher answers from THIS (replacing the pre-baked
             # _retrieve_context string) and may still call tools mid-answer (the egress gate edge is
@@ -649,12 +696,12 @@ def _build_graph(
             agent_iter = run_agent(
                 messages=convo,
                 provider=provider,
-                model=model,
+                model=r_model,
                 gateway=gateway,
-                tools=tools,
+                tools=r_tools,
                 grants=grants,
                 approved=approved,
-                think=think,
+                think=r_think,
                 max_iterations=max_iterations,
                 runaway=runaway,
             )
@@ -729,13 +776,17 @@ def _build_graph(
         except Exception:  # noqa: BLE001 - fail-open: the check must never block finalizing
             return []
 
-    async def _independent_tool_check(answer: str, state: GraphState) -> list[ChatMessage]:
+    async def _independent_tool_check(
+        answer: str, state: GraphState, judge: str
+    ) -> list[ChatMessage]:
         # Bounded, verify-ONLY tool pass (#465): the critic/verifier are otherwise tool-free, so
         # they cannot check web-/tool-derived claims (the retrieval lookup only covers RAG/KAG/mem).
-        # Give the judge the researcher's tools for a tiny (VERIFIER_TOOL_ITERS) run prompted to
-        # confirm/refute the draft's claims, NOT re-research. No durable gate: an egress/approval
-        # block just yields no finding (fail-open). Skipped when off or no tools are available.
-        if not (verifier_tools and tools and answer):
+        # Give THIS judge its own tools (minus the ones disabled for it) for a tiny
+        # (VERIFIER_TOOL_ITERS) run prompted to confirm/refute the draft's claims, NOT re-research.
+        # No durable gate: an egress/approval block just yields no finding (fail-open). Skipped when
+        # off or no tools are available.
+        j_tools = _agent_tools(judge)
+        if not (verifier_tools and j_tools and answer):
             return []
         _emit_stage(get_stream_writer(), "verifier", "Fact-checking")
         findings, tool_hits = "", []
@@ -748,9 +799,9 @@ def _build_graph(
             async for ev in run_agent(
                 messages=verify_msgs,
                 provider=provider,
-                model=model,
+                model=_agent_model(judge),
                 gateway=gateway,
-                tools=tools,
+                tools=j_tools,
                 grants=grants,
                 approved=approved,
                 think=False,
@@ -780,11 +831,14 @@ def _build_graph(
             )
         ]
 
-    async def _independent_checks(answer: str, state: GraphState) -> list[ChatMessage]:
+    async def _independent_checks(answer: str, state: GraphState, judge: str) -> list[ChatMessage]:
         # The judge's full independent fact-check: the RAG/KAG/memory retrieval lookup PLUS the
-        # bounded verify-only tool pass, so it covers BOTH source-grounded and tool/web-derived
-        # claims. Either half is independently fail-open / may return nothing.
-        return [*await _independent_lookup(state), *await _independent_tool_check(answer, state)]
+        # bounded verify-only tool pass (using THIS judge's own tools), so it covers BOTH
+        # source-grounded and tool/web-derived claims. Either half is fail-open / may return [].
+        return [
+            *await _independent_lookup(state),
+            *await _independent_tool_check(answer, state, judge),
+        ]
 
     async def critic(state: GraphState) -> dict[str, Any]:
         # The draft goes in a USER message, not an ASSISTANT one: with the draft as an assistant
@@ -795,9 +849,11 @@ def _build_graph(
         # Arm the critic with the independent fact-check ONLY when it is the last judge (standard
         # mode -- no verifier downstream), so the final answer is checked in every multi-agent
         # config without a redundant second lookup in accurate mode (the verifier does it there).
-        independent = [] if verify else await _independent_checks(answer, state)
+        independent = [] if verify else await _independent_checks(answer, state, "critic")
+        c_think, c_nudge = _agent_reasoning("critic")
         review = [
             ChatMessage(Role.SYSTEM, agent_prompts["critic"]),
+            *c_nudge,
             *messages,
             *_evidence_messages(_judge_evidence(state)),
             *independent,
@@ -809,7 +865,11 @@ def _build_graph(
         # finalized answer stays the agents' result; their review/discussion shows in the panel.
         critique = (
             await _stream_text(
-                provider, model, review, lambda d: writer(AgentEvent(type="critique", text=d))
+                provider,
+                _agent_model("critic"),
+                review,
+                lambda d: writer(AgentEvent(type="critique", text=d)),
+                think=c_think,
             )
         ).strip()
         if not critique:
@@ -835,10 +895,10 @@ def _build_graph(
         # standard mode) -- a RAG/KAG/memory retrieval lookup PLUS a verify-only tool pass, so it
         # covers tool/web-derived claims too, not just source-grounded ones. The verifier always
         # runs it when armed (it is the last judge in accurate mode). Fail-open: any error -> [].
-        independent = await _independent_checks(answer, state)
+        independent = await _independent_checks(answer, state, "verifier")
         judged = await generate_structured(
             provider=provider,
-            model=model,
+            model=_agent_model("verifier"),
             messages=[
                 ChatMessage(Role.SYSTEM, agent_prompts["verifier"]),
                 *messages,
@@ -1023,6 +1083,9 @@ async def run_graph(
     thread_id: str | None = None,
     resume: Any | None = None,
     prompts: Mapping[str, str] | None = None,
+    reasoning_levels: Mapping[str, str] | None = None,
+    model_overrides: Mapping[str, str] | None = None,
+    disabled_tools: Mapping[str, Sequence[str]] | None = None,
     accuracy_mode: str = "standard",
     runaway: RunawayConfig | None = None,
     sources: Sequence[RetrievalSource] = (),
@@ -1056,6 +1119,9 @@ async def run_graph(
         max_iterations=max_iterations,
         checkpointer=checkpointer,
         prompts=prompts,
+        reasoning_levels=reasoning_levels,
+        model_overrides=model_overrides,
+        disabled_tools=disabled_tools,
         accuracy_mode=accuracy_mode,
         runaway=runaway,
         sources=sources,

@@ -4,11 +4,13 @@ import { AgentCollaborationGraph } from "./AgentGraph";
 import { AGENT_BG, AGENT_FG } from "./agentColors";
 import {
   fetchAgentConfig,
+  fetchModels,
   fetchSettings,
   saveAgentConfig,
   saveSettings,
   type AgentConfigView,
   type AgentGraphConfig,
+  type ModelInfo,
   type TenantSettings,
 } from "./api";
 
@@ -23,6 +25,8 @@ type Mode = "single" | "multi" | "custom";
 interface AgentDraft {
   prompt: string; // "" = inherit the default
   disabled: Set<string>; // tool/MCP names disabled for this agent
+  reasoning: string | null; // null = inherit the turn's reasoning level
+  model: string | null; // null = inherit the turn's model
 }
 
 const MODES: { value: Mode; label: string; desc: string; disabled?: boolean }[] = [
@@ -45,6 +49,7 @@ export function Agents({ token }: { token: string }): React.ReactElement {
   const [settings, setSettings] = useState<TenantSettings | null>(null);
   const [view, setView] = useState<AgentConfigView | null>(null);
   const [drafts, setDrafts] = useState<Record<string, AgentDraft>>({});
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +65,8 @@ export function Agents({ token }: { token: string }): React.ReactElement {
           next[a.name] = {
             prompt: saved?.prompt ?? "",
             disabled: new Set(saved?.disabled_tools ?? []),
+            reasoning: saved?.reasoning ?? null,
+            model: saved?.model ?? null,
           };
         }
         setDrafts(next);
@@ -71,6 +78,14 @@ export function Agents({ token }: { token: string }): React.ReactElement {
   }
 
   useEffect(reload, [token]);
+
+  // Fetch available model ids for the per-agent model override dropdown. Best-effort: if the
+  // models request fails the dropdown just shows "Inherit (turn model)" with no other options.
+  useEffect(() => {
+    fetchModels(token)
+      .then(({ models }) => setAvailableModels(models))
+      .catch(() => setAvailableModels([]));
+  }, [token]);
 
   function touch(): void {
     setDirty(true);
@@ -110,16 +125,47 @@ export function Agents({ token }: { token: string }): React.ReactElement {
     touch();
   }
 
+  function setAgentReasoning(agent: string, value: string | null): void {
+    setDrafts((d) => ({ ...d, [agent]: { ...d[agent], reasoning: value } }));
+    touch();
+  }
+
+  function setAgentModel(agent: string, value: string | null): void {
+    setDrafts((d) => ({ ...d, [agent]: { ...d[agent], model: value } }));
+    touch();
+  }
+
+  function setDefaultProvider(value: string | null): void {
+    if (settings === null) return;
+    setSettings({ ...settings, model_provider: value as "ollama" | "openai_compat" | null });
+    touch();
+  }
+
+  function setDefaultModel(value: string | null): void {
+    if (settings === null) return;
+    setSettings({ ...settings, default_model: value });
+    touch();
+  }
+
+  function setDefaultReasoning(value: string | null): void {
+    if (settings === null) return;
+    setSettings({ ...settings, default_reasoning: value as "off" | "low" | "medium" | "high" | null });
+    touch();
+  }
+
   async function onSave(): Promise<void> {
     if (settings === null) return;
-    // Only persist agents that actually deviate from the defaults (non-empty prompt or any tool off).
+    // Only persist agents that actually deviate from the defaults (non-empty prompt, any tool
+    // disabled, or a reasoning/model override set).
     const config: AgentGraphConfig = {
       agents: Object.entries(drafts)
-        .filter(([, d]) => d.prompt.trim() !== "" || d.disabled.size > 0)
+        .filter(([, d]) => d.prompt.trim() !== "" || d.disabled.size > 0 || d.reasoning !== null || d.model !== null)
         .map(([name, d]) => ({
           name,
           prompt: d.prompt.trim() === "" ? null : d.prompt,
           disabled_tools: [...d.disabled],
+          reasoning: d.reasoning,
+          model: d.model,
         })),
     };
     try {
@@ -210,6 +256,57 @@ export function Agents({ token }: { token: string }): React.ReactElement {
         ))}
       </fieldset>
 
+      {/* Global defaults: provider, model, and reasoning level the backend applies when no per-turn override is set. */}
+      <fieldset
+        data-testid="agents-defaults"
+        style={{ border: "1px solid #eee", borderRadius: 6, margin: "0 0 0.5rem", padding: "0.5rem" }}
+      >
+        <legend style={{ fontSize: "0.8rem", color: "#555" }}>Defaults</legend>
+        <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+          <label style={{ fontSize: "0.78rem" }}>
+            Provider{" "}
+            <select
+              data-testid="agents-default-provider"
+              value={settings.model_provider ?? ""}
+              onChange={(e) => setDefaultProvider(e.target.value || null)}
+            >
+              <option value="">Use server default</option>
+              <option value="ollama">ollama</option>
+              <option value="openai_compat">openai_compat</option>
+            </select>
+          </label>
+          <label style={{ fontSize: "0.78rem" }}>
+            Default model{" "}
+            <select
+              data-testid="agents-default-model"
+              value={settings.default_model ?? ""}
+              onChange={(e) => setDefaultModel(e.target.value || null)}
+            >
+              <option value="">Use server default</option>
+              {availableModels.map((m) => (
+                <option key={m.name} value={m.name}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={{ fontSize: "0.78rem" }}>
+            Default reasoning{" "}
+            <select
+              data-testid="agents-default-reasoning"
+              value={settings.default_reasoning ?? ""}
+              onChange={(e) => setDefaultReasoning(e.target.value || null)}
+            >
+              <option value="">Inherit (server default)</option>
+              <option value="off">Off</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+        </div>
+      </fieldset>
+
       {effectiveMode === "multi" && (
         <>
           <label style={{ display: "flex", gap: "0.5rem", alignItems: "center", padding: "0.25rem 0" }}>
@@ -237,16 +334,28 @@ export function Agents({ token }: { token: string }): React.ReactElement {
             </span>
           </label>
 
-          {view.agents.map((a) => (
-            <fieldset
-              key={a.name}
-              data-testid={`agents-card-${a.name}`}
+          <div
+            data-testid="agents-cards"
+            style={{
+              // Two cards per row so each prompt textarea is a comfortable reading width rather than
+              // the full window. align-items:start lets the taller Researcher card (it has the
+              // tools list) not stretch its row-mate. Cards stay full-width controls within a column.
+              display: "grid",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gap: "0.6rem",
+              alignItems: "start",
+            }}
+          >
+            {view.agents.map((a) => (
+              <fieldset
+                key={a.name}
+                data-testid={`agents-card-${a.name}`}
               style={{
                 // Same per-agent color code as the reasoning pane (faded bg + accent border/legend).
                 border: `1px solid ${AGENT_FG[a.name] ?? "#ccc"}33`,
                 background: AGENT_BG[a.name] ?? "transparent",
                 borderRadius: 6,
-                margin: "0.5rem 0",
+                margin: 0,
                 padding: "0.5rem",
               }}
             >
@@ -268,6 +377,37 @@ export function Agents({ token }: { token: string }): React.ReactElement {
                 rows={3}
                 style={{ width: "100%", boxSizing: "border-box", fontSize: "0.8rem" }}
               />
+              <div style={{ display: "flex", gap: "1rem", marginTop: "0.35rem", flexWrap: "wrap" }}>
+                <label style={{ fontSize: "0.78rem" }}>
+                  Reasoning{" "}
+                  <select
+                    data-testid={`agents-reasoning-${a.name}`}
+                    value={drafts[a.name]?.reasoning ?? ""}
+                    onChange={(e) => setAgentReasoning(a.name, e.target.value || null)}
+                  >
+                    <option value="">Inherit (default)</option>
+                    <option value="off">Off</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </label>
+                <label style={{ fontSize: "0.78rem" }}>
+                  Model{" "}
+                  <select
+                    data-testid={`agents-model-${a.name}`}
+                    value={drafts[a.name]?.model ?? ""}
+                    onChange={(e) => setAgentModel(a.name, e.target.value || null)}
+                  >
+                    <option value="">Inherit (turn model)</option>
+                    {availableModels.map((m) => (
+                      <option key={m.name} value={m.name}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               {a.uses_tools ? (
                 <div data-testid={`agents-tools-${a.name}`} style={{ marginTop: "0.35rem" }}>
                   <span style={{ fontSize: "0.75rem", color: "#555" }}>Tools / MCPs:</span>
@@ -294,7 +434,8 @@ export function Agents({ token }: { token: string }): React.ReactElement {
                 </p>
               )}
             </fieldset>
-          ))}
+            ))}
+          </div>
         </>
       )}
       {effectiveMode !== "multi" && (

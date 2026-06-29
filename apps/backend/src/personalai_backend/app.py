@@ -85,7 +85,7 @@ from personalai_core import (
     EGRESS_DENY,
     EGRESS_RESUME_DECISION,
     EGRESS_RESUME_FRAME,
-    TOOL_USING_AGENTS,
+    TOOL_CONFIGURABLE_AGENTS,
     CoreConfig,
     GraphSource,
     MemorySource,
@@ -98,6 +98,7 @@ from personalai_core import (
     split_recent,
     summarize,
 )
+from personalai_core.reasoning import resolve_reasoning
 from personalai_core.registries import Registries
 from personalai_core.security import (
     assert_egress_allowed,
@@ -202,9 +203,10 @@ class ChatRequest(BaseModel):
     provider: str | None = None
     # Default reasoning off for clean chat; clients can opt into a model's thinking trace.
     think: bool | None = False
-    # Reasoning amount: "off" (no thinking), "brief" (think + concise hint), "full" (think). When
-    # set it takes precedence over `think`. None falls back to `think` for backward compatibility.
-    reasoning: Literal["off", "brief", "full"] | None = None
+    # Reasoning amount: how much to think. "off" (no trace) / "low" / "medium" / "high" — the latter
+    # three enable thinking + a graded reasoning-budget nudge. Overrides `think` when set; None
+    # falls back to `think`. See _resolve_reasoning.
+    reasoning: Literal["off", "low", "medium", "high"] | None = None
     # Retrieval-augmented generation over ingested documents (M3-3).
     use_rag: bool = False
     rag_top_k: int = 4
@@ -215,6 +217,21 @@ class ChatRequest(BaseModel):
     # Autonomous tool use: let the model call tools through the gateway (M6-2).
     use_tools: bool = False
     approve_tools: bool = False  # approve high-risk tools for this turn
+
+
+def _resolve_reasoning(
+    reasoning: str | None, think: bool | None
+) -> tuple[bool | None, list[ChatMessage]]:
+    """Map a request's reasoning level to ``(think, nudge_messages)`` via the shared core mechanism.
+
+    ``reasoning`` (off/low/medium/high) overrides the legacy boolean ``think`` when set; when None,
+    fall back to the raw ``think`` flag for backward compatibility. The level -> (think, nudge)
+    mapping lives in ``personalai_core.reasoning`` so the multi-agent graph applies the same rule.
+    """
+    if reasoning is None:
+        return think, []
+    think_val, nudge = resolve_reasoning(reasoning)
+    return think_val, [ChatMessage(Role.SYSTEM, nudge)] if nudge else []
 
 
 class ResumeRequest(BaseModel):
@@ -260,7 +277,7 @@ class ExecuteRequest(BaseModel):
     model: str | None = None
     provider: str | None = None
     think: bool | None = False
-    reasoning: Literal["off", "brief", "full"] | None = None
+    reasoning: Literal["off", "low", "medium", "high"] | None = None
     agent_mode: Literal["single", "multi", "custom"] | None = None
     use_tools: bool = False
     approve_tools: bool = False
@@ -1771,7 +1788,11 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             else AgentGraphConfig()
         )
         agent_prompts = agent_cfg.prompt_overrides()
-        researcher_disabled = agent_cfg.disabled_tools("researcher")
+        agent_reasoning = agent_cfg.reasoning_levels()
+        agent_models = agent_cfg.model_overrides()
+        # Per-agent disabled tools (#290): the researcher's loop AND each judge's fact-check are
+        # filtered by their OWN disabled set inside the graph, so pass the full tool list + the map.
+        agent_disabled = {a: list(agent_cfg.disabled_tools(a)) for a in AGENT_NAMES}
 
         # Durable human gate (M8.1c): active only when the graph is enabled, the gate is on, and a
         # DB is available for the tenant-scoped checkpoint. thread_id = a fresh run id the client
@@ -1877,17 +1898,11 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             [] if multi_source_active else await _memory_context(req, incognito, query=standalone)
         )
         stm_messages = await _assemble_stm(req, provider, conv)
-        # Reasoning amount: `reasoning` (off/brief/full) overrides `think`; "brief" also nudges the
-        # model to keep its reasoning short (no hard length dial exists for local models).
-        think_effective = req.think if req.reasoning is None else req.reasoning != "off"
-        brief_messages = (
-            [
-                ChatMessage(
-                    Role.SYSTEM, "Keep your reasoning brief and focused; do not over-deliberate."
-                )
-            ]
-            if req.reasoning == "brief"
-            else []
+        # Reasoning amount: the request's `reasoning` (off/low/medium/high) wins; when it omits one,
+        # fall back to the tenant default (config.default_reasoning), the home for the default now
+        # being Settings -> Agents. low/medium/high add a graded reasoning-budget nudge.
+        think_effective, reasoning_messages = _resolve_reasoning(
+            req.reasoning or config.default_reasoning, req.think
         )
         # Grounding/anti-hallucination: ground answers in the provided context/tools; admit
         # uncertainty rather than fabricating (the #1 cause of "invented" answers).
@@ -1902,7 +1917,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 *date_messages,
                 *grounding_messages,
                 *hint_messages,
-                *brief_messages,
+                *reasoning_messages,
                 *context_messages,
                 *memory_messages,
                 *stm_messages,
@@ -1916,7 +1931,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 ("Current date/time", date_messages),
                 ("Grounding", grounding_messages),
                 ("Interpreted request", hint_messages),
-                ("Reasoning hint", brief_messages),
+                ("Reasoning hint", reasoning_messages),
                 ("Documents", context_messages),
                 ("Memory", memory_messages),
                 ("Conversation + your message", stm_messages),
@@ -2038,10 +2053,6 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 # In graph mode, drop the tools the researcher has been disabled from using (#290).
                 registries: Registries = app.state.bootstrap.registries
                 tool_list = [registries.tools.get(n) for n in registries.tools.names()]
-                if graph_enabled and researcher_disabled:
-                    tool_list = [
-                        rt for rt in tool_list if rt.manifest.name not in researcher_disabled
-                    ]
                 grants = [p for rt in tool_list for p in rt.manifest.permissions]
                 try:
                     # Orchestration lives in run_turn (FastAPI-independent, fake-testable); the
@@ -2058,6 +2069,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                             max_iterations=config.agent_max_iterations,
                             graph_enabled=graph_enabled,
                             agent_prompts=agent_prompts,
+                            agent_reasoning=agent_reasoning,
+                            agent_models=agent_models,
+                            agent_disabled_tools=agent_disabled,
                             accuracy_mode=config.agent_accuracy_mode,
                             verifier_tools=config.agent_verifier_check,
                             context=_agent_context(req.conversation_id),
@@ -2215,7 +2229,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                             code="E_EMPTY",
                             message=(
                                 "No answer was produced — the model may have spent the turn "
-                                "reasoning. Try again, or set reasoning to Off/Brief."
+                                "reasoning. Try again, or set reasoning to Off/Low."
                             ),
                         ),
                     )
@@ -2496,7 +2510,11 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             else AgentGraphConfig()
         )
         agent_prompts = agent_cfg.prompt_overrides()
-        researcher_disabled = agent_cfg.disabled_tools("researcher")
+        agent_reasoning = agent_cfg.reasoning_levels()
+        agent_models = agent_cfg.model_overrides()
+        # Per-agent disabled tools (#290): the researcher's loop AND each judge's fact-check are
+        # filtered by their OWN disabled set inside the graph, so pass the full tool list + the map.
+        agent_disabled = {a: list(agent_cfg.disabled_tools(a)) for a in AGENT_NAMES}
 
         # Assemble the generation context exactly like /chat (minus persistence + STM-from-a-conv).
         last_user = next((m.content for m in reversed(chat_req.messages) if m.role == "user"), None)
@@ -2514,17 +2532,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         context_messages, _citations = await _retrieve_context(chat_req, query=standalone)
         memory_messages = await _memory_context(chat_req, False, query=standalone)
         stm_messages = await _assemble_stm(chat_req, provider, None)
-        think_effective = (
-            chat_req.think if chat_req.reasoning is None else chat_req.reasoning != "off"
-        )
-        brief_messages = (
-            [
-                ChatMessage(
-                    Role.SYSTEM, "Keep your reasoning brief and focused; do not over-deliberate."
-                )
-            ]
-            if chat_req.reasoning == "brief"
-            else []
+        think_effective, reasoning_messages = _resolve_reasoning(
+            chat_req.reasoning or config.default_reasoning, chat_req.think
         )
         grounding_messages = (
             [ChatMessage(Role.SYSTEM, _GROUNDING)] if config.grounding_enabled else []
@@ -2535,7 +2544,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 *date_messages,
                 *grounding_messages,
                 *hint_messages,
-                *brief_messages,
+                *reasoning_messages,
                 *context_messages,
                 *memory_messages,
                 *stm_messages,
@@ -2549,8 +2558,6 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         tool_list = [registries.tools.get(n) for n in registries.tools.names()]
         if not req.use_mcp:  # honour "no MCP" by keeping only the built-in tools
             tool_list = [rt for rt in tool_list if rt.manifest.name in BUILTIN_TOOL_NAMES]
-        if graph_enabled and researcher_disabled:
-            tool_list = [rt for rt in tool_list if rt.manifest.name not in researcher_disabled]
         grants = [p for rt in tool_list for p in rt.manifest.permissions]
 
         answer = ""
@@ -2580,6 +2587,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     max_iterations=config.agent_max_iterations,
                     graph_enabled=graph_enabled,
                     agent_prompts=agent_prompts,
+                    agent_reasoning=agent_reasoning,
+                    agent_models=agent_models,
+                    agent_disabled_tools=agent_disabled,
                     accuracy_mode=config.agent_accuracy_mode,
                     verifier_tools=config.agent_verifier_check,
                     context=_agent_context(None),
@@ -3777,7 +3787,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 # shows each default where a tenant override is unset.
                 "defaults": {n: DEFAULT_AGENT_PROMPTS[n] for n in AGENT_NAMES},
                 "agents": [
-                    {"name": name, "uses_tools": name in TOOL_USING_AGENTS} for name in AGENT_NAMES
+                    {"name": name, "uses_tools": name in TOOL_CONFIGURABLE_AGENTS}
+                    for name in AGENT_NAMES
                 ],
                 "available_tools": list(registries.tools.names()),
             },

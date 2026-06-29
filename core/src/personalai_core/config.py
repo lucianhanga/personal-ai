@@ -23,6 +23,7 @@ _ENV_FIELDS = {
     "APP_MODE": "app_mode",
     "MODEL_PROVIDER": "model_provider",
     "DEFAULT_MODEL": "default_model",
+    "DEFAULT_REASONING": "default_reasoning",
     "NER_MODEL": "ner_model",
     "NER_NUM_CTX": "ner_num_ctx",
     "NER_MEMORY_FRACTION": "ner_memory_fraction",
@@ -163,6 +164,10 @@ class CoreConfig(StrictModel):
     app_mode: str = "local"
     model_provider: str = "ollama"
     default_model: str = "qwen3.6:35b-a3b"
+    # Default reasoning ("how much to think") for a chat turn that doesn't specify one: off / low /
+    # medium / high. "low" keeps reasoning on but bounded so large models don't over-deliberate.
+    # Tenant-overridable via TenantSettings.default_reasoning; per-agent overrides in agent config.
+    default_reasoning: str = "low"
     # NER/KAG runs on its OWN small, fast model (not the heavy chat model) with a small context, so
     # entity extraction is cheap and fits in memory alongside the chat model (#464). A dedicated
     # loopback Ollama runner is built for it; it must stay local (fail-closed, no egress).

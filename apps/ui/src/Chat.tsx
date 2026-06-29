@@ -9,15 +9,11 @@ import {
   fetchFiles,
   fetchMemories,
   allowEgressHost,
-  fetchModels,
-  fetchProviders,
-  fetchSettings,
   fetchTranscribeEnabled,
   fetchTtsEnabled,
   ingestConversationDocument,
   renameConversation,
   resumeChat,
-  saveSettings,
   streamChat,
   truncateConversation,
   cancelChat,
@@ -31,10 +27,8 @@ import {
   type ContextBreakdown,
   type ConversationSummary,
   type DocumentInfo,
-  type ModelInfo,
   type ResourceAction,
   type ResourceActivity,
-  type TenantSettings,
   type TraceItem,
   type TurnUsage,
   type UsageInfo,
@@ -400,22 +394,12 @@ export function Chat({
   statusLabel?: string;
   onToken?: (value: string) => void;
 }): React.ReactElement {
-  const [providers, setProviders] = useState<string[]>([]);
-  const [provider, setProvider] = useState<string>("");
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [model, setModel] = useState<string>("");
-  // The tenant's saved settings, loaded once. The top-bar model selector is the single source of
-  // truth and writes the chosen model back here as the persisted default, so it survives reloads.
-  const settingsRef = useRef<TenantSettings | null>(null);
   const [files, setFiles] = useState<DocumentInfo[]>([]);
   const [useRag, setUseRag] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [useMemory, setUseMemory] = useState(true);
   const [useTools, setUseTools] = useState(true);
   const [approveTools, setApproveTools] = useState(true);
-  // Default to "brief": reasoning on but bounded, so large reasoning models (e.g. 35B) don't
-  // over-deliberate and appear to hang. "Off"/"Full" remain selectable.
-  const [reasoning, setReasoning] = useState<"off" | "brief" | "full">("brief");
   const [incognito, setIncognito] = useState(false);
   // Two-view navigation: the chat workspace vs the full-width Settings view (#290 redesign).
   const [tab, setTab] = useState<"chat" | "settings">("chat");
@@ -508,63 +492,6 @@ export function Chat({
   const patchChat = (key: string, fn: (s: ChatState) => ChatState): void => {
     setChats((prev) => ({ ...prev, [key]: fn(prev[key] ?? EMPTY_CHAT) }));
   };
-
-  useEffect(() => {
-    let active = true;
-    fetchProviders(token)
-      .then(({ default: def, providers }) => {
-        if (!active) return;
-        setProviders(providers);
-        setProvider(def || providers[0] || "");
-      })
-      .catch((e: unknown) => active && setError(String(e)));
-    return () => {
-      active = false;
-    };
-  }, [token]);
-
-  useEffect(() => {
-    if (!provider) return;
-    let active = true;
-    setError(null);
-    fetchModels(token, provider)
-      .then(({ defaultModel, models }) => {
-        if (!active) return;
-        setModels(models);
-        setModel(models.some((m) => m.name === defaultModel) ? defaultModel : models[0]?.name || "");
-      })
-      .catch((e: unknown) => active && setError(String(e)));
-    return () => {
-      active = false;
-    };
-  }, [token, provider]);
-
-  // Load the saved settings once so the model selector can persist the chosen default. If storage
-  // is unavailable (no DB), persistence is silently skipped and selection stays session-only.
-  useEffect(() => {
-    fetchSettings(token)
-      .then(({ settings }) => {
-        settingsRef.current = settings;
-      })
-      .catch(() => {
-        settingsRef.current = null;
-      });
-  }, [token]);
-
-  // Persist the chosen model as the tenant default (best-effort; the selection still applies this
-  // session even if the write fails). Merges into the loaded settings so other fields are preserved.
-  function persistDefaultModel(name: string): void {
-    const base = settingsRef.current;
-    if (base === null || name === "") return;
-    const next: TenantSettings = { ...base, default_model: name };
-    settingsRef.current = next;
-    void saveSettings(token, next).catch(() => undefined);
-  }
-
-  function onModelChange(name: string): void {
-    setModel(name);
-    persistDefaultModel(name);
-  }
 
   useEffect(() => {
     let active = true;
@@ -1167,15 +1094,13 @@ export function Chat({
     const imgs = doneImages;
     const images = imgs.map((im) => im.src);
     const descriptions = imgs.map((im) => im.description);
-    const isVision = models.find((m) => m.name === model)?.capabilities.vision ?? false;
     // Fold each `done` audio chip's transcript into the outgoing content (Option (b), #406).
     const audioBlocks = doneAudio.map((a) => `[Audio: ${a.name}]\n${a.transcript}`).join("\n\n");
-    // Augment-not-replace (#419): a vision model receives the image itself, so don't fold its
-    // description; a NON-vision model can't see the image, so fold the descriptions as a fallback.
-    const imageBlocks =
-      !isVision && descriptions.some(Boolean)
-        ? descriptions.filter(Boolean).map((d) => `[Image: ${d}]`).join("\n\n")
-        : "";
+    // Always fold image descriptions into content (#419): the backend decides whether to use the
+    // image directly (vision model) or the description text as a fallback (non-vision model).
+    const imageBlocks = descriptions.some(Boolean)
+      ? descriptions.filter(Boolean).map((d) => `[Image: ${d}]`).join("\n\n")
+      : "";
     // Fold each SMALL document's text inline (#416); large docs are not folded (Tier-2 RAG, #420).
     const docBlocks = smallDocs.map((d) => `[Document: ${d.name}]\n${d.text}`).join("\n\n");
     const content = [typed, audioBlocks, imageBlocks, docBlocks].filter(Boolean).join("\n\n");
@@ -1193,7 +1118,6 @@ export function Chat({
     // still transcribing/describing (the Send button is also disabled).
     if (
       (!content && images.length === 0) ||
-      !model ||
       view.busy ||
       audioTranscribing ||
       imageDescribing ||
@@ -1271,14 +1195,10 @@ export function Chat({
       await streamChat(
         {
           messages: history,
-          model,
-          provider,
           useRag,
           useMemory,
           useTools,
           approveTools,
-          think: reasoning !== "off",
-          reasoning,
           conversationId: targetId ?? undefined,
           token,
           signal: abort.signal,
@@ -1575,7 +1495,7 @@ export function Chat({
     patchChat(key, (s) => ({ ...s, busy: true, pending: null }));
     try {
       await resumeChat(
-        { runId, decision, conversationId: activeId ?? undefined, provider, token },
+        { runId, decision, conversationId: activeId ?? undefined, token },
         (delta) => {
           // Resume re-delivers the full answer as one delta -> set the bubble content.
           patchChat(key, (s) => {
@@ -1609,7 +1529,7 @@ export function Chat({
     patchChat(key, (s) => ({ ...s, busy: true, pending: null }));
     try {
       await resumeChat(
-        { runId, decision, conversationId: activeId ?? undefined, provider, token },
+        { runId, decision, conversationId: activeId ?? undefined, token },
         (delta) => {
           // Resume re-delivers the finalized answer as one delta -> set the bubble content.
           patchChat(key, (s) => {
@@ -1628,8 +1548,6 @@ export function Chat({
       patchChat(key, (s) => ({ ...s, busy: false }));
     }
   }
-
-  const selected = models.find((m) => m.name === model);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", height: "100%" }}>
@@ -1690,54 +1608,6 @@ export function Chat({
           />
           {statusLabel}
         </span>
-        {/* Model selection is a Chat-view concern (per-turn); hidden on the Settings view. */}
-        {tab === "chat" && (
-          <>
-            <label htmlFor="model" style={{ marginLeft: "auto", fontSize: "0.85rem", color: "#555" }}>
-              Model
-            </label>
-            <select
-              id="model"
-              data-testid="model-select"
-              value={model}
-              onChange={(e) => onModelChange(e.target.value)}
-            >
-              {models.map((m) => (
-                <option key={m.name} value={m.name}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-            {/* The provider selector only appears when more than one is configured (local-first:
-                usually just Ollama, so it stays out of the way). */}
-            {providers.length > 1 && (
-              <select
-                data-testid="provider-select"
-                aria-label="provider"
-                value={provider}
-                onChange={(e) => setProvider(e.target.value)}
-              >
-                {providers.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-            )}
-            {selected && (
-              <span data-testid="model-caps" style={{ fontSize: "0.8rem", color: "#555" }}>
-                {[
-                  selected.local ? "local" : "remote",
-                  selected.capabilities.vision && "vision",
-                  selected.capabilities.tool_calling && "tools",
-                  selected.capabilities.thinking && "thinking",
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </span>
-            )}
-          </>
-        )}
       </header>
 
       {/* Body: the one scroll region (3-section shell = title / body / status). The chat workspace
@@ -2001,21 +1871,6 @@ export function Chat({
                 />{" "}
                 Use my memory
               </label>
-              <label
-                style={{ marginLeft: "auto" }}
-                title="How much the model thinks before answering. Off = none; Brief = concise; Full = think freely (slower)."
-              >
-                Reasoning{" "}
-                <select
-                  data-testid="reasoning-select"
-                  value={reasoning}
-                  onChange={(e) => setReasoning(e.target.value as "off" | "brief" | "full")}
-                >
-                  <option value="off">Off</option>
-                  <option value="brief">Brief</option>
-                  <option value="full">Full</option>
-                </select>
-              </label>
             </div>
             {files.length > 0 && !useRag && (
               <span data-testid="rag-hint" style={{ color: "#b06f00", fontSize: "0.8rem" }}>
@@ -2034,11 +1889,6 @@ export function Chat({
             {/* Document attachment chips (#416): drag-drop a PDF/DOCX/txt/md; small docs fold into the
                 message, large ones are gated (read/copy only) until Tier-2 retrieval (#420). */}
             <DocumentChips chips={documentAttachments} onRemove={removeDocument} />
-            {imageAttachments.length > 0 && selected && !selected.capabilities.vision && (
-              <span data-testid="vision-hint" style={{ color: "#b06f00", fontSize: "0.8rem" }}>
-                The selected model isn’t a vision model — its description is sent as text instead.
-              </span>
-            )}
 
             {/* Copy-into-a-non-empty-composer confirm (#441): never silently destroy a half-typed
                 draft. Amber, inline; Replace applies the copied question, Cancel keeps the draft. */}
@@ -2227,7 +2077,6 @@ export function Chat({
                       audioTranscribing ||
                       imageDescribing ||
                       docExtracting ||
-                      !model ||
                       (input.trim() === "" &&
                         doneImages.length === 0 &&
                         doneAudio.length === 0 &&

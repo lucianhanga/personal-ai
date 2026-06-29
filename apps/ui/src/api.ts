@@ -786,6 +786,7 @@ export async function upsertMcpServer(
 export interface TenantSettings {
   model_provider: "ollama" | "openai_compat" | null;
   default_model: string | null;
+  default_reasoning: "off" | "low" | "medium" | "high" | null;
   ollama_host: string | null;
   ollama_num_ctx: number | null;
   ollama_keep_alive: string | null;
@@ -872,10 +873,14 @@ export function blockedEgressHost(error: string | null | undefined): string | nu
 
 // Per-tenant multi-agent graph config (#290). One entry per agent the tenant has customized; a null
 // prompt inherits the default, disabled_tools lists the tools that agent must not use.
+// reasoning: per-agent reasoning level override (off/low/medium/high); null = inherit the turn's
+// reasoning. model: per-agent model override; null = inherit the turn's model.
 export interface AgentConfigEntry {
   name: string;
   prompt: string | null;
   disabled_tools: string[];
+  reasoning?: string | null;
+  model?: string | null;
 }
 
 export interface AgentGraphConfig {
@@ -1121,7 +1126,7 @@ export async function streamChat(
     useTools?: boolean;
     approveTools?: boolean;
     think?: boolean;
-    reasoning?: "off" | "brief" | "full";
+    reasoning?: "off" | "low" | "medium" | "high";
     conversationId?: string;
     token: string;
     // User-driven Stop (#412): aborting this signal closes the SSE fetch; the backend's generator

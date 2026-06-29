@@ -83,19 +83,13 @@ const DOC = {
   created_at: "2026-06-07T00:00:00Z",
 };
 
-test("loads providers + models and shows capability badges", async () => {
+test("chat composer has no model, provider, or reasoning controls", async () => {
   mockProviders();
-  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("provider-select") as HTMLSelectElement).value).toBe("ollama"),
-  );
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe(
-      "qwen3.6:35b-a3b",
-    ),
-  );
-  expect(screen.getByTestId("model-caps")).toHaveTextContent(/vision/);
+  await screen.findByTestId("composer");
+  expect(screen.queryByTestId("model-indicator")).toBeNull();
+  expect(screen.queryByTestId("provider-select")).toBeNull();
+  expect(screen.queryByTestId("model-caps")).toBeNull();
 });
 
 test("restores an unsent composer draft (text + attachment) from sessionStorage (#369)", async () => {
@@ -131,15 +125,6 @@ test("persists the composer draft to sessionStorage so a remount keeps it (#369)
   });
 });
 
-test("switching provider reloads its models", async () => {
-  mockProviders();
-  const fetchModels = vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
-  render(<Chat token="demo" />);
-  await waitFor(() => expect(screen.getByTestId("provider-select")).toBeInTheDocument());
-
-  fireEvent.change(screen.getByTestId("provider-select"), { target: { value: "openai" } });
-  await waitFor(() => expect(fetchModels).toHaveBeenCalledWith("demo", "openai"));
-});
 
 test("records voice and inserts the transcript into the composer (M9.2)", async () => {
   mockProviders();
@@ -504,7 +489,6 @@ test("removing an audio chip drops it from the row (#406)", async () => {
 
 test("sending folds the audio transcript into the message content as a labeled block (#406)", async () => {
   mockProviders();
-  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   vi.spyOn(api, "fetchTranscribeEnabled").mockResolvedValue(true);
   vi.spyOn(api, "transcribeAudio").mockResolvedValue(tr("the spoken words"));
   const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
@@ -512,9 +496,7 @@ test("sending folds the audio transcript into the message content as a labeled b
   });
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
 
   dropAudio(new File(["x"], "memo.mp3", { type: "audio/mpeg" }));
   await waitFor(() =>
@@ -553,18 +535,15 @@ test("the old file-picker and Summarize affordances are gone (#406)", async () =
   expect(screen.queryByTestId("summarize-send")).toBeNull();
 });
 
-test("attaches an image, describes it eagerly, and sends it (vision) (#419)", async () => {
+test("attaches an image, describes it eagerly, and sends it (#419)", async () => {
   mockProviders();
-  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   const describe = vi.spyOn(api, "describeImage").mockResolvedValue(dsc("a tabby cat on a sofa"));
   const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
     onDelta("I see a cat.");
   });
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
 
   // Drag-drop a fake PNG onto the composer; it's downscaled (no-op here) + described in the bg.
   const file = new File(["x"], "cat.png", { type: "image/png" });
@@ -586,8 +565,8 @@ test("attaches an image, describes it eagerly, and sends it (vision) (#419)", as
     const sent = stream.mock.calls[0][0].messages;
     const lastUser = sent[sent.length - 1];
     expect(lastUser.images?.[0]).toMatch(/^data:image\//);
-    // Vision model: the image is sent; the description is NOT folded into the content.
-    expect(lastUser.content).not.toContain("[Image:");
+    // Description is always folded as text so the backend can use it regardless of model capabilities.
+    expect(lastUser.content).toContain("[Image: a tabby cat on a sofa]");
     expect(lastUser.image_descriptions?.[0]).toBe("a tabby cat on a sofa");
   });
   // The attachment tray clears after sending.
@@ -596,16 +575,13 @@ test("attaches an image, describes it eagerly, and sends it (vision) (#419)", as
 
 test("an uploaded image yields a live activity that persists in the send body (#424)", async () => {
   mockProviders();
-  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   vi.spyOn(api, "describeImage").mockResolvedValue(dsc("a tabby cat on a sofa"));
   const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
     onDelta("I see a cat.");
   });
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
 
   const file = new File(["x"], "cat.png", { type: "image/png" });
   fireEvent.drop(screen.getByTestId("composer-dropzone"), {
@@ -637,35 +613,16 @@ test("an uploaded image yields a live activity that persists in the send body (#
   await waitFor(() => expect(screen.queryByTestId("timeline-preturn")).toBeNull());
 });
 
-test("non-vision model folds the image description into the message content (#419)", async () => {
-  // A non-vision default model can't see the image, so its description is folded as text.
+test("image description is always folded into message content regardless of model (#419)", async () => {
+  // The frontend no longer checks model vision capability; descriptions are always folded so the
+  // backend can choose whether to use the image directly or the text description.
   mockProviders();
-  vi.spyOn(api, "fetchModels").mockResolvedValue({
-    defaultModel: "textonly",
-    models: [
-      {
-        name: "textonly",
-        local: true,
-        capabilities: {
-          text: true,
-          vision: false,
-          embeddings: false,
-          tool_calling: false,
-          structured_output: false,
-          thinking: false,
-          max_context_tokens: 8192,
-        },
-      },
-    ],
-  });
   vi.spyOn(api, "describeImage").mockResolvedValue(dsc("a tabby cat on a sofa"));
   const stream = vi.spyOn(api, "streamChat").mockImplementation(async (_p, onDelta) => {
     onDelta("ok");
   });
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("textonly"),
-  );
+  await screen.findByTestId("composer");
   const file = new File(["x"], "cat.png", { type: "image/png" });
   fireEvent.drop(screen.getByTestId("composer-dropzone"), {
     dataTransfer: { files: [file], types: ["Files"] },
@@ -726,9 +683,7 @@ test("dropping a small document extracts it and folds the text into the message 
   });
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
 
   dropDoc(new File(["the quick brown fox"], "notes.txt", { type: "text/plain" }));
 
@@ -787,9 +742,7 @@ test("a large document is sent in documents_full for RAG ingest, not folded inli
   });
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
 
   dropDoc(new File(["x"], "report.pdf", { type: "application/pdf" }));
   await waitFor(() =>
@@ -836,9 +789,7 @@ test("a dropped document yields a `document_extracted` activity persisted in the
   });
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
   dropDoc(new File(["x"], "notes.txt", { type: "text/plain" }));
   await waitFor(() =>
     expect(screen.getByTestId("document-attachment")).toHaveAttribute("data-status", "small"),
@@ -932,9 +883,7 @@ test("a scanned/image-only PDF (empty extracted text) becomes an `empty` chip, n
   });
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
 
   dropDoc(new File(["x"], "scanned.pdf", { type: "application/pdf" }));
 
@@ -975,9 +924,7 @@ test("the send button is blocked while a document is still extracting (#416)", a
   vi.spyOn(api, "extractDocument").mockReturnValue(new Promise(() => {}));
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
 
   dropDoc(new File(["x"], "slow.txt", { type: "text/plain" }));
   await waitFor(() =>
@@ -1032,11 +979,7 @@ test("sends a message and streams the assistant reply", async () => {
   });
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe(
-      "qwen3.6:35b-a3b",
-    ),
-  );
+  await screen.findByTestId("composer");
 
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "hi" } });
   fireEvent.click(screen.getByTestId("send"));
@@ -1044,15 +987,6 @@ test("sends a message and streams the assistant reply", async () => {
   await waitFor(() => expect(screen.getByTestId("msg-user")).toHaveTextContent("hi"));
   await waitFor(() =>
     expect(screen.getByTestId("msg-assistant")).toHaveTextContent("Hello there"),
-  );
-});
-
-test("surfaces an error when models cannot be loaded", async () => {
-  mockProviders();
-  vi.spyOn(api, "fetchModels").mockRejectedValue(new Error("egress is disabled"));
-  render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect(screen.getByTestId("chat-error")).toHaveTextContent(/egress is disabled/),
   );
 });
 
@@ -1117,9 +1051,7 @@ test("offers to allow an egress-blocked host inline in the reasoning pane", asyn
   const allow = vi.spyOn(api, "allowEgressHost").mockResolvedValue();
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "weather?" } });
   fireEvent.click(screen.getByTestId("send"));
 
@@ -1141,11 +1073,7 @@ test("renders citations returned with a RAG answer", async () => {
   });
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe(
-      "qwen3.6:35b-a3b",
-    ),
-  );
+  await screen.findByTestId("composer");
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "capital?" } });
   fireEvent.click(screen.getByTestId("send"));
 
@@ -1168,11 +1096,7 @@ test("shows conversations and lazily creates one on first send", async () => {
   await waitFor(() => expect(screen.getByTestId("conversations")).toBeInTheDocument());
   expect(screen.getByTestId("open-c1")).toHaveTextContent("Old chat");
 
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe(
-      "qwen3.6:35b-a3b",
-    ),
-  );
+  await screen.findByTestId("composer");
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "hello" } });
   fireEvent.click(screen.getByTestId("send"));
 
@@ -1202,9 +1126,7 @@ test("shows the context meter after a turn reports usage", async () => {
   );
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "hi" } });
   fireEvent.click(screen.getByTestId("send"));
 
@@ -1223,11 +1145,7 @@ test("renders tool steps when the agent uses tools", async () => {
   });
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe(
-      "qwen3.6:35b-a3b",
-    ),
-  );
+  await screen.findByTestId("composer");
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "search rust" } });
   fireEvent.click(screen.getByTestId("send"));
 
@@ -1251,7 +1169,6 @@ test("per-session toggles default on; the Chat/Settings tabs switch views", asyn
   expect(screen.getByTestId("memory-toggle")).toBeChecked();
   expect(screen.getByTestId("tools-toggle")).toBeChecked();
   expect(screen.getByTestId("approve-tools-toggle")).toBeChecked();
-  expect((screen.getByTestId("reasoning-select") as HTMLSelectElement).value).toBe("brief");
 
   // Switch to the Settings view: the section nav appears and the chat workspace is hidden.
   fireEvent.click(screen.getByTestId("nav-settings"));
@@ -1307,9 +1224,7 @@ test("keeps a chat streaming (with an in-progress marker) when switching chats",
   });
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
   await waitFor(() => expect(screen.getByTestId("open-cA")).toBeInTheDocument());
 
   // Start generating in chat A.
@@ -1331,38 +1246,6 @@ test("keeps a chat streaming (with an in-progress marker) when switching chats",
 });
 
 
-test("the chosen reasoning amount is sent to the chat request", async () => {
-  mockProviders();
-  vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
-  const stream = vi.spyOn(api, "streamChat").mockResolvedValue();
-
-  render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
-  // Default is Brief (think on, bounded).
-  fireEvent.change(screen.getByTestId("composer"), { target: { value: "why?" } });
-  fireEvent.click(screen.getByTestId("send"));
-  await waitFor(() =>
-    expect(stream).toHaveBeenCalledWith(
-      expect.objectContaining({ reasoning: "brief", think: true }),
-      ...Array(13).fill(expect.any(Function)),
-    ),
-  );
-
-  // Switch to Off -> reasoning off, think false.
-  fireEvent.change(screen.getByTestId("reasoning-select"), { target: { value: "off" } });
-  fireEvent.change(screen.getByTestId("composer"), { target: { value: "again" } });
-  fireEvent.click(screen.getByTestId("send"));
-  await waitFor(() =>
-    expect(stream).toHaveBeenCalledWith(
-      expect.objectContaining({ reasoning: "off", think: false }),
-      ...Array(13).fill(expect.any(Function)),
-    ),
-  );
-});
-
-
 test("surfaces a backend stream error in the assistant bubble", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
@@ -1373,9 +1256,7 @@ test("surfaces a backend stream error in the assistant bubble", async () => {
   );
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "go" } });
   fireEvent.click(screen.getByTestId("send"));
 
@@ -1448,9 +1329,7 @@ test("a draft answer goes to the reasoning trace, not the output bubble (#393)",
     },
   );
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "hi" } });
   fireEvent.click(screen.getByTestId("send"));
 
@@ -1477,9 +1356,7 @@ test("durable human gate: shows approve/reject and resumes on approve", async ()
     .mockImplementation(async (_p, onDelta) => onDelta("final answer"));
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "hi" } });
   fireEvent.click(screen.getByTestId("send"));
 
@@ -1499,7 +1376,7 @@ test("durable human gate: shows approve/reject and resumes on approve", async ()
   expect(screen.queryByTestId("approval-request")).not.toBeInTheDocument();
 });
 
-test("egress gate: shows the egress UI (not the answer box) and resumes with the egress verb + provider", async () => {
+test("egress gate: shows the egress UI (not the answer box) and resumes with the egress verb", async () => {
   mockProviders();
   vi.spyOn(api, "fetchModels").mockResolvedValue(MODELS);
   // The turn streams a draft answer then suspends at the egress gate (a tool hit a blocked host).
@@ -1520,9 +1397,7 @@ test("egress gate: shows the egress UI (not the answer box) and resumes with the
     .mockImplementation(async (_p, onDelta) => onDelta("final answer"));
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "fetch it" } });
   fireEvent.click(screen.getByTestId("send"));
 
@@ -1531,11 +1406,11 @@ test("egress gate: shows the egress UI (not the answer box) and resumes with the
   expect(screen.getByTestId("egress-host")).toHaveTextContent("api.example.com");
   expect(screen.queryByTestId("approval-request")).not.toBeInTheDocument();
 
-  // Allowing once resumes with the egress verb and forwards the chat's provider.
+  // Allowing once resumes with the egress verb; provider comes from tenant defaults server-side.
   fireEvent.click(screen.getByTestId("egress-allow-once"));
   await waitFor(() =>
     expect(resume).toHaveBeenCalledWith(
-      expect.objectContaining({ runId: "r2", decision: "egress_allow_once", provider: "ollama" }),
+      expect.objectContaining({ runId: "r2", decision: "egress_allow_once" }),
       ...Array(3).fill(expect.any(Function)),
     ),
   );
@@ -1555,9 +1430,7 @@ test("streams planner and critic steps into the live trace (followable agent flo
   );
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "hi" } });
   fireEvent.click(screen.getByTestId("send"));
 
@@ -1585,9 +1458,7 @@ test("while streaming, the Send slot becomes a red Stop button; aborting returns
   );
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "hi" } });
   fireEvent.click(screen.getByTestId("send"));
 
@@ -1618,9 +1489,7 @@ test("Escape stops an in-flight generation (no chip panel open)", async () => {
       }),
   );
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "hi" } });
   fireEvent.click(screen.getByTestId("send"));
   await screen.findByTestId("stop-generation");
@@ -1657,9 +1526,7 @@ test("Copy in chat A rehydrates the composer so it can be re-sent (cross-chat bu
   Object.assign(navigator, { clipboard: { writeText } });
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
   // Open chat A and Copy its question into the (empty) composer.
   fireEvent.click(await screen.findByText("Old chat"));
   await screen.findByTestId("msg-user");
@@ -1691,9 +1558,7 @@ test("Copy onto a NON-empty composer asks to replace; Replace applies, Cancel ke
   Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
   // Type a half-finished draft FIRST, so a Copy must not silently destroy it.
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "my own half-typed text" } });
 
@@ -1748,9 +1613,7 @@ test("Edit truncates from the turn, reloads, and re-runs the edited question (#4
   });
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
   fireEvent.click(await screen.findByText("Old chat"));
   await screen.findByTestId("msg-user");
 
@@ -1799,9 +1662,7 @@ test("Delete truncates from the turn and does NOT re-run (#441)", async () => {
   const stream = vi.spyOn(api, "streamChat");
 
   render(<Chat token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
-  );
+  await screen.findByTestId("composer");
   fireEvent.click(await screen.findByText("Old chat"));
   await waitFor(() => expect(screen.getAllByTestId("msg-user")).toHaveLength(2));
 

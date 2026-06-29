@@ -10,6 +10,7 @@ afterEach(() => vi.restoreAllMocks());
 const SETTINGS: TenantSettings = {
   model_provider: null,
   default_model: null,
+  default_reasoning: null,
   ollama_host: null,
   ollama_num_ctx: null,
   ollama_keep_alive: null,

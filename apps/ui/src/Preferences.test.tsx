@@ -10,6 +10,7 @@ afterEach(() => vi.restoreAllMocks());
 const EMPTY: TenantSettings = {
   model_provider: null,
   default_model: null,
+  default_reasoning: null,
   ollama_host: null,
   ollama_num_ctx: null,
   ollama_keep_alive: null,
@@ -39,6 +40,7 @@ const EMPTY: TenantSettings = {
 const DEFAULTS: TenantSettingsDefaults = {
   model_provider: "ollama",
   default_model: "qwen3.6:35b-a3b",
+  default_reasoning: "low",
   ollama_host: "http://127.0.0.1:11434",
   ollama_num_ctx: 32768,
   ollama_keep_alive: "30m",
