@@ -212,6 +212,13 @@ def _merged_evidence_block(evidence: Sequence[Evidence]) -> list[ChatMessage]:
     ]
 
 
+def _judge_evidence(state: GraphState) -> list[str]:
+    """The full ground-truth set the critic/verifier judge against: the merge node's fused
+    multi-source evidence PLUS the researcher's own tool results. Kept in two state keys because the
+    researcher overwrites ``evidence`` (no reducer) — see GraphState.merged_evidence (#420)."""
+    return [*(state.get("merged_evidence") or []), *(state.get("evidence") or [])]
+
+
 def _evidence_messages(evidence: Sequence[str] | None) -> list[ChatMessage]:
     """The retrieved tool results as a ground-truth source block for the critic/verifier, so they
     judge the draft against the actual evidence rather than their own (stale) parametric knowledge.
@@ -244,6 +251,11 @@ class GraphState(TypedDict, total=False):
     # against the actual evidence (ground truth) instead of their own stale knowledge of current
     # events — otherwise they "correct" fresh, web-grounded facts as fabricated.
     evidence: list[str]
+    # The merge node's fused multi-source evidence (RAG/KAG/memory), kept SEPARATE from ``evidence``
+    # (#420): the researcher overwrites ``evidence`` with its own tool results (last-write-wins, no
+    # reducer), so without a distinct key the judges would lose the merged evidence whenever the
+    # researcher answers from the grounded block WITHOUT calling tools. The judges read BOTH.
+    merged_evidence: list[str]
     # Bounded reflection loop (#290): the critic's verdict ("revise"/"ok") routes back to the
     # researcher when the answer is materially inadequate; ``attempts`` caps the retries.
     verdict: str
@@ -464,7 +476,9 @@ def _build_graph(
         )
         return {
             "grounded_block": grounded[0].content if grounded else "",
-            "evidence": evidence_strings,
+            # Distinct key the researcher never overwrites, so the critic/verifier keep the fused
+            # multi-source evidence even when the researcher answers from grounded_block tool-free.
+            "merged_evidence": evidence_strings,
             "citations": result.citations,
         }
 
@@ -640,7 +654,7 @@ def _build_graph(
         review = [
             ChatMessage(Role.SYSTEM, agent_prompts["critic"]),
             *messages,
-            *_evidence_messages(state.get("evidence")),
+            *_evidence_messages(_judge_evidence(state)),
             ChatMessage(Role.USER, f"Draft answer to review:\n\n{answer}"),
         ]
         writer = get_stream_writer()
@@ -695,7 +709,7 @@ def _build_graph(
             messages=[
                 ChatMessage(Role.SYSTEM, agent_prompts["verifier"]),
                 *messages,
-                *_evidence_messages(state.get("evidence")),
+                *_evidence_messages(_judge_evidence(state)),
                 *independent,
                 ChatMessage(Role.USER, f"Draft answer to verify:\n\n{answer}"),
             ],
