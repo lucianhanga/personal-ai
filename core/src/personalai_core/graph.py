@@ -152,7 +152,10 @@ DEFAULT_AGENT_PROMPTS: dict[str, str] = {
         "sources decide. Begin your reply with the single word REVISE only if the draft fails to "
         "actually answer the request (e.g. it only says where to look, gives no real data) or "
         "contradicts its provided sources; otherwise begin with OK. Then add 1-2 short sentences. "
-        "Do not rewrite the answer."
+        "Do not rewrite the answer. You may ALSO be given an 'independent verification lookup' (a "
+        "fresh retrieval run for this check) — treat it as ground truth alongside the sources, and "
+        "REVISE on a clear contradiction it settles (a wrong count or name), never on its mere "
+        "absence of a detail."
     ),
     "verifier": (
         "You are the verifier (LLM judge). The sources the researcher retrieved are provided to "
@@ -647,16 +650,51 @@ def _build_graph(
         resume_value = interrupt(_egress_interrupt_payload(pending))
         return {"egress_decision": _resume_decision(resume_value)}
 
+    async def _independent_lookup(state: GraphState) -> list[ChatMessage]:
+        # Shared judge fact-check (#465): one bounded INDEPENDENT retrieval over the sources
+        # (RAG/KAG/memory) so a judge confirms the FINAL answer against fresh ground truth -- it
+        # catches plausible-but-wrong drafts (a wrong count the KAG settles) that judging only
+        # against the researcher's own evidence misses. Gated by ``verifier_tools``; fail-open (any
+        # error -> []). Used by the verifier (accurate mode) and by the critic when IT is the last
+        # judge (standard mode), so exactly one independent lookup runs per turn.
+        if not (verifier_tools and sources):
+            return []
+        try:
+            per_source = await gather_sources(
+                sources=list(sources),
+                query=query or _last_user_text(messages),
+                token_budget=evidence_budget,
+                ctx=state.get("context"),
+            )
+            fresh = [ev for evs in per_source.values() for ev in evs]
+            if not fresh:
+                return []
+            block = "\n".join(f"- {ev.text}" for ev in fresh[:12])
+            return [
+                ChatMessage(
+                    Role.SYSTEM,
+                    "Independent verification lookup (a FRESH retrieval run just now -- treat as "
+                    "ground truth alongside the sources):\n" + block,
+                )
+            ]
+        except Exception:  # noqa: BLE001 - fail-open: the check must never block finalizing
+            return []
+
     async def critic(state: GraphState) -> dict[str, Any]:
         # The draft goes in a USER message, not an ASSISTANT one: with the draft as an assistant
         # turn the model treats the conversation as finished and replies empty (the "critic did
         # nothing" bug). As a user-posed review task it actually critiques. ``messages`` already
         # carries the current date (injected by the caller), so the critic is date-aware.
         answer = state.get("answer", "")
+        # Arm the critic with the independent fact-check ONLY when it is the last judge (standard
+        # mode -- no verifier downstream), so the final answer is checked in every multi-agent
+        # config without a redundant second lookup in accurate mode (the verifier does it there).
+        independent = [] if verify else await _independent_lookup(state)
         review = [
             ChatMessage(Role.SYSTEM, agent_prompts["critic"]),
             *messages,
             *_evidence_messages(_judge_evidence(state)),
+            *independent,
             ChatMessage(Role.USER, f"Draft answer to review:\n\n{answer}"),
         ]
         writer = get_stream_writer()
@@ -682,31 +720,10 @@ def _build_graph(
         # generate_structured (schema-validated, bounded, fail-closed) so routing is deterministic.
         _emit_stage(get_stream_writer(), "verifier", "Verifying")
         answer = state.get("answer", "")
-        # Tool-armed verifier (#465): one bounded INDEPENDENT retrieval over the sources (RAG/KAG/
-        # memory) to fact-check the draft -- catches plausible-but-wrong answers the consistency
-        # check (judging only against the researcher's own evidence) misses, e.g. a wrong count the
-        # KAG can settle. Fail-open: any error -> skip the lookup and judge as before.
-        independent: list[ChatMessage] = []
-        if verifier_tools and sources:
-            try:
-                per_source = await gather_sources(
-                    sources=list(sources),
-                    query=query or _last_user_text(messages),
-                    token_budget=evidence_budget,
-                    ctx=state.get("context"),
-                )
-                fresh = [ev for evs in per_source.values() for ev in evs]
-                if fresh:
-                    block = "\n".join(f"- {ev.text}" for ev in fresh[:12])
-                    independent = [
-                        ChatMessage(
-                            Role.SYSTEM,
-                            "Independent verification lookup (a FRESH retrieval run just now -- "
-                            "treat as ground truth alongside the sources):\n" + block,
-                        )
-                    ]
-            except Exception:  # noqa: BLE001 - fail-open: the check must never block finalizing
-                independent = []
+        # Tool-armed verifier (#465): the bounded independent fact-check (shared with the critic in
+        # standard mode). The verifier always runs it when armed -- it is the last judge in accurate
+        # mode. Fail-open: any error -> [] -> judge against the researcher's evidence as before.
+        independent = await _independent_lookup(state)
         judged = await generate_structured(
             provider=provider,
             model=model,
