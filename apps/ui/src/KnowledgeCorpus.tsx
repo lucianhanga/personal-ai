@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   fetchDocumentChunks,
@@ -6,10 +6,70 @@ import {
   fetchFiles,
   type DocumentChunk,
   type DocumentInfo,
+  type Entity,
+  type EntityType,
 } from "./api";
-import { MUTED, RED, formatWhen } from "./folderUi";
-import { STATUS_OK, STATUS_WARN } from "./knowledgeUi";
+import { MUTED, RED, formatBytes, formatWhen } from "./folderUi";
+import { STATUS_OK, STATUS_WARN, TYPE_META, TYPE_ORDER, TypeBadge } from "./knowledgeUi";
 import { RetrievalExplorer } from "./RetrievalExplorer";
+
+// The corpus-wide entity sample size. The type breakdown + the Entities stat are derived from this
+// many entities; at the cap they are an honest "first N" sample, not the true total (#465 flag).
+const ENTITY_SAMPLE_LIMIT = 1000;
+
+// --- pure helpers (exported for unit tests) ---------------------------------------------------
+
+export type DocSortKey = "name" | "size" | "chunks" | "added";
+export type DocStatusFilter = "all" | "indexed" | "unindexed";
+
+/** A short human label for a document's MIME type, e.g. "application/pdf" -> "PDF". Falls back to the
+ * file extension, then "File". Pure so the mapping is unit-testable. */
+export function mimeLabel(mime: string | null | undefined, name = ""): string {
+  const m = (mime ?? "").toLowerCase();
+  if (m.includes("pdf")) return "PDF";
+  if (m.includes("markdown")) return "Markdown";
+  if (m.startsWith("text/")) return "Text";
+  if (m.startsWith("image/")) return "Image";
+  if (m.includes("html")) return "HTML";
+  if (m.includes("json")) return "JSON";
+  if (m.includes("csv")) return "CSV";
+  if (m.includes("word") || m.includes("officedocument")) return "Doc";
+  const ext = name.includes(".") ? name.split(".").pop()!.toUpperCase() : "";
+  return ext || "File";
+}
+
+/** Sort + filter the corpus rows by name search, indexed status, and a sort column/direction. Pure
+ * (no DOM) so the table logic is unit-testable. Indexed = chunk_count > 0. */
+export function sortFilterDocs(
+  files: DocumentInfo[],
+  opts: { sort: DocSortKey; dir: "asc" | "desc"; q: string; status: DocStatusFilter },
+): DocumentInfo[] {
+  const q = opts.q.trim().toLowerCase();
+  const filtered = files.filter((f) => {
+    if (q && !f.name.toLowerCase().includes(q)) return false;
+    const indexed = (f.chunk_count ?? 0) > 0;
+    if (opts.status === "indexed" && !indexed) return false;
+    if (opts.status === "unindexed" && indexed) return false;
+    return true;
+  });
+  const sign = opts.dir === "asc" ? 1 : -1;
+  return [...filtered].sort((a, b) => {
+    let cmp = 0;
+    if (opts.sort === "name") cmp = a.name.localeCompare(b.name);
+    else if (opts.sort === "size") cmp = (a.size_bytes ?? 0) - (b.size_bytes ?? 0);
+    else if (opts.sort === "chunks") cmp = (a.chunk_count ?? 0) - (b.chunk_count ?? 0);
+    else cmp = (a.created_at ?? "").localeCompare(b.created_at ?? "");
+    if (cmp !== 0) return cmp * sign;
+    return a.name.localeCompare(b.name); // stable tie-break, always ascending by name
+  });
+}
+
+/** Count entities by type (for the corpus type-breakdown bar). Pure. */
+export function countByType(entities: Entity[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const e of entities) counts[e.type] = (counts[e.type] ?? 0) + 1;
+  return counts;
+}
 
 interface KnowledgeCorpusTabProps {
   token: string;
@@ -21,7 +81,7 @@ interface KnowledgeCorpusTabProps {
 
 interface CorpusData {
   files: DocumentInfo[];
-  entityCount: number;
+  entities: Entity[];
 }
 
 /** Knowledge > Corpus (P0 overview): stat cards (documents, total chunks, entities) + a per-document
@@ -42,10 +102,10 @@ export function KnowledgeCorpusTab({
     setError(null);
     Promise.all([
       fetchFiles(token, { includeSynced: true }),
-      fetchEntities(token, { limit: 1000 }),
+      fetchEntities(token, { limit: ENTITY_SAMPLE_LIMIT }),
     ])
       .then(([files, entities]) => {
-        if (active) setData({ files, entityCount: entities.length });
+        if (active) setData({ files, entities });
       })
       .catch(() => active && setError("Could not load the corpus."))
       .finally(() => active && setLoading(false));
@@ -93,7 +153,7 @@ export function KnowledgeCorpusTab({
         ) : data ? (
           <CorpusOverview
             files={data.files}
-            entityCount={data.entityCount}
+            entities={data.entities}
             selectedDocId={selectedDocId}
             onSelectDocument={onSelectDocument}
           />
@@ -107,10 +167,12 @@ function StatCard({
   testid,
   label,
   value,
+  sub,
 }: {
   testid: string;
   label: string;
-  value: number;
+  value: number | string;
+  sub?: React.ReactNode;
 }): React.ReactElement {
   return (
     <div
@@ -126,99 +188,292 @@ function StatCard({
     >
       <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "#222" }}>{value}</div>
       <div style={{ fontSize: "0.74rem", color: MUTED }}>{label}</div>
+      {sub}
     </div>
   );
 }
 
+/** Corpus-wide entity-type breakdown (C-D): a compact bar per type, derived client-side from the
+ * entity sample. Color reinforces the type but the count + label carry the meaning. */
+function TypeBreakdown({ entities }: { entities: Entity[] }): React.ReactElement | null {
+  const counts = countByType(entities);
+  const rows = TYPE_ORDER.filter((t) => (counts[t] ?? 0) > 0);
+  if (rows.length === 0) return null;
+  const max = Math.max(...rows.map((t) => counts[t]));
+  const capped = entities.length >= ENTITY_SAMPLE_LIMIT;
+  return (
+    <div data-testid="corpus-type-breakdown" style={{ margin: "0 0 0.85rem" }}>
+      <div style={{ fontSize: "0.74rem", fontWeight: 600, color: MUTED, marginBottom: "0.3rem" }}>
+        Entity types{capped ? ` (sample of first ${ENTITY_SAMPLE_LIMIT})` : ""}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+        {rows.map((t) => (
+          <div
+            key={t}
+            data-testid="corpus-type-row"
+            data-type={t}
+            style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.76rem" }}
+          >
+            <TypeBadge type={t as EntityType} />
+            <span style={{ width: 92, color: "#444" }}>{TYPE_META[t as EntityType].label}</span>
+            <span
+              aria-hidden
+              style={{
+                height: 8,
+                width: `${Math.max(4, (counts[t] / max) * 160)}px`,
+                background: TYPE_META[t as EntityType].hue,
+                borderRadius: 3,
+                flex: "0 0 auto",
+              }}
+            />
+            <span style={{ color: MUTED }}>{counts[t]}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const SORT_COLS: { key: DocSortKey; label: string }[] = [
+  { key: "name", label: "Document" },
+  { key: "size", label: "Size" },
+  { key: "chunks", label: "Chunks" },
+  { key: "added", label: "Added" },
+];
+const STATUS_FILTERS: { key: DocStatusFilter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "indexed", label: "Indexed" },
+  { key: "unindexed", label: "Not indexed" },
+];
+
 function CorpusOverview({
   files,
-  entityCount,
+  entities,
   selectedDocId,
   onSelectDocument,
 }: {
   files: DocumentInfo[];
-  entityCount: number;
+  entities: Entity[];
   selectedDocId: string | null;
   onSelectDocument: (id: string | null) => void;
 }): React.ReactElement {
+  const [sort, setSort] = useState<DocSortKey>("added");
+  const [dir, setDir] = useState<"asc" | "desc">("desc");
+  const [q, setQ] = useState("");
+  const [status, setStatus] = useState<DocStatusFilter>("all");
+
   const totalChunks = files.reduce((sum, f) => sum + (f.chunk_count ?? 0), 0);
+  const unindexed = files.filter((f) => (f.chunk_count ?? 0) === 0).length;
+  const totalBytes = files.reduce((sum, f) => sum + (f.size_bytes ?? 0), 0);
+  const entityCapped = entities.length >= ENTITY_SAMPLE_LIMIT;
+
+  const rows = useMemo(
+    () => sortFilterDocs(files, { sort, dir, q, status }),
+    [files, sort, dir, q, status],
+  );
+
+  function toggleSort(key: DocSortKey): void {
+    if (key === sort) setDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSort(key);
+      setDir(key === "name" ? "asc" : "desc");
+    }
+  }
 
   return (
     <div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginBottom: "0.75rem" }}>
-        <StatCard testid="corpus-stat-documents" label="Documents" value={files.length} />
+        <StatCard
+          testid="corpus-stat-documents"
+          label="Documents"
+          value={files.length}
+          sub={
+            unindexed > 0 ? (
+              <div
+                data-testid="corpus-stat-unindexed"
+                style={{ fontSize: "0.7rem", color: STATUS_WARN, fontWeight: 600 }}
+              >
+                {unindexed} not indexed
+              </div>
+            ) : null
+          }
+        />
         <StatCard testid="corpus-stat-chunks" label="Total chunks" value={totalChunks} />
-        <StatCard testid="corpus-stat-entities" label="Entities" value={entityCount} />
+        <StatCard
+          testid="corpus-stat-entities"
+          label={entityCapped ? "Entities (1000+)" : "Entities"}
+          value={entityCapped ? `${ENTITY_SAMPLE_LIMIT}+` : entities.length}
+        />
+        <StatCard testid="corpus-stat-size" label="Corpus size" value={formatBytes(totalBytes)} />
       </div>
 
-      <table
-        data-testid="corpus-table"
-        style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}
+      <TypeBreakdown entities={entities} />
+
+      {/* Controls: name search + indexed-status filter (C-B). */}
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "0.5rem",
+          alignItems: "center",
+          marginBottom: "0.5rem",
+        }}
       >
-        <thead>
-          <tr style={{ textAlign: "left", color: MUTED, borderBottom: "1px solid #eee" }}>
-            <th style={{ padding: "0.3rem 0.4rem", fontWeight: 600 }}>Document</th>
-            <th style={{ padding: "0.3rem 0.4rem", fontWeight: 600 }}>Chunks</th>
-            <th style={{ padding: "0.3rem 0.4rem", fontWeight: 600 }}>Status</th>
-            <th style={{ padding: "0.3rem 0.4rem", fontWeight: 600 }}>Added</th>
-          </tr>
-        </thead>
-        <tbody>
-          {files.map((f) => {
-            const indexed = (f.chunk_count ?? 0) > 0;
-            const active = selectedDocId === f.id;
-            return (
-              <tr
-                key={f.id}
-                data-testid="corpus-row"
-                data-doc-id={f.id}
-                style={{ borderBottom: "1px solid #f2f2f2", background: active ? "rgba(51,65,85,0.06)" : undefined }}
-              >
-                <td style={{ padding: "0.3rem 0.4rem" }}>
-                  {/* The name cell is a button so the chunk inspector is keyboard-reachable; a button
-                      can't wrap a <tr>, so it lives in the first cell and toggles the selection. */}
-                  <button
-                    data-testid="corpus-row-button"
-                    data-doc-id={f.id}
-                    type="button"
-                    aria-pressed={active}
-                    aria-expanded={active}
-                    onClick={() => onSelectDocument(active ? null : f.id)}
-                    style={{
-                      border: "none",
-                      background: "none",
-                      padding: 0,
-                      textAlign: "left",
-                      color: active ? "#0b3a66" : "#1a6fb0",
-                      fontWeight: active ? 600 : 400,
-                      fontSize: "0.8rem",
-                      cursor: "pointer",
-                      textDecoration: "underline",
-                    }}
+        <input
+          data-testid="corpus-search"
+          type="search"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search documents…"
+          aria-label="Search documents by name"
+          style={{
+            flex: "1 1 180px",
+            border: "1px solid #ddd",
+            borderRadius: 5,
+            padding: "0.22rem 0.45rem",
+            fontSize: "0.78rem",
+          }}
+        />
+        <div role="group" aria-label="Filter by index status" style={{ display: "flex", gap: "0.25rem" }}>
+          {STATUS_FILTERS.map((s) => (
+            <button
+              key={s.key}
+              data-testid={`corpus-filter-${s.key}`}
+              type="button"
+              aria-pressed={status === s.key}
+              onClick={() => setStatus(s.key)}
+              style={{
+                border: "1px solid #ddd",
+                borderRadius: 5,
+                background: status === s.key ? "rgba(51,65,85,0.08)" : "none",
+                color: "#555",
+                fontSize: "0.74rem",
+                fontWeight: status === s.key ? 600 : 400,
+                padding: "0.16rem 0.5rem",
+                cursor: "pointer",
+              }}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {rows.length === 0 ? (
+        <p data-testid="corpus-no-match" style={{ color: MUTED, fontSize: "0.82rem" }}>
+          No documents match your search or filter.
+        </p>
+      ) : (
+        <table
+          data-testid="corpus-table"
+          style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}
+        >
+          <thead>
+            <tr style={{ textAlign: "left", color: MUTED, borderBottom: "1px solid #eee" }}>
+              {SORT_COLS.map((col) => {
+                const activeSort = sort === col.key;
+                return (
+                  <th
+                    key={col.key}
+                    aria-sort={activeSort ? (dir === "asc" ? "ascending" : "descending") : "none"}
+                    style={{ padding: "0.3rem 0.4rem", fontWeight: 600 }}
                   >
-                    {f.name}
-                  </button>
-                </td>
-                <td style={{ padding: "0.3rem 0.4rem", color: "#444" }}>{f.chunk_count ?? 0}</td>
-                <td style={{ padding: "0.3rem 0.4rem" }}>
-                  <span
-                    data-testid="corpus-status"
-                    data-indexed={indexed}
-                    style={{
-                      color: indexed ? STATUS_OK : STATUS_WARN,
-                      fontWeight: 600,
-                      fontSize: "0.74rem",
-                    }}
-                  >
-                    {indexed ? "Indexed" : "Not indexed"}
-                  </span>
-                </td>
-                <td style={{ padding: "0.3rem 0.4rem", color: MUTED }}>{formatWhen(f.created_at)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                    <button
+                      data-testid={`corpus-sort-${col.key}`}
+                      type="button"
+                      onClick={() => toggleSort(col.key)}
+                      style={{
+                        border: "none",
+                        background: "none",
+                        padding: 0,
+                        font: "inherit",
+                        color: activeSort ? "#0b3a66" : MUTED,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {col.label}
+                      {activeSort ? (dir === "asc" ? " ▲" : " ▼") : ""}
+                    </button>
+                  </th>
+                );
+              })}
+              <th style={{ padding: "0.3rem 0.4rem", fontWeight: 600 }}>Type</th>
+              <th style={{ padding: "0.3rem 0.4rem", fontWeight: 600 }}>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((f) => {
+              const indexed = (f.chunk_count ?? 0) > 0;
+              const active = selectedDocId === f.id;
+              return (
+                <tr
+                  key={f.id}
+                  data-testid="corpus-row"
+                  data-doc-id={f.id}
+                  style={{
+                    borderBottom: "1px solid #f2f2f2",
+                    background: active ? "rgba(51,65,85,0.06)" : undefined,
+                  }}
+                >
+                  <td style={{ padding: "0.3rem 0.4rem", maxWidth: 220 }}>
+                    {/* The name cell is a button so the chunk inspector is keyboard-reachable; a
+                        button can't wrap a <tr>, so it lives in the first cell and toggles selection. */}
+                    <button
+                      data-testid="corpus-row-button"
+                      data-doc-id={f.id}
+                      type="button"
+                      aria-pressed={active}
+                      aria-expanded={active}
+                      title={f.name}
+                      onClick={() => onSelectDocument(active ? null : f.id)}
+                      style={{
+                        border: "none",
+                        background: "none",
+                        padding: 0,
+                        textAlign: "left",
+                        color: active ? "#0b3a66" : "#1a6fb0",
+                        fontWeight: active ? 600 : 400,
+                        fontSize: "0.8rem",
+                        cursor: "pointer",
+                        textDecoration: "underline",
+                        maxWidth: "100%",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        display: "inline-block",
+                      }}
+                    >
+                      {f.name}
+                    </button>
+                  </td>
+                  <td data-testid="corpus-col-size" style={{ padding: "0.3rem 0.4rem", color: "#444" }}>
+                    {f.size_bytes ? formatBytes(f.size_bytes) : "—"}
+                  </td>
+                  <td style={{ padding: "0.3rem 0.4rem", color: "#444" }}>{f.chunk_count ?? 0}</td>
+                  <td style={{ padding: "0.3rem 0.4rem", color: MUTED }}>{formatWhen(f.created_at)}</td>
+                  <td data-testid="corpus-col-type" style={{ padding: "0.3rem 0.4rem", color: "#444" }}>
+                    {mimeLabel(f.mime, f.name)}
+                  </td>
+                  <td style={{ padding: "0.3rem 0.4rem" }}>
+                    <span
+                      data-testid="corpus-status"
+                      data-indexed={indexed}
+                      style={{
+                        color: indexed ? STATUS_OK : STATUS_WARN,
+                        fontWeight: 600,
+                        fontSize: "0.74rem",
+                      }}
+                    >
+                      {indexed ? "Indexed" : "Not indexed"}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

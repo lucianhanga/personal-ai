@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 
-import { KnowledgeGraphTab } from "./KnowledgeGraph";
+import { KnowledgeGraphTab, pickLabeledNodeIds } from "./KnowledgeGraph";
 import * as api from "./api";
 
 // Capture what the (mocked) force-graph is handed, so we can assert the derived graph data without
@@ -46,14 +46,70 @@ function openInGraph(id: string): void {
   fireEvent.click(btn);
 }
 
-test("shows the empty prompt until an entity is focused", async () => {
+test("pickLabeledNodeIds: always the focus node plus the top-degree others", () => {
+  const nodes = [
+    { id: "f", label: "Focus", focus: true },
+    { id: "a", label: "A" },
+    { id: "b", label: "B" },
+    { id: "c", label: "C" },
+  ];
+  // Degrees: a=2, b=1, c=0 (raw-id and node-object endpoints both supported).
+  const links = [
+    { source: "f", target: "a" },
+    { source: "a", target: { id: "b" } },
+  ];
+  const ids = pickLabeledNodeIds(nodes, links, 1);
+  expect(ids.has("f")).toBe(true); // focus always labeled
+  expect(ids.has("a")).toBe(true); // highest degree among non-focus
+  expect(ids.has("b")).toBe(false); // beyond n=1
+  expect(ids.has("c")).toBe(false);
+});
+
+test("cold start lists top entities (and the legend) until one is focused", async () => {
   vi.spyOn(api, "fetchEntities").mockResolvedValue([NEIGHBORHOOD.focus]);
   render(<KnowledgeGraphTab token="demo" />);
 
-  await waitFor(() => expect(screen.getByText("Ada Lovelace")).toBeInTheDocument());
-  expect(screen.getByTestId("graph-empty")).toBeInTheDocument();
-  // The legend is always visible (the type hue + badge + label key).
+  // G-D: with entities present and nothing focused, the launcher shows them as chips (not graph-empty).
+  const launcher = await screen.findByTestId("graph-top-entities");
+  expect(within(launcher).getByTestId("graph-top-entity")).toHaveTextContent("Ada Lovelace");
+  expect(screen.queryByTestId("graph-empty")).not.toBeInTheDocument();
+  // The legend (type key) + the new size/edge scale rows (G-C) are always visible.
   expect(screen.getByTestId("graph-legend")).toBeInTheDocument();
+  expect(screen.getByTestId("graph-legend-size")).toBeInTheDocument();
+  expect(screen.getByTestId("graph-legend-edge")).toBeInTheDocument();
+});
+
+test("cold start shows graph-empty only for a genuinely empty corpus", async () => {
+  vi.spyOn(api, "fetchEntities").mockResolvedValue([]);
+  render(<KnowledgeGraphTab token="demo" />);
+
+  expect(await screen.findByTestId("graph-empty")).toBeInTheDocument();
+  expect(screen.queryByTestId("graph-top-entities")).not.toBeInTheDocument();
+});
+
+test("clicking a top entity focuses the graph", async () => {
+  vi.spyOn(api, "fetchEntities").mockResolvedValue([NEIGHBORHOOD.focus]);
+  const nbSpy = vi.spyOn(api, "fetchEntityNeighborhood").mockResolvedValue(NEIGHBORHOOD);
+  render(<KnowledgeGraphTab token="demo" />);
+
+  fireEvent.click(await screen.findByTestId("graph-top-entity"));
+  await screen.findByTestId("graph-detail");
+  expect(nbSpy).toHaveBeenCalledWith("demo", "e1");
+});
+
+test("the camera controls are present and clickable once focused", async () => {
+  vi.spyOn(api, "fetchEntities").mockResolvedValue([NEIGHBORHOOD.focus]);
+  vi.spyOn(api, "fetchEntityNeighborhood").mockResolvedValue(NEIGHBORHOOD);
+  render(<KnowledgeGraphTab token="demo" />);
+
+  await waitFor(() =>
+    expect(screen.getAllByTestId("entity-open-in-graph").length).toBeGreaterThan(0),
+  );
+  openInGraph(FOCUS_ID);
+  await screen.findByTestId("graph-detail");
+  fireEvent.click(screen.getByTestId("graph-zoom-fit"));
+  fireEvent.click(screen.getByTestId("graph-zoom-reset"));
+  expect(screen.getByTestId("graph-zoom-fit")).toBeEnabled();
 });
 
 test("shows a loading state while the neighborhood is fetched", async () => {
@@ -62,7 +118,9 @@ test("shows a loading state while the neighborhood is fetched", async () => {
   vi.spyOn(api, "fetchEntityNeighborhood").mockReturnValue(new Promise(() => {}));
   render(<KnowledgeGraphTab token="demo" />);
 
-  await waitFor(() => expect(screen.getByText("Ada Lovelace")).toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.getAllByTestId("entity-open-in-graph").length).toBeGreaterThan(0),
+  );
   openInGraph(FOCUS_ID);
 
   expect(await screen.findByTestId("graph-loading")).toBeInTheDocument();
@@ -73,7 +131,9 @@ test("focusing an entity renders the graph data + the accessible detail rail", a
   vi.spyOn(api, "fetchEntityNeighborhood").mockResolvedValue(NEIGHBORHOOD);
   render(<KnowledgeGraphTab token="demo" />);
 
-  await waitFor(() => expect(screen.getByText("Ada Lovelace")).toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.getAllByTestId("entity-open-in-graph").length).toBeGreaterThan(0),
+  );
   openInGraph(FOCUS_ID);
 
   // The detail rail (accessible alternative) names the focus + its docs + co-occurring entities.
@@ -99,7 +159,9 @@ test("selecting a document drives the rail to that document's entities", async (
     .mockResolvedValue([entity("e9", "location", "Berlin", 2)]);
   render(<KnowledgeGraphTab token="demo" />);
 
-  await waitFor(() => expect(screen.getByText("Ada Lovelace")).toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.getAllByTestId("entity-open-in-graph").length).toBeGreaterThan(0),
+  );
   openInGraph(FOCUS_ID);
   await screen.findByTestId("graph-detail");
 
@@ -116,7 +178,9 @@ test("clicking a co-occurring entity re-focuses the graph", async () => {
   const nbSpy = vi.spyOn(api, "fetchEntityNeighborhood").mockResolvedValue(NEIGHBORHOOD);
   render(<KnowledgeGraphTab token="demo" />);
 
-  await waitFor(() => expect(screen.getByText("Ada Lovelace")).toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.getAllByTestId("entity-open-in-graph").length).toBeGreaterThan(0),
+  );
   openInGraph(FOCUS_ID);
   await screen.findByTestId("graph-detail");
 
@@ -129,7 +193,9 @@ test("the co-occurrence toggle collapses the document nodes to a direct focus->e
   vi.spyOn(api, "fetchEntityNeighborhood").mockResolvedValue(NEIGHBORHOOD);
   render(<KnowledgeGraphTab token="demo" />);
 
-  await waitFor(() => expect(screen.getByText("Ada Lovelace")).toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.getAllByTestId("entity-open-in-graph").length).toBeGreaterThan(0),
+  );
   openInGraph(FOCUS_ID);
   await screen.findByTestId("graph-detail");
 
@@ -164,7 +230,9 @@ test("surfaces a graph load error", async () => {
   vi.spyOn(api, "fetchEntityNeighborhood").mockRejectedValue(new Error("neighborhood request failed: 503"));
   render(<KnowledgeGraphTab token="demo" />);
 
-  await waitFor(() => expect(screen.getByText("Ada Lovelace")).toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.getAllByTestId("entity-open-in-graph").length).toBeGreaterThan(0),
+  );
   openInGraph(FOCUS_ID);
 
   expect(await screen.findByTestId("graph-error")).toBeInTheDocument();
