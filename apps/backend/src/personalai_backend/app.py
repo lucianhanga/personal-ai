@@ -3758,8 +3758,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             ok=True,
             data={
                 "config": saved.model_dump(),
-                # Only the user-configurable agents (AGENT_NAMES); the internal verifier prompt is
-                # not editable in the Agents UI.
+                # The user-configurable agents (AGENT_NAMES) and their default prompts, so the UI
+                # shows each default where a tenant override is unset.
                 "defaults": {n: DEFAULT_AGENT_PROMPTS[n] for n in AGENT_NAMES},
                 "agents": [
                     {"name": name, "uses_tools": name in TOOL_USING_AGENTS} for name in AGENT_NAMES

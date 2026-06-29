@@ -42,11 +42,13 @@ const VIEW: AgentConfigView = {
     planner: "You are the planner.",
     researcher: "You are the researcher.",
     critic: "You are the critic.",
+    verifier: "You are the verifier.",
   },
   agents: [
     { name: "planner", uses_tools: false },
     { name: "researcher", uses_tools: true },
     { name: "critic", uses_tools: false },
+    { name: "verifier", uses_tools: false },
   ],
   available_tools: ["web_search", "http_fetch"],
 };

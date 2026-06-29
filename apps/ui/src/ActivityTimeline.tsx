@@ -20,6 +20,7 @@ const COLOR = {
   researcher: AGENT_FG.researcher, // gray
   tool: "#7c3aed", // violet
   critic: AGENT_FG.critic, // amber
+  verifier: AGENT_FG.verifier, // rose — the verifier agent's identity (verdict stays green/red)
   ok: "#1a7f37", // green
   err: "#b00020", // red
   context: "#4a90d9", // accent blue
@@ -423,11 +424,33 @@ export function ActivityTimeline({
         return;
       }
       if (t.kind === "verification") {
+        // The verifier is its own agent: its spine dot + "Verify" label read as the verifier (rose,
+        // consistent with planner/critic having their own dot hue), while the verdict word keeps the
+        // reserved pass=green/fail=red cue so BOTH the agent and the outcome stay legible.
         const pass = t.verdict === "pass";
-        const label = `Verify${t.verdict ? ` (${t.verdict})` : ""}`;
-        nodes.push(
-          labelNode(idx, k, pass ? COLOR.ok : COLOR.err, label, stepTime, "timeline-verification"),
-        );
+        const verdictColor = pass ? COLOR.ok : COLOR.err;
+        nodes.push({
+          key: `tl-${idx}-r-${k}`,
+          kind: "reasoning",
+          dot: COLOR.verifier,
+          render: () => (
+            <div
+              data-testid="timeline-verification"
+              style={{ display: "flex", alignItems: "baseline", gap: "0.4rem" }}
+            >
+              <span style={{ color: COLOR.verifier, fontWeight: 600 }}>
+                Verify
+                {t.verdict ? (
+                  <span data-testid="timeline-verification-verdict" style={{ color: verdictColor }}>
+                    {" "}
+                    ({t.verdict})
+                  </span>
+                ) : null}
+              </span>
+              {stepTime && <span style={{ color: "#999", fontSize: "0.66rem" }}>{stepTime}</span>}
+            </div>
+          ),
+        });
         return;
       }
       if (t.kind === "draft") {

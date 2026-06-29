@@ -49,6 +49,32 @@ test("renders M8 multi-agent / verification kinds + a generic fallback for unkno
   expect(screen.getByTestId("details-other")).toHaveTextContent("future-kind");
 });
 
+test("verifier row reads as its own agent (rose 'Verify') and keeps a green pass / red fail verdict", () => {
+  const { rerender } = render(
+    <MessageDetails defaultOpen trace={[{ kind: "verification", verdict: "pass", text: "grounded" }]} />,
+  );
+  const row = screen.getByTestId("details-verification");
+  // The agent-identity tag is the verifier's rose hue (AGENT_FG.verifier), distinct from green/red.
+  expect(row).toHaveTextContent("Verify");
+  expect(screen.getByText("Verify")).toHaveStyle({ color: "#db2777" });
+  // The verdict carries the outcome cue: pass = green.
+  const passVerdict = screen.getByTestId("details-verification-verdict");
+  expect(passVerdict).toHaveTextContent("pass");
+  expect(passVerdict).toHaveStyle({ color: "#1a7f37" });
+
+  // A failing verdict stays distinguishable: red, and the verifier tag stays rose.
+  rerender(
+    <MessageDetails
+      defaultOpen
+      trace={[{ kind: "verification", verdict: "needs_revision", text: "unsupported claim" }]}
+    />,
+  );
+  const failVerdict = screen.getByTestId("details-verification-verdict");
+  expect(failVerdict).toHaveTextContent("needs_revision");
+  expect(failVerdict).toHaveStyle({ color: "#b00020" });
+  expect(screen.getByText("Verify")).toHaveStyle({ color: "#db2777" });
+});
+
 test("labels the researcher's block with a 'Researcher' header in the multi-agent trace", () => {
   render(
     <MessageDetails

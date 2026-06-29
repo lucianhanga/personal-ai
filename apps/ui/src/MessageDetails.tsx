@@ -11,6 +11,7 @@ const TRACE = {
   researcher: AGENT_FG.researcher,
   tool: "#7c3aed", // violet
   critic: AGENT_FG.critic,
+  verifier: AGENT_FG.verifier, // rose — the verifier agent's identity (verdict stays green/red)
   ok: "#1a7f37", // green
   err: "#b00020", // red
   retrieval: "#1558b0", // royal indigo — matches the Activity-pane retrieval chip (#462)
@@ -35,7 +36,7 @@ const TRACE_BG: Record<string, string> = {
   critique: AGENT_BG.critic,
   tool_call: "#f6f0fe", // tool (violet)
   tool_result: "#f6f0fe",
-  verification: AGENT_BG.planner,
+  verification: AGENT_BG.verifier,
   draft: "#fff7d6", // a highlighter-style tint so the proposed (draft) answer stands out (#393)
   retrieval: "#eef4fc", // faint indigo wash for the context-retrieval line (#462)
 };
@@ -327,16 +328,23 @@ export function MessageDetails({
               );
             }
             if (t.kind === "verification") {
+              // The verifier is its own agent: the "Verify" identity tag + the rose row tint read as
+              // the verifier (rose), while the verdict word keeps the reserved pass=green/fail=red cue
+              // so BOTH "who acted" and "the outcome" stay legible (see agentColors.ts).
               const pass = t.verdict === "pass";
+              const verdictColor = pass ? TRACE.ok : TRACE.err;
               return (
-                <div
-                  key={k}
-                  data-testid="details-verification"
-                  style={rowStyle("verification", { color: pass ? TRACE.ok : TRACE.err })}
-                >
-                  <Tag color={pass ? TRACE.ok : TRACE.err}>
-                    Verify{t.verdict ? ` (${t.verdict})` : ""}
-                  </Tag>
+                <div key={k} data-testid="details-verification" style={rowStyle("verification")}>
+                  <Tag color={TRACE.verifier}>Verify</Tag>
+                  {t.verdict ? (
+                    <span
+                      data-testid="details-verification-verdict"
+                      style={{ color: verdictColor, fontWeight: 600 }}
+                    >
+                      {" "}
+                      ({t.verdict})
+                    </span>
+                  ) : null}
                   {t.text ? `: ${t.text}` : ""}
                 </div>
               );
