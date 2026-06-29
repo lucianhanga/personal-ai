@@ -57,10 +57,15 @@ def test_agent_config_roster_defaults_and_round_trip() -> None:
         _signup_login(user, f"u-{uuid.uuid4().hex[:8]}@example.com")
 
         body = user.get("/api/v1/agents/config").json()["data"]
-        # Roster: three agents, only the researcher uses tools.
+        # Roster: planner/researcher/critic/verifier, only the researcher uses tools.
         roster = {a["name"]: a["uses_tools"] for a in body["agents"]}
-        assert roster == {"planner": False, "researcher": True, "critic": False}
-        assert set(body["defaults"]) == {"planner", "researcher", "critic"}
+        assert roster == {
+            "planner": False,
+            "researcher": True,
+            "critic": False,
+            "verifier": False,
+        }
+        assert set(body["defaults"]) == {"planner", "researcher", "critic", "verifier"}
         assert isinstance(body["available_tools"], list)
         assert body["config"]["agents"] == []  # nothing saved yet
 

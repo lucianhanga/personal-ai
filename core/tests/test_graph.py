@@ -348,6 +348,17 @@ def test_accurate_mode_runs_the_verifier_and_retries_on_fail() -> None:
     assert any(e.type == "final" for e in events)
 
 
+def test_starts_with_token_tolerates_markdown_and_punctuation() -> None:
+    # Robust critic-verdict parsing (#461): the REVISE token routes the reflection loop, so it must
+    # survive the markdown/punctuation models wrap it in — but not fire on a substring/other word.
+    from personalai_core.graph import _starts_with_token
+
+    for opening in ("REVISE: too thin", "**REVISE**", "_revise_ this", "> REVISE", "  REVISE."):
+        assert _starts_with_token(opening, "REVISE"), opening
+    for ok in ("OK looks sound", "reviser of texts", "I would revise this", "The REVISE rule"):
+        assert not _starts_with_token(ok, "REVISE"), ok
+
+
 def test_reflection_loop_is_bounded() -> None:
     # If the critic always says REVISE, the loop still stops at MAX_ATTEMPTS researcher passes.
     provider = _CriticRevises()  # always REVISE

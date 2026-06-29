@@ -23,6 +23,7 @@ the SSE mapping rely on; ``agent_mode == "multi"`` (#290) selects this graph ove
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from typing import Any
 
@@ -115,8 +116,10 @@ def _state_subject(state: GraphState) -> str:
 
 
 # The ordered roster of configurable agents in the multi-agent graph (#290). Only the researcher
-# uses tools (it runs the single-agent loop); planner and critic are deliberately tool-free.
-AGENT_NAMES: tuple[str, ...] = ("planner", "researcher", "critic")
+# runs the single-agent tool loop; planner/critic/verifier are tool-free in that sense (the
+# verifier's optional independent lookup is a separate setting, agent_verifier_check, not a
+# per-agent tool grant). All four prompts are tenant-overridable.
+AGENT_NAMES: tuple[str, ...] = ("planner", "researcher", "critic", "verifier")
 TOOL_USING_AGENTS: frozenset[str] = frozenset({"researcher"})
 
 # Default system prompt per agent. Exposed (not private) so the backend can echo them to the UI as
@@ -124,53 +127,44 @@ TOOL_USING_AGENTS: frozenset[str] = frozenset({"researcher"})
 # override replaces the default for that agent; an empty/unset override falls back to these.
 DEFAULT_AGENT_PROMPTS: dict[str, str] = {
     "planner": (
-        "You are the planner for a PERSONAL-ASSISTANT research team working on the USER'S OWN "
-        "data. The researcher has powerful retrieval: the user's OWN documents and files "
-        "(semantic + keyword search = RAG), a KNOWLEDGE GRAPH of the entities/relations in those "
-        "documents (lookups + counts/enumeration like 'how many X'), the user's long-term MEMORY, "
-        "and web search plus other tools. So the user's private/internal data IS reachable -- "
-        "NEVER refuse and NEVER say you lack access to private data or can only use public "
-        "knowledge; that is wrong here, the researcher reads the user's documents. Lay down a "
-        "CLEAR, concise, numbered plan telling the researcher which of these to use (documents, "
-        "the knowledge graph, memory, the web) and what a good answer must cover. Keep it tight. "
+        "You are the planner of a research team. The researcher can retrieve from whatever sources "
+        "and tools are wired up this turn — these may include private or internal documents, a "
+        "knowledge graph (lookups, counts, enumeration like 'how many X'), stored memory, and the "
+        "web. Assume the information needed is reachable through those tools: do NOT plan to "
+        "refuse or claim a lack of access before it is looked up. Lay out a clear, numbered "
+        "plan: which sources/tools to use and what a complete answer must cover. Keep it tight. "
         "The researcher executes the plan and writes the final answer."
     ),
     "researcher": (
-        "You are the researcher for a PERSONAL ASSISTANT. You CAN access the user's own data: "
-        "their documents/files (RAG), a knowledge graph of their entities (KAG), and their memory, "
-        "plus web search and other tools -- so never claim you lack access to the user's private "
-        "data; retrieve it. Carry out the plan to answer the user's request, calling the available "
-        "tools when they help. Ground every claim in what you find. Always finish with a complete "
-        "answer addressed to the user; NEVER end your turn with 'let me...', 'I'll...', or a "
-        "description of further steps -- either call the tool you mean to use, or give the final "
-        "answer now. If the retrieved data and your knowledge are genuinely insufficient, state "
-        "plainly what you found and what is missing instead of guessing."
+        "You are the researcher. Carry out the plan and answer the request, calling the available "
+        "tools and grounding every claim in what you retrieve. Do not assume information is "
+        "unavailable — look it up with the tools you have before reporting a gap. Always finish "
+        "with a complete answer; NEVER end your turn with 'let me...', 'I'll...', or a description "
+        "of further steps — either call the tool you mean to use, or give the final answer now. If "
+        "the retrieved sources and your knowledge are genuinely insufficient, state plainly what "
+        "you found and what is missing instead of guessing."
     ),
     "critic": (
-        "You are the critic reviewing a draft answer a researcher produced using live web tools "
-        "(the current date is in context). The sources the researcher retrieved are provided to "
-        "you as ground truth — judge the draft AGAINST THOSE SOURCES, not against your own "
-        "knowledge of current events, which is outdated. You must NOT call tool-gathered, "
-        "source-backed facts 'fabricated' or 'hallucinated', and must NOT dispute who "
-        "participated/qualified or what the results were from your own memory — for a current "
-        "event you cannot know that; the sources decide. Begin your reply with the single word "
-        "REVISE only if the draft fails to actually answer the request (e.g. it only says where to "
-        "look, gives no real data) or contradicts its provided sources; otherwise begin with OK. "
-        "Then add 1-2 short sentences. Do not rewrite."
+        "You are the critic reviewing a draft answer. The sources the researcher retrieved are "
+        "provided to you as ground truth — judge the draft AGAINST THOSE SOURCES, not against your "
+        "own prior knowledge, which may be incomplete or out of date. Do NOT call source-backed "
+        "facts 'fabricated' or 'hallucinated', and do NOT dispute them from memory — the provided "
+        "sources decide. Begin your reply with the single word REVISE only if the draft fails to "
+        "actually answer the request (e.g. it only says where to look, gives no real data) or "
+        "contradicts its provided sources; otherwise begin with OK. Then add 1-2 short sentences. "
+        "Do not rewrite the answer."
     ),
     "verifier": (
-        "You are the verifier (LLM judge). The researcher used live web tools; the sources it "
-        "retrieved are provided to you as ground truth (the current date is in context). Judge "
-        "whether the draft answers the request and is consistent with THOSE sources — do NOT use "
-        "your own knowledge of current events to dispute source-backed facts, dates, or "
-        "participants, which may be out of date. Return a JSON verdict: 'pass' if it answers the "
-        "request and matches its sources; 'needs_revision' if close but with a fixable gap or a "
-        "claim unsupported by the sources; 'fail' if it does not answer the request or contradicts "
-        "the sources. One-sentence reason. Trust the provided sources over your own prior. "
-        "You may ALSO be given an 'independent verification lookup' — a fresh retrieval run just "
-        "for this check; treat it as ground truth alongside the sources, and only return "
-        "'needs_revision'/'fail' on a CLEAR contradiction (e.g. a wrong count or name it settles), "
-        "never on its mere absence of a detail."
+        "You are the verifier (LLM judge). The sources the researcher retrieved are provided to "
+        "you as ground truth — judge whether the draft answers the request and is consistent with "
+        "THOSE sources, not with your own prior knowledge, which may be out of date. Return a JSON "
+        "verdict: 'pass' if it answers the request and matches its sources; 'needs_revision' if "
+        "close but with a fixable gap or a claim unsupported by the sources; 'fail' if it does not "
+        "answer the request or contradicts the sources. One-sentence reason. Trust the provided "
+        "sources over your own prior. You may ALSO be given an 'independent verification lookup' — "
+        "a fresh retrieval run just for this check; treat it as ground truth alongside the "
+        "sources, and only return 'needs_revision'/'fail' on a CLEAR contradiction (a wrong count "
+        "or name it settles), never on its mere absence of a detail."
     ),
 }
 
@@ -210,6 +204,14 @@ def _merged_evidence_block(evidence: Sequence[Evidence]) -> list[ChatMessage]:
             "sources as [n].\n\n" + "\n\n".join(lines),
         )
     ]
+
+
+def _starts_with_token(text: str, token: str) -> bool:
+    """True if ``text`` opens with ``token`` (case-insensitive) after any leading markdown/
+    punctuation/whitespace — so '**REVISE**', '_REVISE:_', and '> REVISE' all match, but 'reviser'
+    or 'I would revise' do not (the token must be a whole word). The trailing guard is an
+    alphanumeric lookahead, not ``\\b``, so a wrapping underscore ('_REVISE_') still matches."""
+    return re.match(rf"^[\W_]*{re.escape(token)}(?![A-Za-z0-9])", text, re.IGNORECASE) is not None
 
 
 def _judge_evidence(state: GraphState) -> list[str]:
@@ -669,8 +671,10 @@ def _build_graph(
         if not critique:
             writer(AgentEvent(type="critique", text="Looks sound."))
         # The leading REVISE/OK token routes the reflection loop (back to the researcher on REVISE,
-        # while retries remain); the full critique still shows in the reasoning trace.
-        verdict = "revise" if critique[:6].upper() == "REVISE" else "ok"
+        # while retries remain); the full critique still shows in the reasoning trace. Tolerant
+        # match: models wrap the token in markdown/punctuation ("**REVISE**", "_REVISE:_"), so strip
+        # leading non-word chars before testing rather than a brittle fixed-width slice.
+        verdict = "revise" if _starts_with_token(critique, "REVISE") else "ok"
         return {"critique": critique, "verdict": verdict}
 
     async def verifier(state: GraphState) -> dict[str, Any]:

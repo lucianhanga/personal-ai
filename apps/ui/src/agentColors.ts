@@ -5,10 +5,12 @@ export const AGENT_FG: Record<string, string> = {
   planner: "#2563eb", // blue
   researcher: "#6b7280", // gray
   critic: "#b8860b", // amber
+  verifier: "#db2777", // rose (distinct from tool=violet; green/red stay reserved for ok/error)
 };
 
 export const AGENT_BG: Record<string, string> = {
   planner: "#eef4ff",
   researcher: "#f3f4f6",
   critic: "#fcf7ea",
+  verifier: "#fdf2f8",
 };
