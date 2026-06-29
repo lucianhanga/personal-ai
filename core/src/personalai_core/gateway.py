@@ -12,6 +12,7 @@ later). Untrusted MCP servers (M7) run out-of-process by protocol and plug in he
 from __future__ import annotations
 
 import asyncio
+import difflib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -159,7 +160,20 @@ class ToolGateway:
         try:
             registered = self._tools.get(call.tool)
         except RegistryError:
-            return deny(f"unknown tool: {call.tool}")
+            # Make the denial ACTIONABLE so the model can self-correct on the next loop iteration
+            # rather than dead-ending: models routinely mis-name namespaced MCP tools (e.g. call
+            # 'srv.sequentialthought' when the tool is 'srv.sequentialthinking'). Suggest the
+            # closest registered name; else list what's available (bounded).
+            available = self._tools.names()
+            close = difflib.get_close_matches(call.tool, available, n=1, cutoff=0.6)
+            if close:
+                hint = f"; did you mean '{close[0]}'?"
+            elif available:
+                shown = ", ".join(available[:20])
+                hint = f"; available tools: {shown}"
+            else:
+                hint = "; no tools are available this turn"
+            return deny(f"unknown tool: {call.tool}{hint}")
         manifest = registered.manifest
 
         if call.version != manifest.version:
