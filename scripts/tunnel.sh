@@ -61,14 +61,23 @@ foreground; press Ctrl-C to close it.
 Options:
   -L, --local <spec>      Forward a port. Repeatable. Formats:
                             PORT | LPORT:RPORT | LPORT:RHOST:RPORT
+      --ui                Preset: forward 5173 (Vite dev UI - doktokNG / personalAI).
+      --api               Preset: forward 8000 (FastAPI backend API).
       --jupyter           Preset: forward 8888 (Jupyter).
       --tensorboard       Preset: forward 6006 (TensorBoard).
       --ollama            Preset: forward 11434 (Ollama API).
+      --dev               Preset bundle: --ui --api --ollama (UI + API + Ollama).
   -n, --name <name>       Instance to tunnel to (alias: --instance). Default: devel.
   -i, --identity <path>   Private key to authenticate with (ssh -i).
   -h, --help              Show this help.
 
-At least one port (via -L or a preset) is required.
+Everything is forwarded to the VM's localhost over the SSH tunnel, so the
+services are reachable only from your machine and are never exposed to the
+internet (the firewall opens port 22 only). At least one port is required.
+
+Examples:
+  $(basename "$0") --name train --dev          # UI + API + Ollama in one go
+  $(basename "$0") --name train --ui           # just the web UI on localhost:5173
 EOF
 }
 
@@ -78,9 +87,12 @@ add_spec() { SPECS+=("$1"); }
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -L|--local)    add_spec "${2:-}"; shift 2 ;;
+    --ui)          add_spec "5173"; shift ;;
+    --api)         add_spec "8000"; shift ;;
     --jupyter)     add_spec "8888"; shift ;;
     --tensorboard) add_spec "6006"; shift ;;
     --ollama)      add_spec "11434"; shift ;;
+    --dev)         add_spec "5173"; add_spec "8000"; add_spec "11434"; shift ;;
     -n|--name|--instance) INSTANCE="${2:-}"; shift 2 ;;
     -i|--identity) IDENTITY="${2:-}"; shift 2 ;;
     -h|--help)     usage; exit 0 ;;

@@ -100,11 +100,16 @@ if command -v npm >/dev/null 2>&1 && ! command -v pnpm >/dev/null 2>&1; then
   npm install -g pnpm@11.5.1 || warn "pnpm install failed"
 fi
 
-# 5b) Claude Code CLI (Anthropic) --------------------------------------------
-if command -v npm >/dev/null 2>&1 && ! command -v claude >/dev/null 2>&1; then
-  log "Installing Claude Code CLI..."
-  npm install -g @anthropic-ai/claude-code || warn "claude code install failed"
+# 5b) Claude Code CLI (Anthropic, native installer) --------------------------
+# The native installer is more reliable than the npm package (which can ship a
+# broken bin symlink). Installs per-user to ~/.local/bin.
+if ! run_as_user '[ -x "$HOME/.local/bin/claude" ]'; then
+  log "Installing Claude Code CLI (native) for ${TARGET_USER}..."
+  run_as_user 'curl -fsSL https://claude.ai/install.sh | bash' || warn "claude code install failed"
 fi
+# Ensure ~/.local/bin is on PATH for future login shells.
+run_as_user 'grep -qs ".local/bin" "$HOME/.bashrc" || printf "\nexport PATH=\"\$HOME/.local/bin:\$PATH\"\n" >> "$HOME/.bashrc"' \
+  || warn "could not update PATH in .bashrc"
 
 # 6) Ollama (GPU auto-detected on the NGC image) -----------------------------
 if ! command -v ollama >/dev/null 2>&1; then
