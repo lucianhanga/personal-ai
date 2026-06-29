@@ -124,16 +124,19 @@ function ForwardEdge({
   );
 }
 
-// Dashed return arrow arching above the row, from `from` back to the researcher. `peak` lets two
-// loops (critic + verifier) sit at different heights so they don't overlap.
+// Dashed return arrow arching above the row, from `from` back to an earlier node. `peak` lets the
+// several loops (revise -> researcher, replan -> planner, verifier -> researcher) sit at different
+// heights so they don't overlap. `label` names the loop ("revise" / "replan").
 function ReviseEdge({
   from,
   to,
   peak,
+  label = "revise",
 }: {
   from: NodeSpec;
   to: NodeSpec;
   peak: number;
+  label?: string;
 }): React.ReactElement {
   const sx = from.cx;
   const sy = from.cy - NODE_H / 2;
@@ -150,7 +153,7 @@ function ReviseEdge({
         markerEnd="url(#agc-arrow-revise)"
       />
       <text x={(sx + tx) / 2} y={peak - 2} textAnchor="middle" fontSize={9} fill={REVISE}>
-        revise
+        {label}
       </text>
     </g>
   );
@@ -259,7 +262,7 @@ export function AgentCollaborationGraph({
 
   let nodes: NodeSpec[];
   const forwardEdges: { from: NodeSpec; to: NodeSpec; label?: string }[] = [];
-  const reviseEdges: { from: NodeSpec; to: NodeSpec; peak: number }[] = [];
+  const reviseEdges: { from: NodeSpec; to: NodeSpec; peak: number; label?: string }[] = [];
   let factCheck: { from: NodeSpec; to: NodeSpec } | null = null;
   let toolLoop: NodeSpec | null = null;
   let ariaLabel: string;
@@ -287,10 +290,14 @@ export function AgentCollaborationGraph({
       forwardEdges.push({ from, to, label: to.key === "gate" ? "approval" : undefined });
     }
 
-    // Bounded reflection loop: the critic (and verifier, in accurate mode) route back to research.
+    // Bounded evaluator-optimizer loop (mirrors core/graph.py): the critic routes back to the
+    // RESEARCHER on "revise" (execution fault) or all the way to the PLANNER on "replan" (planning
+    // fault); the verifier (accurate mode) routes back to the researcher. Distinct peaks so the
+    // dashed return arcs don't overlap.
     const researcher = byKey("researcher");
-    reviseEdges.push({ from: byKey("critic"), to: researcher, peak: 34 });
-    if (accurate) reviseEdges.push({ from: byKey("verifier"), to: researcher, peak: 16 });
+    reviseEdges.push({ from: byKey("critic"), to: researcher, peak: 34, label: "revise" });
+    reviseEdges.push({ from: byKey("critic"), to: byKey("planner"), peak: 6, label: "replan" });
+    if (accurate) reviseEdges.push({ from: byKey("verifier"), to: researcher, peak: 18 });
 
     // The final judge's independent lookup (when "Judge fact-check" is on): an extra rose
     // "fact-check" edge down to a Sources node. The verifier is the last judge in accurate mode;
@@ -307,7 +314,7 @@ export function AgentCollaborationGraph({
       `Multi-agent pipeline: ${stages.join(", ")}` +
       (humanGate ? ", with a human approval gate" : "") +
       (verifierCheck ? `, and the ${lastJudge} runs an independent fact-check lookup` : "") +
-      ". The critic feeds revisions back to the researcher.";
+      ". The critic sends revisions back to the researcher, or re-plans via the planner.";
   }
 
   const lastCx = nodes.reduce((m, n) => Math.max(m, n.cx), 0);
@@ -336,7 +343,13 @@ export function AgentCollaborationGraph({
         <ForwardEdge key={`${e.from.key}-${e.to.key}`} from={e.from} to={e.to} label={e.label} />
       ))}
       {reviseEdges.map((e) => (
-        <ReviseEdge key={`${e.from.key}-${e.to.key}`} from={e.from} to={e.to} peak={e.peak} />
+        <ReviseEdge
+          key={`${e.from.key}-${e.to.key}`}
+          from={e.from}
+          to={e.to}
+          peak={e.peak}
+          label={e.label}
+        />
       ))}
       {factCheck && <FactCheckEdge from={factCheck.from} to={factCheck.to} />}
       {toolLoop && <ToolLoop node={toolLoop} />}

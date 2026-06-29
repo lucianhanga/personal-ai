@@ -42,6 +42,31 @@ test("multi + standard shows planner/researcher/critic with the critic's fact-ch
   expect(screen.queryByTestId("agent-edge-verifier-sources")).not.toBeInTheDocument();
 });
 
+test("multi draws both the revise (->researcher) and replan (->planner) loops", () => {
+  render(
+    <AgentCollaborationGraph
+      mode="multi"
+      accuracyMode="standard"
+      humanGate={false}
+      verifierCheck={false}
+    />,
+  );
+  expect(screen.getByTestId("agent-edge-critic-researcher")).toBeInTheDocument(); // revise
+  expect(screen.getByTestId("agent-edge-critic-planner")).toBeInTheDocument(); // replan
+});
+
+test("single mode has no replan loop", () => {
+  render(
+    <AgentCollaborationGraph
+      mode="single"
+      accuracyMode="standard"
+      humanGate={false}
+      verifierCheck={false}
+    />,
+  );
+  expect(screen.queryByTestId("agent-edge-critic-planner")).not.toBeInTheDocument();
+});
+
 test("multi + standard with judge fact-check off draws no fact-check edge", () => {
   render(
     <AgentCollaborationGraph

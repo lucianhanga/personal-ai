@@ -149,13 +149,15 @@ DEFAULT_AGENT_PROMPTS: dict[str, str] = {
         "provided to you as ground truth — judge the draft AGAINST THOSE SOURCES, not against your "
         "own prior knowledge, which may be incomplete or out of date. Do NOT call source-backed "
         "facts 'fabricated' or 'hallucinated', and do NOT dispute them from memory — the provided "
-        "sources decide. Begin your reply with the single word REVISE only if the draft fails to "
-        "actually answer the request (e.g. it only says where to look, gives no real data) or "
-        "contradicts its provided sources; otherwise begin with OK. Then add 1-2 short sentences. "
-        "Do not rewrite the answer. You may ALSO be given an 'independent verification lookup' (a "
-        "fresh retrieval run for this check) — treat it as ground truth alongside the sources, and "
-        "REVISE on a clear contradiction it settles (a wrong count or name), never on its mere "
-        "absence of a detail."
+        "sources decide. Begin your reply with ONE verdict word: REPLAN if the failure is the PLAN "
+        "itself — the wrong or missing sources/tools were used, or the question was mis-framed, so "
+        "no rewrite of this draft can fix it and the team must re-plan; REVISE if the plan was "
+        "sound but the draft executes it poorly (only says where to look, gives no data, or "
+        "contradicts its provided sources); otherwise OK. Then add 1-2 short sentences. Do not "
+        "rewrite the answer. You may ALSO be given an 'independent verification lookup' (a fresh "
+        "retrieval run for this check) — treat it as ground truth alongside the sources, and "
+        "REVISE/REPLAN on a clear contradiction it settles (a wrong count or name), never on its "
+        "mere absence of a detail."
     ),
     "verifier": (
         "You are the verifier (LLM judge). The sources the researcher retrieved are provided to "
@@ -371,10 +373,24 @@ def _build_graph(
         # so even if a step sketches an expected finding that is fine. Streaming restores instant,
         # per-token output and kills the dead gap the blocking structured-plan call (#461) created:
         # nothing showed until the whole plan was generated, and it never streamed.
+        # Evaluator-optimizer re-plan (#461): when the critic routed back here (verdict "replan"
+        # because the failure was a PLANNING fault — wrong/missing sources, misframed question),
+        # feed its critique in so the planner produces a DIFFERENT plan rather than repeating the
+        # one that already failed. On the first pass there is no critique, so this is a no-op.
+        replan_msgs: list[ChatMessage] = []
+        if state.get("verdict") == "replan" and state.get("critique"):
+            replan_msgs = [
+                ChatMessage(
+                    Role.USER,
+                    "Your previous plan was judged inadequate: "
+                    f"{state['critique']}\nProduce a BETTER plan that addresses this — change "
+                    "which sources/tools to use or how the question is framed; do not repeat it.",
+                )
+            ]
         plan = await _stream_text(
             provider,
             model,
-            [ChatMessage(Role.SYSTEM, agent_prompts["planner"]), *messages],
+            [ChatMessage(Role.SYSTEM, agent_prompts["planner"]), *messages, *replan_msgs],
             lambda d: writer(AgentEvent(type="plan", text=d)),
         )
         out: dict[str, Any] = {"plan": plan}
@@ -708,11 +724,16 @@ def _build_graph(
         ).strip()
         if not critique:
             writer(AgentEvent(type="critique", text="Looks sound."))
-        # The leading REVISE/OK token routes the reflection loop (back to the researcher on REVISE,
-        # while retries remain); the full critique still shows in the reasoning trace. Tolerant
-        # match: models wrap the token in markdown/punctuation ("**REVISE**", "_REVISE:_"), so strip
-        # leading non-word chars before testing rather than a brittle fixed-width slice.
-        verdict = "revise" if _starts_with_token(critique, "REVISE") else "ok"
+        # The leading verdict token routes the loop: REPLAN -> back to the planner (planning fault);
+        # REVISE -> back to the researcher (execution fault); else OK -> proceed. REPLAN first.
+        # Tolerant match: models wrap the token in markdown/punctuation ("**REVISE**", "_REPLAN:_"),
+        # so strip leading non-word chars before testing rather than a brittle fixed-width slice.
+        if _starts_with_token(critique, "REPLAN"):
+            verdict = "replan"
+        elif _starts_with_token(critique, "REVISE"):
+            verdict = "revise"
+        else:
+            verdict = "ok"
         return {"critique": critique, "verdict": verdict}
 
     async def verifier(state: GraphState) -> dict[str, Any]:
@@ -824,14 +845,21 @@ def _build_graph(
     after_critic = "verifier" if verify else gate_or_finalize
 
     def _route_after_critic(state: GraphState) -> str:
-        # Bounded reflection loop: on a "revise" verdict (while researcher retries remain) go back
-        # to the researcher with the critique; otherwise proceed down the ladder.
-        if state.get("verdict") == "revise" and state.get("attempts", 0) < MAX_ATTEMPTS:
-            return "researcher"
+        # Bounded evaluator-optimizer loop (while researcher retries remain): "replan" goes back to
+        # the PLANNER (the plan itself was the fault — re-plan + re-retrieve), "revise" goes back to
+        # the RESEARCHER (sound plan, poor execution); otherwise proceed down the ladder. Both share
+        # the MAX_ATTEMPTS budget (counted at the researcher), so the loop is bounded either way.
+        if state.get("attempts", 0) < MAX_ATTEMPTS:
+            if state.get("verdict") == "replan":
+                return "planner"
+            if state.get("verdict") == "revise":
+                return "researcher"
         return after_critic
 
     builder.add_conditional_edges(
-        "critic", _route_after_critic, {"researcher": "researcher", after_critic: after_critic}
+        "critic",
+        _route_after_critic,
+        {"planner": "planner", "researcher": "researcher", after_critic: after_critic},
     )
     if verify:
 

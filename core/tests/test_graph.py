@@ -291,6 +291,53 @@ def test_reflection_loop_retries_on_revise_then_finalizes_the_improved_answer() 
     assert final.answer == "It is 23C and sunny."  # the improved retry, not the weak first draft
 
 
+class _ReplanThenAccept(FakeModelProvider):
+    """The critic REPLANs the first draft (planning fault), so the planner re-plans; the critic then
+    accepts the second draft. Records planner runs and whether the re-plan saw the critique."""
+
+    def __init__(self) -> None:
+        super().__init__(name="replan")
+        self.planner_runs = 0
+        self.critic_runs = 0
+        self.replan_saw_critique = False
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        sys_text = " ".join(m.content for m in request.messages if m.role == Role.SYSTEM)
+        last = request.messages[-1].content if request.messages else ""
+        if "Draft answer to review" in last:
+            self.critic_runs += 1
+            text = (
+                "REPLAN: you searched the wrong source."
+                if self.critic_runs == 1
+                else "OK: well grounded."
+            )
+            return GenerationResult(text=text, model=request.model)
+        if "You are the planner" in sys_text:
+            self.planner_runs += 1
+            # The re-plan pass carries the critic's critique as a USER message.
+            if any("previous plan was judged inadequate" in m.content for m in request.messages):
+                self.replan_saw_critique = True
+            return GenerationResult(text=f"plan {self.planner_runs}", model=request.model)
+        return GenerationResult(text="an answer", model=request.model)
+
+
+def test_critic_replan_routes_back_to_the_planner_with_the_critique() -> None:
+    # Evaluator-optimizer (#461): a "REPLAN" verdict (planning fault) routes back to the PLANNER,
+    # not the researcher; the planner re-plans WITH the critique, and the improved pass finalizes.
+    provider = _ReplanThenAccept()
+    events = _drain(
+        messages=[ChatMessage(Role.USER, "how many invoices?")],
+        provider=provider,
+        model="m",
+        gateway=_gateway(),
+        tools=[],
+    )
+    assert provider.planner_runs == 2  # initial plan + one re-plan
+    assert provider.replan_saw_critique  # the re-plan was fed the critic's reason
+    assert provider.critic_runs == 2  # reviewed both passes
+    assert any(e.type == "final" for e in events)
+
+
 class _VerifierProvider(FakeModelProvider):
     """Drives the verifier: critic OK (no reflection retry), then the judge returns a verdict.
     First judge verdict is 'fail' (one researcher retry), second is 'pass' (finalize)."""
