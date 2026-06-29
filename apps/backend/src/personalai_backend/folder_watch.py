@@ -15,6 +15,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Coroutine
 from functools import partial
+from pathlib import Path
 from typing import Any
 
 import asyncpg
@@ -86,7 +87,14 @@ class FolderSyncManager:
         rows = await self._enabled_sources()
         for tenant_id, source_id, root_path in rows:
             self._ensure_watch(root_path, tenant_id, source_id)
-        self._observer.start()
+        # Folder sync is best-effort and must NEVER take down core storage (auth/messages/docs): if
+        # the observer can't start (e.g. an inotify watch limit), log and carry on unwatched; the
+        # safety-net reconcile still runs.
+        try:
+            self._observer.start()
+        except OSError as exc:
+            logger.warning("folder observer failed to start; live folder sync disabled: %s", exc)
+            self._observer = None
         self._spawn(self._initial_reconcile(rows))
         self._safety_task = asyncio.create_task(self._safety_net())
 
@@ -122,6 +130,13 @@ class FolderSyncManager:
     def _ensure_watch(self, root_path: str, tenant_id: str, source_id: str) -> None:
         self._watched[root_path] = (tenant_id, source_id)
         if self._observer is None or self._loop is None or root_path in self._scheduled:
+            return
+        # watchdog defers the inotify add_watch to observer.start(), so a root whose directory is
+        # missing raises FileNotFoundError THERE — not in schedule() below — escaping the except and
+        # taking down ALL storage (auth/messages/docs). Skip a non-existent root; the safety-net
+        # reconcile re-attempts it once the directory reappears.
+        if not Path(root_path).is_dir():
+            logger.warning("folder root not present, skipping watch (will retry): %s", root_path)
             return
         handler = _SourceHandler(self._loop, partial(self._on_change, root_path))
         try:
