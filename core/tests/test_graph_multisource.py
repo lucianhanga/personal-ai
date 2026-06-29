@@ -195,3 +195,61 @@ def test_multisource_grounds_researcher_and_still_finalizes() -> None:
     assert types[0] == "plan"
     assert types[-1] == "final"
     assert "citations" in types and "draft" in types
+
+
+class _CapturingVerifier(FakeModelProvider):
+    """Records the SYSTEM context the verifier judge sees, so a test can assert the tool-armed
+    independent lookup was folded in. The judge always passes (no retry); other nodes echo."""
+
+    def __init__(self) -> None:
+        super().__init__(name="cap")
+        self.verifier_system = ""
+
+    async def generate(self, request):  # type: ignore[no-untyped-def]
+        from personalai_contracts.ports import GenerationResult
+
+        sys_text = " ".join(m.content for m in request.messages if m.role == Role.SYSTEM)
+        last = request.messages[-1].content if request.messages else ""
+        if "You are the verifier" in sys_text or "Draft answer to verify" in last:
+            self.verifier_system = sys_text
+            return GenerationResult(text='{"verdict": "pass", "reason": "r"}', model=request.model)
+        if "Draft answer to review" in last:
+            return GenerationResult(text="OK: fine", model=request.model)  # critic: no reflection
+        return GenerationResult(text="answer", model=request.model)
+
+
+def test_tool_armed_verifier_runs_an_independent_lookup() -> None:
+    # Tool-armed verifier (#465): in accurate mode with verifier_tools on and sources present, the
+    # verifier runs ONE fresh retrieval and folds it into the judging context as an independent
+    # "ground truth" block -- catching plausible-but-wrong drafts the consistency check misses.
+    provider = _CapturingVerifier()
+    _drain(
+        messages=[ChatMessage(Role.USER, "what do you know")],
+        provider=provider,
+        model="m",
+        gateway=_gateway(),
+        tools=[],
+        sources=[_vector_source()],
+        query="what do you know",
+        accuracy_mode="accurate",
+        verifier_tools=True,
+    )
+    assert "Independent verification lookup" in provider.verifier_system
+    assert "doc fact" in provider.verifier_system  # the fresh evidence reached the judge
+
+
+def test_verifier_tools_off_does_no_independent_lookup() -> None:
+    # Same accurate-mode verifier, but with verifier_tools off: no independent block is injected.
+    provider = _CapturingVerifier()
+    _drain(
+        messages=[ChatMessage(Role.USER, "what do you know")],
+        provider=provider,
+        model="m",
+        gateway=_gateway(),
+        tools=[],
+        sources=[_vector_source()],
+        query="what do you know",
+        accuracy_mode="accurate",
+        verifier_tools=False,
+    )
+    assert "Independent verification lookup" not in provider.verifier_system

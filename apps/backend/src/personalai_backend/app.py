@@ -275,6 +275,7 @@ class ExecuteRequest(BaseModel):
     grounding: bool | None = None
     max_iterations: int | None = None
     accuracy_mode: Literal["standard", "accurate"] | None = None
+    verifier_check: bool | None = None
     temperature: float | None = None
     metadata: dict[str, Any] = {}
 
@@ -1488,6 +1489,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     top_k=config.memory_top_k,
                 )
             )
+
         # KAG aggregation source (#465): answers count/enumeration questions ("how many M-Net
         # invoices?") that plain RAG can't, by counting an entity's documents in the graph. The
         # counter closes over the tenant-scoped entity store (core stays storage-free); the chat
@@ -2057,6 +2059,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                             graph_enabled=graph_enabled,
                             agent_prompts=agent_prompts,
                             accuracy_mode=config.agent_accuracy_mode,
+                            verifier_tools=config.agent_verifier_check,
                             context=_agent_context(req.conversation_id),
                             checkpointer=checkpointer,
                             thread_id=run_id,
@@ -2476,6 +2479,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             overrides["agent_max_iterations"] = req.max_iterations
         if req.accuracy_mode is not None:
             overrides["agent_accuracy_mode"] = req.accuracy_mode
+        if req.verifier_check is not None:
+            overrides["agent_verifier_check"] = req.verifier_check
         if req.grounding is not None:
             overrides["grounding_enabled"] = req.grounding
         if req.memory_enabled is not None:
@@ -2576,6 +2581,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     graph_enabled=graph_enabled,
                     agent_prompts=agent_prompts,
                     accuracy_mode=config.agent_accuracy_mode,
+                    verifier_tools=config.agent_verifier_check,
                     context=_agent_context(None),
                     checkpointer=None,  # no durable gate for automated runs
                     thread_id=None,
@@ -2646,6 +2652,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             "reasoning": req.reasoning or ("on" if req.think else "off"),
             "max_iterations": config.agent_max_iterations,
             "accuracy_mode": config.agent_accuracy_mode,
+            "verifier_check": config.agent_verifier_check,
             "grounding": config.grounding_enabled,
             "temperature": req.temperature,
             "tools_available": sorted(rt.manifest.name for rt in tool_list),

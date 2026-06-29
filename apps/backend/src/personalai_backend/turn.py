@@ -91,6 +91,7 @@ async def run_turn(
     graph_enabled: bool = False,
     agent_prompts: Mapping[str, str] | None = None,
     accuracy_mode: str = "standard",
+    verifier_tools: bool = False,
     context: AgentContext | None = None,
     checkpointer: Any | None = None,
     thread_id: str | None = None,
@@ -135,6 +136,7 @@ async def run_turn(
                 sources=sources,
                 evidence_budget=evidence_budget,
                 query=retrieval_query,
+                verifier_tools=verifier_tools,
             )
             if graph_enabled
             else run_agent(

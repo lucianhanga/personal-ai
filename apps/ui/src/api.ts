@@ -790,6 +790,7 @@ export interface TenantSettings {
   agent_graph_enabled: boolean | null;
   agent_human_gate: boolean | null;
   agent_accuracy_mode: "standard" | "accurate" | null;
+  agent_verifier_check: boolean | null;
   agent_max_iterations: number | null;
   agent_timeout_seconds: number | null;
   memory_enabled: boolean | null;

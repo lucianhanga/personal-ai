@@ -166,7 +166,11 @@ DEFAULT_AGENT_PROMPTS: dict[str, str] = {
         "participants, which may be out of date. Return a JSON verdict: 'pass' if it answers the "
         "request and matches its sources; 'needs_revision' if close but with a fixable gap or a "
         "claim unsupported by the sources; 'fail' if it does not answer the request or contradicts "
-        "the sources. One-sentence reason. Trust the provided sources over your own prior."
+        "the sources. One-sentence reason. Trust the provided sources over your own prior. "
+        "You may ALSO be given an 'independent verification lookup' — a fresh retrieval run just "
+        "for this check; treat it as ground truth alongside the sources, and only return "
+        "'needs_revision'/'fail' on a CLEAR contradiction (e.g. a wrong count or name it settles), "
+        "never on its mere absence of a detail."
     ),
 }
 
@@ -322,6 +326,7 @@ def _build_graph(
     sources: Sequence[RetrievalSource] = (),
     evidence_budget: int = DEFAULT_EVIDENCE_BUDGET,
     query: str = "",
+    verifier_tools: bool = False,
 ) -> Any:
     """Compile the graph. With a ``checkpointer`` a human_gate (interrupt) is inserted before
     finalize, enabling durable interrupt/resume. ``prompts`` overrides per-agent system prompts
@@ -659,6 +664,31 @@ def _build_graph(
         # generate_structured (schema-validated, bounded, fail-closed) so routing is deterministic.
         _emit_stage(get_stream_writer(), "verifier", "Verifying")
         answer = state.get("answer", "")
+        # Tool-armed verifier (#465): one bounded INDEPENDENT retrieval over the sources (RAG/KAG/
+        # memory) to fact-check the draft -- catches plausible-but-wrong answers the consistency
+        # check (judging only against the researcher's own evidence) misses, e.g. a wrong count the
+        # KAG can settle. Fail-open: any error -> skip the lookup and judge as before.
+        independent: list[ChatMessage] = []
+        if verifier_tools and sources:
+            try:
+                per_source = await gather_sources(
+                    sources=list(sources),
+                    query=query or _last_user_text(messages),
+                    token_budget=evidence_budget,
+                    ctx=state.get("context"),
+                )
+                fresh = [ev for evs in per_source.values() for ev in evs]
+                if fresh:
+                    block = "\n".join(f"- {ev.text}" for ev in fresh[:12])
+                    independent = [
+                        ChatMessage(
+                            Role.SYSTEM,
+                            "Independent verification lookup (a FRESH retrieval run just now -- "
+                            "treat as ground truth alongside the sources):\n" + block,
+                        )
+                    ]
+            except Exception:  # noqa: BLE001 - fail-open: the check must never block finalizing
+                independent = []
         judged = await generate_structured(
             provider=provider,
             model=model,
@@ -666,6 +696,7 @@ def _build_graph(
                 ChatMessage(Role.SYSTEM, agent_prompts["verifier"]),
                 *messages,
                 *_evidence_messages(state.get("evidence")),
+                *independent,
                 ChatMessage(Role.USER, f"Draft answer to verify:\n\n{answer}"),
             ],
             schema=Verdict,
@@ -843,6 +874,7 @@ async def run_graph(
     sources: Sequence[RetrievalSource] = (),
     evidence_budget: int = DEFAULT_EVIDENCE_BUDGET,
     query: str = "",
+    verifier_tools: bool = False,
 ) -> AsyncIterator[AgentEvent]:
     """Drive the LangGraph agent graph, yielding ordered :class:`AgentEvent`s.
 
@@ -875,6 +907,7 @@ async def run_graph(
         sources=sources,
         evidence_budget=evidence_budget,
         query=query,
+        verifier_tools=verifier_tools,
     )
     if checkpointer is None:
         async for ev in graph.astream({"context": context}, stream_mode="custom"):
