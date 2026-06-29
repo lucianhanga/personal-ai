@@ -12,6 +12,7 @@ const DOC: api.DocumentInfo = {
   mime: "text/plain",
   size_bytes: 12,
   chunk_count: 3,
+  entity_count: 0,
   created_at: "2026-06-20T00:00:00Z",
 };
 

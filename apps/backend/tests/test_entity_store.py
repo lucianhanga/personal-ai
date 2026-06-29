@@ -78,6 +78,28 @@ def test_merge_entity_repoints_mentions_dedups_and_drops_alias() -> None:
     _run(run)
 
 
+def test_type_counts_and_document_entity_counts() -> None:
+    # Corpus aggregates (#465): exact per-type entity totals + per-document distinct-entity counts.
+    async def run() -> None:
+        pool = await create_pool(DB_URL)
+        await apply_migrations(pool)
+        _bind(await _new_tenant(pool))
+        store = PgEntityStore(TenantQuerier(pool))
+        p1 = await store.upsert_entity(type="person", name="Ada", occurrences=1)
+        p2 = await store.upsert_entity(type="person", name="Grace", occurrences=1)
+        o1 = await store.upsert_entity(type="org", name="Acme", occurrences=1)
+        await store.add_mention(entity_id=p1, document_id="d1", occurrences=2)
+        await store.add_mention(entity_id=o1, document_id="d1", occurrences=1)
+        await store.add_mention(entity_id=p2, document_id="d2", occurrences=1)
+
+        assert await store.type_counts() == {"person": 2, "org": 1}
+        # Distinct entities per doc: d1 mentions 2 entities, d2 mentions 1.
+        assert await store.document_entity_counts() == {"d1": 2, "d2": 1}
+        await pool.close()
+
+    _run(run)
+
+
 def test_canonical_upsert_dedups_and_normalizes() -> None:
     async def run() -> None:
         pool = await create_pool(DB_URL)
