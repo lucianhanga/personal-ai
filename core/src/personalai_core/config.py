@@ -53,6 +53,7 @@ _ENV_FIELDS = {
     "AGENT_GRAPH_ENABLED": "agent_graph_enabled",
     "AGENT_HUMAN_GATE": "agent_human_gate",
     "AGENT_ACCURACY_MODE": "agent_accuracy_mode",
+    "AGENT_VERIFIER_CHECK": "agent_verifier_check",
     "RETRIEVER": "retriever",
     "VECTOR_REPOSITORY": "vector_repository",
     "OBJECT_STORE": "object_store",
@@ -134,6 +135,7 @@ _BOOL_FIELDS = {
     "grounding_enabled",
     "agent_graph_enabled",
     "agent_human_gate",
+    "agent_verifier_check",
     "transcribe_enabled",
     "tts_enabled",
     "runaway_guard_enabled",
@@ -247,6 +249,10 @@ class CoreConfig(StrictModel):
     # the normal flow finalizes without a gate. The checkpoint is tenant-scoped (RLS) via TenantDb.
     agent_human_gate: bool = False
     agent_accuracy_mode: str = "standard"
+    # Tool-armed verifier (#465): in accurate mode, let the verifier do ONE bounded INDEPENDENT
+    # retrieval (re-query RAG/KAG/memory) to fact-check the draft's claims, not just judge it
+    # against the researcher's own sources. Fail-open + conservative. Toggleable in Settings.
+    agent_verifier_check: bool = True
     retriever: str = "pgvector"
     vector_repository: str = "pgvector"
     object_store: str = "local"

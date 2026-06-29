@@ -88,6 +88,12 @@ export function Agents({ token }: { token: string }): React.ReactElement {
     touch();
   }
 
+  function setVerifierCheck(on: boolean): void {
+    if (settings === null) return;
+    setSettings({ ...settings, agent_verifier_check: on });
+    touch();
+  }
+
   function setPrompt(agent: string, prompt: string): void {
     setDrafts((d) => ({ ...d, [agent]: { ...d[agent], prompt } }));
     touch();
@@ -206,6 +212,19 @@ export function Agents({ token }: { token: string }): React.ReactElement {
             />
             <span style={{ fontSize: "0.85rem" }}>
               Human approval gate — pause each turn for approve/reject before finalizing
+            </span>
+          </label>
+
+          <label style={{ display: "flex", gap: "0.5rem", alignItems: "center", padding: "0.25rem 0" }}>
+            <input
+              data-testid="agents-verifier-check"
+              type="checkbox"
+              checked={settings.agent_verifier_check ?? true}
+              onChange={(e) => setVerifierCheck(e.target.checked)}
+            />
+            <span style={{ fontSize: "0.85rem" }}>
+              Verifier fact-check — let the verifier run one independent RAG/KAG lookup to confirm the
+              draft answer (accurate mode only)
             </span>
           </label>
 

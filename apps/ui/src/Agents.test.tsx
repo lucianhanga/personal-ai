@@ -20,6 +20,7 @@ const SETTINGS: TenantSettings = {
   agent_graph_enabled: null,
   agent_human_gate: null,
   agent_accuracy_mode: null,
+  agent_verifier_check: null,
   agent_max_iterations: null,
   agent_timeout_seconds: null,
   memory_enabled: null,

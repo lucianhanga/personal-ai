@@ -39,6 +39,10 @@ class TenantSettings(StrictModel):
     agent_graph_enabled: bool | None = None
     agent_human_gate: bool | None = None
     agent_accuracy_mode: Literal["standard", "accurate"] | None = None
+    # Tool-armed verifier (#465): when on, the verifier node runs ONE bounded independent RAG/KAG
+    # retrieval to fact-check the draft (only meaningful in accurate mode, which inserts the
+    # verifier). None inherits the deployment default.
+    agent_verifier_check: bool | None = None
     agent_max_iterations: int | None = Field(default=None, ge=1, le=50)
     # Whole-turn wall-clock cap in seconds (E_TIMEOUT on expiry). 30s..1h.
     agent_timeout_seconds: int | None = Field(default=None, ge=30, le=3600)
