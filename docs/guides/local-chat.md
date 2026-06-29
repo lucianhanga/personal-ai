@@ -46,6 +46,7 @@ The UI reads `VITE_API_BASE` (default `http://127.0.0.1:8765`) and an optional `
 
 - **`qwen3.6:35b-a3b`** (MoE, ~3B active, 256K context, vision + tools) — capable default; first
   message loads ~23 GB, so give it a few seconds.
+- **`qwen3.6:27b`** — dense mid-tier; higher quality than the small models, lighter than the 35b MoE.
 - **`qwen3:8b`** / **`gemma3:latest`** — faster for quick iteration.
 - **Thinking models** (qwen3 family): the backend sends `think=false` by default so they answer
   cleanly. The `/api/v1/chat` body accepts `"think": true` to opt into the reasoning trace.
