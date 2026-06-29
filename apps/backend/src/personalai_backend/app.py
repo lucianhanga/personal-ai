@@ -2926,9 +2926,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         # breakdown read these instead of sampling the first N entities client-side.
         storage = _require_storage()
         by_type = await storage.entities.type_counts()
-        return StructuredResult(
-            ok=True, data={"total": sum(by_type.values()), "by_type": by_type}
-        )
+        return StructuredResult(ok=True, data={"total": sum(by_type.values()), "by_type": by_type})
 
     @app.delete(
         "/api/v1/files/{document_id}",
