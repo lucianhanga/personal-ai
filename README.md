@@ -1,9 +1,9 @@
 # PersonalAI
 
 [![CI](https://github.com/lucianhanga/personal-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/lucianhanga/personal-ai/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.8.3-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.0-blue.svg)](./CHANGELOG.md)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![Status: M0-M9 shipped (latest 0.8.3)](https://img.shields.io/badge/status-M0--M9%20shipped-brightgreen.svg)](./CHANGELOG.md)
+[![Status: M0-M9 + M11 shipped (latest 0.9.0)](https://img.shields.io/badge/status-M0--M9%20%2B%20M11%20shipped-brightgreen.svg)](./CHANGELOG.md)
 [![Local-first](https://img.shields.io/badge/local--first-yes-brightgreen.svg)](#principles)
 [![Structured-output-first](https://img.shields.io/badge/structured--output--first-yes-brightgreen.svg)](#principles)
 [![Security-first](https://img.shields.io/badge/security--first-yes-brightgreen.svg)](./SECURITY.md)
@@ -17,9 +17,11 @@ PersonalAI is **extensible** (tools + MCP), **structured-output-first** (schemas
 **open-source-first** (verified provenance only), and **security-first** (zero-trust toward
 tools, files, prompts, model outputs, and MCP servers).
 
-**Current state:** the core product works end to end. Milestones **M0–M9** have shipped — the latest
-release (**0.8.3**) landed the M8.1–M8.3 work (the blocking egress gate + transparency panel) plus
-the M9 multimodal trio (vision · STT · TTS). The MV3 browser extension (**M10**) is next.
+**Current state:** the core product works end to end. Milestones **M0–M9** are shipped, and the
+latest release (**0.9.0**) brings **M11 — the entity knowledge graph (KAG)** forward ahead of M10,
+together with **Documents v2** (on-device OCR + continuously-synced folders), **multi-source RAG**,
+and a **multi-agent redesign** (a tool-armed judge fact-check + evaluator-optimizer re-planning).
+The MV3 browser extension (**M10**) is next.
 
 What it does today:
 
@@ -31,8 +33,9 @@ What it does today:
   across your corpus is built alongside the vector index and browsable in the UI.
 - **Memory** you control — long-term + short-term, viewable / editable / erasable.
 - **Tool / MCP gateway**, security-first — permissions, egress allowlist, append-only audit.
-- **Single- or multi-agent** modes (planner → researcher → critic) with durable
-  **human-in-the-loop gates** (answer-approval + blocking egress-approval).
+- **Single- or multi-agent** modes (planner → researcher → critic, with an optional tool-armed
+  **verifier**) that fact-check the answer against independently-gathered evidence (retrieval + a bounded tool re-check) and can re-plan,
+  with durable **human-in-the-loop gates** (answer-approval + blocking egress-approval).
 - **Transparency panel** — activity timeline plus per-question context and token/time metrics.
 - **Always-on multi-tenancy** (Postgres RLS) — local zero-login or hosted login + CSRF.
 
@@ -95,8 +98,10 @@ tenant isolation as cross-cutting layers.
 **The AI workflow.** Every turn runs in one of two modes, chosen per tenant:
 
 - **Single-agent loop** — one model reasons and calls tools through the gateway until it answers.
-- **Multi-agent graph** (LangGraph, ADR-0012) — **planner → researcher → critic**, with a bounded
-  reflection loop and an optional verification step.
+- **Multi-agent graph** (LangGraph, ADR-0012) — **planner → researcher → critic** (with an optional
+  tool-armed **verifier**): the planner can fan out over multiple retrieval sources (fused with
+  cross-source RRF), a judge fact-checks the answer against independently-gathered evidence (retrieval + a bounded tool re-check), and a
+  bounded evaluator-optimizer loop can re-plan or revise.
 
 Both modes share the same security seams:
 

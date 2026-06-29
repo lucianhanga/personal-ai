@@ -82,8 +82,12 @@ references it. Individually uploaded documents are never auto-purged by folder s
 
 As documents in the **global** corpus are indexed, PersonalAI extracts the named entities they
 mention (people, organizations, locations, dates, products, events) into a knowledge graph. The
-**Entities** region in Settings → Documents lets you browse them grouped by type, search by name, and
-open an entity to see which documents mention it and how it relates to other entities.
+dedicated **Settings → Knowledge** section (between Memory and Network) browses it with two tabs: a
+**Graph** view (entities by type, name search, a co-occurrence toggle, on-canvas labels, Fit/Reset, a
+legend, and a Top-entities launcher) and a **Corpus** view (documents with Type / Size / Entities
+columns, sort / search / status filter, stat cards, an entity-type breakdown, a Retrieval Explorer,
+and a per-document chunk inspector). Settings → Documents also keeps a compact entity browser next to
+each folder. Open an entity to see which documents mention it and how it relates to others.
 
 Entity extraction is **corpus-global** (an entity can span many documents and folders) and runs only
 for the durable corpus — documents attached to a single chat are not added to the graph. It is

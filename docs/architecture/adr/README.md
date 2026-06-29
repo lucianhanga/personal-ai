@@ -18,5 +18,6 @@ lightweight [MADR](https://adr.github.io/madr/)-style format.
 | [0011](./0011-agent-framework.md) | M8 agent framework: a hand-rolled typed graph over the existing seams | Superseded by 0012 |
 | [0012](./0012-langgraph-orchestration.md) | Adopt LangGraph as the agent orchestration platform | Accepted |
 | [0013](./0013-egress-approval-gate.md) | A blocking durable egress-approval gate for agent tool calls | Accepted |
+| [0014](./0014-kag-entity-store.md) | KAG: a relational entity store populated by local LLM-NER (first delivery of M11) | Accepted |
 
 > New decisions get the next number. Status: Proposed → Accepted → Superseded (link the successor).

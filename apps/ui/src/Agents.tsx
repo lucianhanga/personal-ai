@@ -232,8 +232,8 @@ export function Agents({ token }: { token: string }): React.ReactElement {
               onChange={(e) => setVerifierCheck(e.target.checked)}
             />
             <span style={{ fontSize: "0.85rem" }}>
-              Judge fact-check — let the final judge run one independent RAG/KAG lookup to confirm the
-              answer (the verifier in accurate mode, otherwise the critic)
+              Judge fact-check — let the final judge independently confirm the answer (a RAG/KAG/memory
+              lookup plus a bounded verify-only tool re-check; verifier in accurate mode, else the critic)
             </span>
           </label>
 

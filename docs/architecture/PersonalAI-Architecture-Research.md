@@ -541,13 +541,17 @@ The dependency arrow always points **inward to `/contracts`**. Adapters never im
 
 Each milestone is shippable, builds on the previous, and **exercises a seam** so the next milestone slots in without rework. "Owner agent" = which Claude Code specialist naturally owns that slice.
 
-> **Status:** **M0–M8.3 complete** — including an **Identity + multi-tenancy** milestone (ADR-0010:
+> **Status:** **M0–M9 + M11 (first delivery) complete** — including an **Identity + multi-tenancy** milestone (ADR-0010:
 > always-on auth + Postgres RLS), a **Pre-M8 hardening** pass, the **M8.1 multi-agent graph**
 > (planner → researcher → critic + durable answer-approval gate, ADR-0012), **M8.2** (tiered
 > verification ladder + bounded schema-repair + accuracy-mode + per-tenant agent config), and **M8.3**
 > (a second durable gate — the **blocking egress-approval gate**, ADR-0013 — plus a transparency
 > panel: Activity timeline, tool-I/O progressive disclosure, per-question context + token/time
-> metrics), all shipped. **M9 (multimodal) is next.**
+> metrics), all shipped. **M9 (multimodal — vision · STT · browser TTS)** shipped in 0.8.3, and
+> **0.9.0** brought **M11 (knowledge graph / KAG)** forward ahead of M10, together with Documents v2
+> (on-device OCR + continuously-synced folders), multi-source RAG, and a multi-agent redesign
+> (a tool-armed judge fact-check + evaluator-optimizer re-planning). **M10 (browser extension) is
+> next.**
 > **Note (orchestration engine):** this report recommended **LangGraph**. ADR-0011 briefly chose a
 > hand-rolled typed graph instead (rejecting LangGraph on dependency weight), but **ADR-0012
 > superseded ADR-0011 and adopted LangGraph** as the orchestration engine — so this report's original
@@ -569,9 +573,9 @@ Each milestone is shippable, builds on the previous, and **exercises a seam** so
 | **M8.1** | **Multi-agent graph** | Role-specialized **LangGraph** graph (planner → researcher → critic → finalize) above the same gateway/provider seams (ADR-0012); **durable answer-approval gate** (tenant-scoped checkpointer, Postgres RLS) with SSE `plan`/`critique`/`approval_request` frames + a `/resume` endpoint; color-coded agent trace in the UI | Agent seam at scale | New roles/critics are additive nodes | agentic-ai-architect | done |
 | **M8.2** | **Selective verification + config** | **Tiered verification ladder** (schema-always → conditional LLM-judge → ground-truth → human) for factuality/anti-hallucination; **bounded schema-repair**; `accuracy mode` toggle (`PERSONALAI_AGENT_ACCURACY_MODE`); per-tenant **agent modes** + per-agent prompts/tool-scoping; query contextualization; **Chat \| Settings** UI | Verification seam | New critics/verifiers are additive nodes | agentic-ai-architect | done |
 | **M8.3** | **Egress gate + transparency** | **Blocking egress-approval gate** — a second durable LangGraph gate that pauses the run on a non-allowlisted host (allow-once/always/deny/more-info), host-from-checkpoint + subject-authz + SSRF-survives-allow (ADR-0013); a transparency **info panel** (reverse-chronological **Activity timeline**, **tool-I/O progressive disclosure**, per-question **context snapshot** + **token/time metrics**); composer draft + attachment persistence | Agent-safety + transparency seam | A second gate reuses the same durable machinery | agentic-ai-architect, ui-developer, ciso-security-auditor | done |
-| **M9** | **Multimodal** | Vision routing; **faster-whisper** STT; **Piper** TTS; optional image gen | Modality seam at scale | Each modality = a handler, no core change | ollama-llm-agent, ui-developer | planned |
-| **M10** | **Browser extension** | MV3, minimal perms, explicit capture, authenticated localhost messaging | New client behind existing gateway contract | Extension is just another authenticated client | chrome-extension-architect/developer | planned |
-| **M11** | **KAG / graph memory (graph upgrade of M4)** | Hybrid graph+vector retrieval (Postgres + Apache AGE), entity/relationship extraction + resolution, multi-hop; upgrades the long-term memory to a knowledge graph | Reuses retrieval + storage + memory seams | Pure add-on; vector RAG + semantic memory untouched | database-architect, agentic-ai-architect | planned |
+| **M9** | **Multimodal** | Vision routing; **faster-whisper** STT; browser TTS (read-aloud); **Piper** neural TTS + optional image gen are follow-ups | Modality seam at scale | Each modality = a handler, no core change | ollama-llm-agent, ui-developer | done (Piper / image-gen follow-ups) |
+| **M10** | **Browser extension** | MV3, minimal perms, explicit capture, authenticated localhost messaging | New client behind existing gateway contract | Extension is just another authenticated client | chrome-extension-architect/developer | next |
+| **M11** | **KAG / knowledge graph** | First delivery (0.9.0): a **relational** entity store (`entities`/`entity_documents`/`entity_edges`) populated by **local LLM-NER** over the document corpus, with entity resolution, a KAG aggregation/enumeration retrieval source, and a Settings → Knowledge graph + corpus explorer (ADR-0014). Still planned: Apache AGE / multi-hop graph retrieval and the graph upgrade of long-term memory | Reuses retrieval + storage seams | Pure add-on; vector RAG + semantic memory untouched | database-architect, agentic-ai-architect | in progress (first delivery in 0.9.0) |
 | **M12** | **Hardening & packaging** | Signed releases, reproducible builds, SBOM/scan in CI, desktop + Compose packaging, docs/ADRs | Cross-cutting | Ongoing, per-release | github-repository-manager, documentation | planned |
 
 > **Roadmap note (2026-06-07):** Memory was pulled forward to **M4** (the opportune moment — it
@@ -584,6 +588,13 @@ Each milestone is shippable, builds on the previous, and **exercises a seam** so
 > search)** is now **M6**, and **MCP plug-in/out** is **M7**. Rationale: the agent loop is what lets
 > the user simply *ask the model to search/act*, it only needs the M5 gateway (already shipped), and
 > MCP then plugs published tools into that same loop. Both still run every call through the gateway.
+>
+> **Roadmap note (2026-06-29):** **M11 (knowledge graph / KAG) was brought forward ahead of M10**
+> (browser extension) and is its **first delivery** in 0.9.0. It ships a **relational** entity store
+> populated by **local LLM-NER over the document corpus** (with a KAG aggregation retrieval source
+> and a Settings → Knowledge explorer), rather than the originally-sketched **Apache AGE** graph, and
+> it does not yet upgrade long-term memory to a graph — those remain planned. The decision and its
+> rationale are recorded in [ADR-0014](./adr/0014-kag-entity-store.md). M10 is now next.
 
 ### 22.5 High-horizon view
 

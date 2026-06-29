@@ -154,10 +154,10 @@ DEFAULT_AGENT_PROMPTS: dict[str, str] = {
         "no rewrite of this draft can fix it and the team must re-plan; REVISE if the plan was "
         "sound but the draft executes it poorly (only says where to look, gives no data, or "
         "contradicts its provided sources); otherwise OK. Then add 1-2 short sentences. Do not "
-        "rewrite the answer. You may ALSO be given an 'independent verification lookup' (a fresh "
-        "retrieval run for this check) — treat it as ground truth alongside the sources, and "
-        "REVISE/REPLAN on a clear contradiction it settles (a wrong count or name), never on its "
-        "mere absence of a detail."
+        "rewrite the answer. You may ALSO be given 'independent verification' findings (a fresh "
+        "retrieval and/or a bounded tool re-check) — treat them as ground truth alongside the "
+        "sources, and REVISE/REPLAN on a clear contradiction they settle (a wrong count or name), "
+        "never on the mere absence of a detail."
     ),
     "verifier": (
         "You are the verifier (LLM judge). The sources the researcher retrieved are provided to "
@@ -166,10 +166,10 @@ DEFAULT_AGENT_PROMPTS: dict[str, str] = {
         "verdict: 'pass' if it answers the request and matches its sources; 'needs_revision' if "
         "close but with a fixable gap or a claim unsupported by the sources; 'fail' if it does not "
         "answer the request or contradicts the sources. One-sentence reason. Trust the provided "
-        "sources over your own prior. You may ALSO be given an 'independent verification lookup' — "
-        "a fresh retrieval run just for this check; treat it as ground truth alongside the "
-        "sources, and only return 'needs_revision'/'fail' on a CLEAR contradiction (a wrong count "
-        "or name it settles), never on its mere absence of a detail."
+        "sources over your own prior. You may ALSO be given 'independent verification' findings (a "
+        "fresh retrieval and/or a bounded tool re-check run for this check); treat them as ground "
+        "truth alongside the sources, and only return 'needs_revision'/'fail' on a CLEAR "
+        "contradiction they settle (a wrong count or name), never on the mere absence of a detail."
     ),
 }
 
@@ -294,6 +294,21 @@ class GraphState(TypedDict, total=False):
 
 # Max researcher passes in the reflection loop: the initial attempt + up to one retry.
 MAX_ATTEMPTS = 2
+
+# Judge fact-check tool pass (#465): how many bounded iterations the verifier/critic's verify-ONLY
+# tool run may take. Kept tiny on purpose — it confirms the draft's claims (e.g. re-run a web/MCP
+# lookup), it does NOT re-do the researcher's work.
+VERIFIER_TOOL_ITERS = 2
+
+# Verify-only instruction for the judge's bounded tool pass (#465): it has the researcher's tools
+# but must fact-check, not re-answer. Internal (not a configurable agent / not in AGENT_NAMES).
+_VERIFY_TOOLS_PROMPT = (
+    "You are fact-checking a draft answer, not writing one. Use the available tools ONLY to "
+    "confirm or refute the draft's specific factual claims (look up the figures, names, dates, or "
+    "facts it asserts). Be quick and targeted — do NOT re-research the whole question or write a "
+    "new answer. When done, state briefly what you confirmed and anything that contradicts the "
+    "draft; if a claim can't be checked with the tools, say so."
+)
 
 # The default cross-source evidence token budget (#420). The first real token budget in the system:
 # the merge node fits the fused multi-source evidence to this many tokens (a conservative slice of
@@ -696,6 +711,63 @@ def _build_graph(
         except Exception:  # noqa: BLE001 - fail-open: the check must never block finalizing
             return []
 
+    async def _independent_tool_check(answer: str, state: GraphState) -> list[ChatMessage]:
+        # Bounded, verify-ONLY tool pass (#465): the critic/verifier are otherwise tool-free, so
+        # they cannot check web-/tool-derived claims (the retrieval lookup only covers RAG/KAG/mem).
+        # Give the judge the researcher's tools for a tiny (VERIFIER_TOOL_ITERS) run prompted to
+        # confirm/refute the draft's claims, NOT re-research. No durable gate: an egress/approval
+        # block just yields no finding (fail-open). Skipped when off or no tools are available.
+        if not (verifier_tools and tools and answer):
+            return []
+        _emit_stage(get_stream_writer(), "verifier", "Fact-checking")
+        findings, tool_hits = "", []
+        try:
+            verify_msgs = [
+                ChatMessage(Role.SYSTEM, _VERIFY_TOOLS_PROMPT),
+                *messages,
+                ChatMessage(Role.USER, f"Draft answer to fact-check:\n\n{answer}"),
+            ]
+            async for ev in run_agent(
+                messages=verify_msgs,
+                provider=provider,
+                model=model,
+                gateway=gateway,
+                tools=tools,
+                grants=grants,
+                approved=approved,
+                think=False,
+                max_iterations=VERIFIER_TOOL_ITERS,
+                runaway=runaway,
+            ):
+                if ev.type == "final":
+                    findings = ev.answer or ""
+                elif ev.type == "tool_result" and ev.ok and ev.output:
+                    tool_hits.append(
+                        f"[{ev.tool}] {json.dumps(dict(ev.output), ensure_ascii=False)[:800]}"
+                    )
+        except Exception:  # noqa: BLE001 - fail-open: a verify error must never block finalizing
+            return []
+        if not findings and not tool_hits:
+            return []
+        parts = []
+        if tool_hits:
+            parts.append("Tool results gathered to verify the draft:\n" + "\n".join(tool_hits[:6]))
+        if findings:
+            parts.append("Verification finding:\n" + findings[:2000])
+        return [
+            ChatMessage(
+                Role.SYSTEM,
+                "Independent tool verification (a fresh, bounded tool check of the draft's "
+                "claims -- treat as ground truth):\n" + "\n\n".join(parts),
+            )
+        ]
+
+    async def _independent_checks(answer: str, state: GraphState) -> list[ChatMessage]:
+        # The judge's full independent fact-check: the RAG/KAG/memory retrieval lookup PLUS the
+        # bounded verify-only tool pass, so it covers BOTH source-grounded and tool/web-derived
+        # claims. Either half is independently fail-open / may return nothing.
+        return [*await _independent_lookup(state), *await _independent_tool_check(answer, state)]
+
     async def critic(state: GraphState) -> dict[str, Any]:
         # The draft goes in a USER message, not an ASSISTANT one: with the draft as an assistant
         # turn the model treats the conversation as finished and replies empty (the "critic did
@@ -705,7 +777,7 @@ def _build_graph(
         # Arm the critic with the independent fact-check ONLY when it is the last judge (standard
         # mode -- no verifier downstream), so the final answer is checked in every multi-agent
         # config without a redundant second lookup in accurate mode (the verifier does it there).
-        independent = [] if verify else await _independent_lookup(state)
+        independent = [] if verify else await _independent_checks(answer, state)
         review = [
             ChatMessage(Role.SYSTEM, agent_prompts["critic"]),
             *messages,
@@ -742,9 +814,10 @@ def _build_graph(
         _emit_stage(get_stream_writer(), "verifier", "Verifying")
         answer = state.get("answer", "")
         # Tool-armed verifier (#465): the bounded independent fact-check (shared with the critic in
-        # standard mode). The verifier always runs it when armed -- it is the last judge in accurate
-        # mode. Fail-open: any error -> [] -> judge against the researcher's evidence as before.
-        independent = await _independent_lookup(state)
+        # standard mode) -- a RAG/KAG/memory retrieval lookup PLUS a verify-only tool pass, so it
+        # covers tool/web-derived claims too, not just source-grounded ones. The verifier always
+        # runs it when armed (it is the last judge in accurate mode). Fail-open: any error -> [].
+        independent = await _independent_checks(answer, state)
         judged = await generate_structured(
             provider=provider,
             model=model,

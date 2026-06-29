@@ -8,7 +8,7 @@ PersonalAI releases are **signed with Sigstore/cosign** and ship a **CycloneDX S
 PersonalAI uses **one product version**, kept as a single source of truth.
 
 - **Canonical source:** the root [`VERSION`](../../VERSION) file holds the product version
-  (currently `0.8.3`). This is the value to read when you need "the product version."
+  (currently `0.9.0`). This is the value to read when you need "the product version."
 - **Runtime mirror:** `apps/backend/src/personalai_backend/__init__.py` `__version__` must be kept
   **in sync** with `VERSION`. It is the value the running app actually reports — `app.py` feeds it
   into the OpenAPI document's `info.version` and the unversioned `GET /version` endpoint (nothing
@@ -23,8 +23,9 @@ PersonalAI uses **one product version**, kept as a single source of truth.
 
 **Policy (pre-1.0)** — same as the [CHANGELOG](../../CHANGELOG.md) header: `MAJOR` stays `0` until
 the first stable release; `MINOR` bumps as each milestone (M1, M2, …) lands; `PATCH` bumps for
-fixes/UX tweaks between milestones. The shipped state is **M8.3**, so the version is **0.8.3**. The
-HTTP API is versioned independently in the URL path (`/api/v1`).
+fixes/UX tweaks between milestones. The shipped state is **M11 (knowledge graph / KAG)** — brought
+forward ahead of M10 — so the version is **0.9.0**. The HTTP API is versioned independently in the
+URL path (`/api/v1`).
 
 **To bump the product version**, update all five product files together — `VERSION`, the backend
 `__init__.py` `__version__`, `apps/backend/pyproject.toml`, `tools/mcp/pyproject.toml`, and
