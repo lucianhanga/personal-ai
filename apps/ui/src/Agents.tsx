@@ -135,6 +135,24 @@ export function Agents({ token }: { token: string }): React.ReactElement {
     touch();
   }
 
+  function setDefaultProvider(value: string | null): void {
+    if (settings === null) return;
+    setSettings({ ...settings, model_provider: value as "ollama" | "openai_compat" | null });
+    touch();
+  }
+
+  function setDefaultModel(value: string | null): void {
+    if (settings === null) return;
+    setSettings({ ...settings, default_model: value });
+    touch();
+  }
+
+  function setDefaultReasoning(value: string | null): void {
+    if (settings === null) return;
+    setSettings({ ...settings, default_reasoning: value as "off" | "low" | "medium" | "high" | null });
+    touch();
+  }
+
   async function onSave(): Promise<void> {
     if (settings === null) return;
     // Only persist agents that actually deviate from the defaults (non-empty prompt, any tool
@@ -238,6 +256,57 @@ export function Agents({ token }: { token: string }): React.ReactElement {
         ))}
       </fieldset>
 
+      {/* Global defaults: provider, model, and reasoning level the backend applies when no per-turn override is set. */}
+      <fieldset
+        data-testid="agents-defaults"
+        style={{ border: "1px solid #eee", borderRadius: 6, margin: "0 0 0.5rem", padding: "0.5rem" }}
+      >
+        <legend style={{ fontSize: "0.8rem", color: "#555" }}>Defaults</legend>
+        <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+          <label style={{ fontSize: "0.78rem" }}>
+            Provider{" "}
+            <select
+              data-testid="agents-default-provider"
+              value={settings.model_provider ?? ""}
+              onChange={(e) => setDefaultProvider(e.target.value || null)}
+            >
+              <option value="">Use server default</option>
+              <option value="ollama">ollama</option>
+              <option value="openai_compat">openai_compat</option>
+            </select>
+          </label>
+          <label style={{ fontSize: "0.78rem" }}>
+            Default model{" "}
+            <select
+              data-testid="agents-default-model"
+              value={settings.default_model ?? ""}
+              onChange={(e) => setDefaultModel(e.target.value || null)}
+            >
+              <option value="">Use server default</option>
+              {availableModels.map((m) => (
+                <option key={m.name} value={m.name}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={{ fontSize: "0.78rem" }}>
+            Default reasoning{" "}
+            <select
+              data-testid="agents-default-reasoning"
+              value={settings.default_reasoning ?? ""}
+              onChange={(e) => setDefaultReasoning(e.target.value || null)}
+            >
+              <option value="">Inherit (server default)</option>
+              <option value="off">Off</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+        </div>
+      </fieldset>
+
       {effectiveMode === "multi" && (
         <>
           <label style={{ display: "flex", gap: "0.5rem", alignItems: "center", padding: "0.25rem 0" }}>
@@ -265,16 +334,28 @@ export function Agents({ token }: { token: string }): React.ReactElement {
             </span>
           </label>
 
-          {view.agents.map((a) => (
-            <fieldset
-              key={a.name}
-              data-testid={`agents-card-${a.name}`}
+          <div
+            data-testid="agents-cards"
+            style={{
+              // Two cards per row so each prompt textarea is a comfortable reading width rather than
+              // the full window. align-items:start lets the taller Researcher card (it has the
+              // tools list) not stretch its row-mate. Cards stay full-width controls within a column.
+              display: "grid",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gap: "0.6rem",
+              alignItems: "start",
+            }}
+          >
+            {view.agents.map((a) => (
+              <fieldset
+                key={a.name}
+                data-testid={`agents-card-${a.name}`}
               style={{
                 // Same per-agent color code as the reasoning pane (faded bg + accent border/legend).
                 border: `1px solid ${AGENT_FG[a.name] ?? "#ccc"}33`,
                 background: AGENT_BG[a.name] ?? "transparent",
                 borderRadius: 6,
-                margin: "0.5rem 0",
+                margin: 0,
                 padding: "0.5rem",
               }}
             >
@@ -353,7 +434,8 @@ export function Agents({ token }: { token: string }): React.ReactElement {
                 </p>
               )}
             </fieldset>
-          ))}
+            ))}
+          </div>
         </>
       )}
       {effectiveMode !== "multi" && (

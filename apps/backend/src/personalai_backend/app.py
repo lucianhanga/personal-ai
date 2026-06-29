@@ -1896,9 +1896,12 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             [] if multi_source_active else await _memory_context(req, incognito, query=standalone)
         )
         stm_messages = await _assemble_stm(req, provider, conv)
-        # Reasoning amount: `reasoning` (off/low/medium/high) overrides `think`; low/medium/high add
-        # a graded reasoning-budget nudge (see _resolve_reasoning).
-        think_effective, reasoning_messages = _resolve_reasoning(req.reasoning, req.think)
+        # Reasoning amount: the request's `reasoning` (off/low/medium/high) wins; when it omits one,
+        # fall back to the tenant default (config.default_reasoning), the home for the default now
+        # being Settings -> Agents. low/medium/high add a graded reasoning-budget nudge.
+        think_effective, reasoning_messages = _resolve_reasoning(
+            req.reasoning or config.default_reasoning, req.think
+        )
         # Grounding/anti-hallucination: ground answers in the provided context/tools; admit
         # uncertainty rather than fabricating (the #1 cause of "invented" answers).
         grounding_messages = (
@@ -2528,7 +2531,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         context_messages, _citations = await _retrieve_context(chat_req, query=standalone)
         memory_messages = await _memory_context(chat_req, False, query=standalone)
         stm_messages = await _assemble_stm(chat_req, provider, None)
-        think_effective, reasoning_messages = _resolve_reasoning(chat_req.reasoning, chat_req.think)
+        think_effective, reasoning_messages = _resolve_reasoning(
+            chat_req.reasoning or config.default_reasoning, chat_req.think
+        )
         grounding_messages = (
             [ChatMessage(Role.SYSTEM, _GROUNDING)] if config.grounding_enabled else []
         )

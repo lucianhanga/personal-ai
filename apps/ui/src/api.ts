@@ -786,6 +786,7 @@ export async function upsertMcpServer(
 export interface TenantSettings {
   model_provider: "ollama" | "openai_compat" | null;
   default_model: string | null;
+  default_reasoning: "off" | "low" | "medium" | "high" | null;
   ollama_host: string | null;
   ollama_num_ctx: number | null;
   ollama_keep_alive: string | null;

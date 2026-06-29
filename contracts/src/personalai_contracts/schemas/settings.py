@@ -46,6 +46,10 @@ class TenantSettings(StrictModel):
     agent_max_iterations: int | None = Field(default=None, ge=1, le=50)
     # Whole-turn wall-clock cap in seconds (E_TIMEOUT on expiry). 30s..1h.
     agent_timeout_seconds: int | None = Field(default=None, ge=30, le=3600)
+    # Default reasoning ("how much to think") applied when a chat turn doesn't specify one — the
+    # tenant-level default behind the per-agent reasoning overrides. None inherits the deployment
+    # default (CoreConfig.default_reasoning).
+    default_reasoning: Literal["off", "low", "medium", "high"] | None = None
 
     # --- Behaviour ---
     memory_enabled: bool | None = None
