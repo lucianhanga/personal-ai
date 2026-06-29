@@ -7,12 +7,14 @@
 # Safe to re-run. Runs on first boot via Terraform cloud-init (custom_data), or
 # manually:  sudo TARGET_USER=azureuser bash setup-devtools.sh
 #
-# Installs:
+# Installs (after an apt update + upgrade):
 #   - base build libs + native deps (libpq, libmagic, libGL, libgomp, ...)
+#   - nvtop (GPU top)
 #   - git + GitHub CLI (gh)
 #   - Docker + compose v2
 #   - uv + Python 3.12
 #   - Node.js 22 + pnpm 11.5.1
+#   - Claude Code CLI (@anthropic-ai/claude-code)
 #   - Ollama (uses the A100 GPU automatically)
 #   - pre-pulls the shared Ollama models (qwen3-embedding:0.6b, qwen3.6:35b-a3b)
 #
@@ -39,15 +41,19 @@ fi
 
 log "Starting toolchain setup for user '${TARGET_USER}' (prepull_models=${PREPULL_MODELS})."
 
-# 1) Base system packages -----------------------------------------------------
-log "Installing base apt packages..."
+# 1) Base system: update, upgrade, then install packages ----------------------
+log "Updating apt package index..."
 apt-get update -y || warn "apt-get update failed"
+log "Upgrading installed packages (apt-get upgrade)..."
+apt-get upgrade -y || warn "apt-get upgrade failed"
+log "Installing base apt packages..."
+# nvtop = an interactive GPU 'top' for NVIDIA (live GPU/VRAM/process view).
 apt-get install -y --no-install-recommends \
   git curl ca-certificates gnupg lsb-release unzip jq make \
   build-essential python3-dev pkg-config \
   libssl-dev libffi-dev libpq-dev \
   libmagic1 libgl1 libglib2.0-0 libgomp1 \
-  postgresql-client || warn "some base packages failed to install"
+  postgresql-client nvtop || warn "some base packages failed to install"
 
 # 2) GitHub CLI (gh) ----------------------------------------------------------
 if ! command -v gh >/dev/null 2>&1; then
@@ -92,6 +98,12 @@ fi
 if command -v npm >/dev/null 2>&1 && ! command -v pnpm >/dev/null 2>&1; then
   log "Installing pnpm 11.5.1..."
   npm install -g pnpm@11.5.1 || warn "pnpm install failed"
+fi
+
+# 5b) Claude Code CLI (Anthropic) --------------------------------------------
+if command -v npm >/dev/null 2>&1 && ! command -v claude >/dev/null 2>&1; then
+  log "Installing Claude Code CLI..."
+  npm install -g @anthropic-ai/claude-code || warn "claude code install failed"
 fi
 
 # 6) Ollama (GPU auto-detected on the NGC image) -----------------------------

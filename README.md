@@ -52,7 +52,7 @@ The five core lifecycle verbs:
 | `start.sh`      | **Start** a stopped (deallocated) machine.                               |
 | `stop.sh`       | **Stop** the machine: deallocate it - halts GPU billing, keeps disk + data. |
 | `destroy.sh`    | **Destroy** the machine and ALL its resources (irreversible).            |
-| `monitor.sh`    | **Monitor**: status + live cost; `--all` shows every instance + total.   |
+| `monitor.sh`    | **Monitor**: status + live cost. Discovers instances from Azure; bare run shows ALL of them, plus standing IP + disk monthly cost. |
 
 Access / support scripts:
 
@@ -64,8 +64,30 @@ Access / support scripts:
 | `setup-devtools.sh` | Idempotent toolchain installer run on the VM (via cloud-init).      |
 
 All instance-aware scripts accept `-n, --name <name>` (alias `--instance`,
-default `devel`) to target a specific machine. `monitor.sh` additionally accepts
-`--all` to inspect every instance at once.
+default `devel`) to target a specific machine.
+
+`monitor.sh` is the exception and is a pure read-only **Azure** tool: it
+discovers instances directly from Azure resource groups (those named
+`ai-<name>-a100-rg`), independent of local Terraform state or workspaces. A bare
+`monitor.sh` therefore inspects **every** instance that exists in the
+subscription (equivalent to `--all`); `monitor.sh --name <name>` narrows to one.
+For each instance it also lists the **standing resources** (public IPs and
+managed disks) with their estimated **monthly** cost - the charges that accrue
+24/7 even when the VM is stopped, failed, or never created.
+
+Two extra views help at a glance:
+
+- `monitor.sh --list` (alias `-l`) prints a compact **inventory table**, one row
+  per instance: `INSTANCE | REGION | STATUS | RESOURCES | STANDING $/mo`, plus a
+  combined standing total. `STATUS` is `running`, `stopped`, `partial`
+  (resources exist but no VM - an incomplete or failed provision that is still
+  billing), or `empty`.
+- `monitor.sh --top` (alias `--live`) is a full-screen **live dashboard**: it
+  takes over the terminal (alternate screen buffer), redraws in place every few
+  seconds (default 5s, or set `--watch <secs>`), and restores the terminal
+  cleanly on exit or Ctrl-C (press `q` to quit). It also works with `--list`
+  (live inventory). When stdout is not a TTY it falls back to a single render, so
+  piping and redirection still work.
 
 `start.sh` / `stop.sh` / `destroy.sh` are thin verbs over a shared internal
 engine (`deprovision.sh`); call the verbs, not the engine. Note "stop" always
@@ -143,8 +165,9 @@ From the repository root:
 # 2. Connect to the VM
 ./scripts/connect.sh                # interactive SSH shell
 
-# 3. Check status any time (read-only)
-./scripts/monitor.sh
+# 3. Check status any time (read-only; discovers all instances from Azure)
+./scripts/monitor.sh                # ALL instances + standing IP/disk monthly cost
+./scripts/monitor.sh --name devel   # just one instance
 ./scripts/monitor.sh --gpu          # also runs nvidia-smi over SSH
 ./scripts/monitor.sh --watch 15     # refresh every 15 seconds
 
@@ -184,6 +207,7 @@ boot). It installs the tools needed by the `doktokNG` and `personalAI` projects
 (tools only - it does not clone the repos):
 
 - build libs + native deps (`libpq`, `libmagic`, `libGL`, `libgomp`, ...)
+- `nvtop` (an interactive GPU "top" for live NVIDIA GPU/VRAM/process monitoring)
 - git + GitHub CLI (`gh`)
 - Docker + compose v2
 - `uv` + Python 3.12
@@ -195,6 +219,10 @@ boot). It installs the tools needed by the `doktokNG` and `personalAI` projects
 Flags:
 - `provision.sh --no-devtools` - skip the toolchain entirely.
 - `provision.sh --skip-models` - install tools but do not pre-pull the models.
+
+On first run the installer also refreshes the OS packages (`apt-get update` and
+`apt-get upgrade -y`) before installing the toolchain, so the base image starts
+up to date.
 
 Progress is logged on the VM at `/var/log/devtools-setup.log`; a summary marker
 is written to `/var/lib/devtools-setup.done` when it finishes. The install is
@@ -223,6 +251,17 @@ local disk.
   resources and all charges, but the disk and its data are gone.
 - `stop.sh` always **deallocates** (the right, cheap "off"). A VM that is merely
   stopped-but-allocated still incurs compute charges - the scripts never do that.
+
+To see exactly what is still costing money, run `monitor.sh`. Alongside the
+compute figure it prints a **Standing resources** section for each instance -
+every public IP and managed disk with an estimated **monthly** cost and a
+per-instance subtotal, plus a combined standing total across all instances.
+Because monitor discovers instances from Azure (not from local Terraform state),
+this surfaces leftover billable resources even after a partial or failed
+provision, or when a VM was destroyed but its public IP or disk was left behind.
+The two figures are kept distinct on purpose: **compute** is an hourly accrual
+that only runs while a VM is on; **standing** is a monthly estimate for the
+IP + disk resources that bill 24/7 regardless of VM power state.
 
 ## SSH source-IP security note
 
@@ -310,7 +349,7 @@ automatically, so multiple instances stay isolated there too.
 │   ├── start.sh          # START a stopped (deallocated) machine (--name)
 │   ├── stop.sh           # STOP (deallocate): halt GPU billing, keep data (--name)
 │   ├── destroy.sh        # DESTROY the machine and all resources (--name)
-│   ├── monitor.sh        # MONITOR: status + live cost (--name, --all)
+│   ├── monitor.sh        # MONITOR: status + compute/standing cost; discovers all instances from Azure (--name, --all)
 │   ├── connect.sh        # SSH into the machine (shell, command, port-forward; --name)
 │   ├── tunnel.sh         # SSH local port-forwarding presets (--name)
 │   ├── deprovision.sh    # internal engine behind start/stop/destroy (--name)
