@@ -2900,6 +2900,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         # never folder-synced ones (those live under their folder source) (#451). With
         # ``include_synced=true`` the FULL global corpus is returned -- manual + folder-synced --
         # for the Knowledge -> Corpus overview (#465).
+        # Per-document entity counts for the Corpus table (#465): one grouped scan, joined in by id.
+        entity_counts = await storage.entities.document_entity_counts()
         docs = [
             {
                 "id": d.id,
@@ -2907,11 +2909,26 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 "mime": d.mime,
                 "size_bytes": d.size_bytes,
                 "chunk_count": d.chunk_count,
+                "entity_count": entity_counts.get(d.id, 0),
                 "created_at": d.created_at.isoformat(),
             }
             for d in await storage.documents.list(manual_only=not include_synced)
         ]
         return StructuredResult(ok=True, data={"files": docs})
+
+    @app.get(
+        "/api/v1/entities/stats",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def entity_stats() -> StructuredResult:
+        # Exact corpus-wide entity totals (#465): the Knowledge -> Corpus Entities stat + type
+        # breakdown read these instead of sampling the first N entities client-side.
+        storage = _require_storage()
+        by_type = await storage.entities.type_counts()
+        return StructuredResult(
+            ok=True, data={"total": sum(by_type.values()), "by_type": by_type}
+        )
 
     @app.delete(
         "/api/v1/files/{document_id}",

@@ -199,7 +199,13 @@ export interface DocumentInfo {
   mime: string;
   size_bytes: number;
   chunk_count: number;
+  entity_count: number;
   created_at: string;
+}
+
+export interface EntityStats {
+  total: number;
+  by_type: Partial<Record<EntityType, number>>;
 }
 
 export interface Citation {
@@ -1464,6 +1470,18 @@ export async function fetchEntities(
   if (!res.ok) throw new Error(`entities request failed: ${res.status}`);
   const body = (await res.json()) as { data?: { entities?: Entity[] } };
   return body.data?.entities ?? [];
+}
+
+/** Exact corpus-wide entity totals (#465): total + per-type counts, for the Corpus stat + breakdown
+ * (not the first-N sample fetchEntities returns). */
+export async function fetchEntityStats(token: string): Promise<EntityStats> {
+  const res = await fetch(`${API_BASE}/api/v1/entities/stats`, {
+    headers: authHeaders(token),
+    credentials: CREDS,
+  });
+  if (!res.ok) throw new Error(`entity stats failed: ${res.status}`);
+  const body = (await res.json()) as { data?: EntityStats };
+  return { total: body.data?.total ?? 0, by_type: body.data?.by_type ?? {} };
 }
 
 /** Fetch one entity's detail (#451): the entity, its source documents, and its graph edges. */

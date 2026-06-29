@@ -13,7 +13,15 @@ function entity(id: string, type: api.EntityType, name: string, mention_count = 
 }
 
 function doc(id: string, name: string, chunk_count: number): api.DocumentInfo {
-  return { id, name, mime: "text/plain", size_bytes: 100, chunk_count, created_at: "2026-06-20T00:00:00Z" };
+  return {
+    id,
+    name,
+    mime: "text/plain",
+    size_bytes: 100,
+    chunk_count,
+    entity_count: 0,
+    created_at: "2026-06-20T00:00:00Z",
+  };
 }
 
 test("opens on the Graph tab with the entity picker", async () => {
@@ -29,6 +37,7 @@ test("opens on the Graph tab with the entity picker", async () => {
 
 test("switching to the Corpus tab renders the corpus overview", async () => {
   vi.spyOn(api, "fetchEntities").mockResolvedValue([]);
+  vi.spyOn(api, "fetchEntityStats").mockResolvedValue({ total: 0, by_type: {} });
   vi.spyOn(api, "fetchFiles").mockResolvedValue([]);
   render(<KnowledgePanel token="demo" />);
 

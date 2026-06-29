@@ -2,20 +2,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   fetchDocumentChunks,
-  fetchEntities,
+  fetchEntityStats,
   fetchFiles,
   type DocumentChunk,
   type DocumentInfo,
-  type Entity,
+  type EntityStats,
   type EntityType,
 } from "./api";
 import { MUTED, RED, formatBytes, formatWhen } from "./folderUi";
 import { STATUS_OK, STATUS_WARN, TYPE_META, TYPE_ORDER, TypeBadge } from "./knowledgeUi";
 import { RetrievalExplorer } from "./RetrievalExplorer";
-
-// The corpus-wide entity sample size. The type breakdown + the Entities stat are derived from this
-// many entities; at the cap they are an honest "first N" sample, not the true total (#465 flag).
-const ENTITY_SAMPLE_LIMIT = 1000;
 
 // --- pure helpers (exported for unit tests) ---------------------------------------------------
 
@@ -64,13 +60,6 @@ export function sortFilterDocs(
   });
 }
 
-/** Count entities by type (for the corpus type-breakdown bar). Pure. */
-export function countByType(entities: Entity[]): Record<string, number> {
-  const counts: Record<string, number> = {};
-  for (const e of entities) counts[e.type] = (counts[e.type] ?? 0) + 1;
-  return counts;
-}
-
 interface KnowledgeCorpusTabProps {
   token: string;
   // The document whose chunks the inspector shows (null = closed). Lifted into KnowledgePanel so the
@@ -81,7 +70,7 @@ interface KnowledgeCorpusTabProps {
 
 interface CorpusData {
   files: DocumentInfo[];
-  entities: Entity[];
+  stats: EntityStats;
 }
 
 /** Knowledge > Corpus (P0 overview): stat cards (documents, total chunks, entities) + a per-document
@@ -100,12 +89,9 @@ export function KnowledgeCorpusTab({
     let active = true;
     setLoading(true);
     setError(null);
-    Promise.all([
-      fetchFiles(token, { includeSynced: true }),
-      fetchEntities(token, { limit: ENTITY_SAMPLE_LIMIT }),
-    ])
-      .then(([files, entities]) => {
-        if (active) setData({ files, entities });
+    Promise.all([fetchFiles(token, { includeSynced: true }), fetchEntityStats(token)])
+      .then(([files, stats]) => {
+        if (active) setData({ files, stats });
       })
       .catch(() => active && setError("Could not load the corpus."))
       .finally(() => active && setLoading(false));
@@ -153,7 +139,7 @@ export function KnowledgeCorpusTab({
         ) : data ? (
           <CorpusOverview
             files={data.files}
-            entities={data.entities}
+            stats={data.stats}
             selectedDocId={selectedDocId}
             onSelectDocument={onSelectDocument}
           />
@@ -195,16 +181,15 @@ function StatCard({
 
 /** Corpus-wide entity-type breakdown (C-D): a compact bar per type, derived client-side from the
  * entity sample. Color reinforces the type but the count + label carry the meaning. */
-function TypeBreakdown({ entities }: { entities: Entity[] }): React.ReactElement | null {
-  const counts = countByType(entities);
+function TypeBreakdown({ stats }: { stats: EntityStats }): React.ReactElement | null {
+  const counts = stats.by_type;
   const rows = TYPE_ORDER.filter((t) => (counts[t] ?? 0) > 0);
   if (rows.length === 0) return null;
-  const max = Math.max(...rows.map((t) => counts[t]));
-  const capped = entities.length >= ENTITY_SAMPLE_LIMIT;
+  const max = Math.max(...rows.map((t) => counts[t]!));
   return (
     <div data-testid="corpus-type-breakdown" style={{ margin: "0 0 0.85rem" }}>
       <div style={{ fontSize: "0.74rem", fontWeight: 600, color: MUTED, marginBottom: "0.3rem" }}>
-        Entity types{capped ? ` (sample of first ${ENTITY_SAMPLE_LIMIT})` : ""}
+        Entity types
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
         {rows.map((t) => (
@@ -220,7 +205,7 @@ function TypeBreakdown({ entities }: { entities: Entity[] }): React.ReactElement
               aria-hidden
               style={{
                 height: 8,
-                width: `${Math.max(4, (counts[t] / max) * 160)}px`,
+                width: `${Math.max(4, (counts[t]! / max) * 160)}px`,
                 background: TYPE_META[t as EntityType].hue,
                 borderRadius: 3,
                 flex: "0 0 auto",
@@ -248,12 +233,12 @@ const STATUS_FILTERS: { key: DocStatusFilter; label: string }[] = [
 
 function CorpusOverview({
   files,
-  entities,
+  stats,
   selectedDocId,
   onSelectDocument,
 }: {
   files: DocumentInfo[];
-  entities: Entity[];
+  stats: EntityStats;
   selectedDocId: string | null;
   onSelectDocument: (id: string | null) => void;
 }): React.ReactElement {
@@ -265,7 +250,6 @@ function CorpusOverview({
   const totalChunks = files.reduce((sum, f) => sum + (f.chunk_count ?? 0), 0);
   const unindexed = files.filter((f) => (f.chunk_count ?? 0) === 0).length;
   const totalBytes = files.reduce((sum, f) => sum + (f.size_bytes ?? 0), 0);
-  const entityCapped = entities.length >= ENTITY_SAMPLE_LIMIT;
 
   const rows = useMemo(
     () => sortFilterDocs(files, { sort, dir, q, status }),
@@ -299,15 +283,11 @@ function CorpusOverview({
           }
         />
         <StatCard testid="corpus-stat-chunks" label="Total chunks" value={totalChunks} />
-        <StatCard
-          testid="corpus-stat-entities"
-          label={entityCapped ? "Entities (1000+)" : "Entities"}
-          value={entityCapped ? `${ENTITY_SAMPLE_LIMIT}+` : entities.length}
-        />
+        <StatCard testid="corpus-stat-entities" label="Entities" value={stats.total} />
         <StatCard testid="corpus-stat-size" label="Corpus size" value={formatBytes(totalBytes)} />
       </div>
 
-      <TypeBreakdown entities={entities} />
+      <TypeBreakdown stats={stats} />
 
       {/* Controls: name search + indexed-status filter (C-B). */}
       <div
@@ -398,6 +378,7 @@ function CorpusOverview({
                   </th>
                 );
               })}
+              <th style={{ padding: "0.3rem 0.4rem", fontWeight: 600 }}>Entities</th>
               <th style={{ padding: "0.3rem 0.4rem", fontWeight: 600 }}>Type</th>
               <th style={{ padding: "0.3rem 0.4rem", fontWeight: 600 }}>Status</th>
             </tr>
@@ -452,6 +433,12 @@ function CorpusOverview({
                   </td>
                   <td style={{ padding: "0.3rem 0.4rem", color: "#444" }}>{f.chunk_count ?? 0}</td>
                   <td style={{ padding: "0.3rem 0.4rem", color: MUTED }}>{formatWhen(f.created_at)}</td>
+                  <td
+                    data-testid="corpus-col-entities"
+                    style={{ padding: "0.3rem 0.4rem", color: "#444" }}
+                  >
+                    {f.entity_count ?? 0}
+                  </td>
                   <td data-testid="corpus-col-type" style={{ padding: "0.3rem 0.4rem", color: "#444" }}>
                     {mimeLabel(f.mime, f.name)}
                   </td>

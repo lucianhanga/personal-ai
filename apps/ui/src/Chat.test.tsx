@@ -79,6 +79,7 @@ const DOC = {
   mime: "text/plain",
   size_bytes: 5,
   chunk_count: 2,
+  entity_count: 0,
   created_at: "2026-06-07T00:00:00Z",
 };
 

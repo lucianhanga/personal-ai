@@ -210,6 +210,24 @@ class PgEntityStore:
         )
         return [_to_entity(r) for r in rows]
 
+    async def type_counts(self) -> dict[str, int]:
+        """Exact entity count per type across the corpus (for the Corpus type breakdown + the
+        Entities stat). Tenant-scoped. Empty dict when the corpus has no entities."""
+        rows = await self._pool.fetch(
+            "SELECT type, count(*) AS n FROM entities "
+            "WHERE tenant_id = current_setting('app.tenant_id')::uuid GROUP BY type",
+        )
+        return {str(r["type"]): int(r["n"]) for r in rows}
+
+    async def document_entity_counts(self) -> dict[str, int]:
+        """Number of distinct entities mentioned in each document (``{document_id: count}``), for
+        the Corpus per-document entity column. One grouped scan of the mentions; tenant-scoped."""
+        rows = await self._pool.fetch(
+            "SELECT document_id, count(*) AS n FROM entity_documents "
+            "WHERE tenant_id = current_setting('app.tenant_id')::uuid GROUP BY document_id",
+        )
+        return {str(r["document_id"]): int(r["n"]) for r in rows}
+
     async def edges_for_entity(self, entity_id: str) -> list[tuple[str, str]]:
         """Outgoing edges from ``entity_id`` as ``(relation, dst_entity_id)``."""
         rows = await self._pool.fetch(
