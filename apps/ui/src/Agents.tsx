@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { AgentCollaborationGraph } from "./AgentGraph";
 import { AGENT_BG, AGENT_FG } from "./agentColors";
 import {
   fetchAgentConfig,
@@ -175,6 +176,14 @@ export function Agents({ token }: { token: string }): React.ReactElement {
         </p>
       )}
 
+      {/* Live diagram of how the team is currently wired; redraws as settings toggle. */}
+      <AgentCollaborationGraph
+        mode={effectiveMode}
+        accuracyMode={settings.agent_accuracy_mode ?? "standard"}
+        humanGate={settings.agent_human_gate ?? false}
+        verifierCheck={settings.agent_verifier_check ?? true}
+      />
+
       {/* Mode selector */}
       <fieldset
         data-testid="agents-mode"
@@ -223,8 +232,8 @@ export function Agents({ token }: { token: string }): React.ReactElement {
               onChange={(e) => setVerifierCheck(e.target.checked)}
             />
             <span style={{ fontSize: "0.85rem" }}>
-              Verifier fact-check — let the verifier run one independent RAG/KAG lookup to confirm the
-              draft answer (accurate mode only)
+              Judge fact-check — let the final judge run one independent RAG/KAG lookup to confirm the
+              answer (the verifier in accurate mode, otherwise the critic)
             </span>
           </label>
 

@@ -249,9 +249,10 @@ class CoreConfig(StrictModel):
     # the normal flow finalizes without a gate. The checkpoint is tenant-scoped (RLS) via TenantDb.
     agent_human_gate: bool = False
     agent_accuracy_mode: str = "standard"
-    # Tool-armed verifier (#465): in accurate mode, let the verifier do ONE bounded INDEPENDENT
-    # retrieval (re-query RAG/KAG/memory) to fact-check the draft's claims, not just judge it
-    # against the researcher's own sources. Fail-open + conservative. Toggleable in Settings.
+    # Judge fact-check (#465): let the final judge do ONE bounded INDEPENDENT retrieval (re-query
+    # RAG/KAG/memory) to fact-check the answer's claims, not just judge it against the researcher's
+    # own sources. The verifier runs it in accurate mode; the critic runs it in standard mode (it is
+    # the last judge there) -- exactly one lookup per turn. Fail-open + conservative. In Settings.
     agent_verifier_check: bool = True
     retriever: str = "pgvector"
     vector_repository: str = "pgvector"

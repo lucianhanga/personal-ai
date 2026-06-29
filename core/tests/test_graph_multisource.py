@@ -256,6 +256,42 @@ def test_merged_evidence_reaches_the_critic_when_researcher_calls_no_tools() -> 
     assert "doc fact" in provider.critic_system  # the merged vector evidence reached the judge
 
 
+def test_critic_runs_independent_lookup_when_it_is_the_last_judge() -> None:
+    # Tool-armed critic (#465): in STANDARD mode there is no verifier, so the critic is the last
+    # judge and runs the bounded independent fact-check when armed (verifier_tools on + sources).
+    provider = _CapturingCritic()
+    _drain(
+        messages=[ChatMessage(Role.USER, "what do you know")],
+        provider=provider,
+        model="m",
+        gateway=_gateway(),
+        tools=[],
+        sources=[_vector_source()],
+        query="what do you know",
+        verifier_tools=True,
+    )
+    assert "Independent verification lookup" in provider.critic_system
+    assert "doc fact" in provider.critic_system  # the fresh evidence reached the critic
+
+
+def test_critic_skips_lookup_in_accurate_mode_verifier_does_it() -> None:
+    # In ACCURATE mode the verifier is the last judge and does the lookup, so the critic must NOT
+    # also run one (exactly one independent lookup per turn — no redundant work on local serving).
+    provider = _CapturingCritic()
+    _drain(
+        messages=[ChatMessage(Role.USER, "what do you know")],
+        provider=provider,
+        model="m",
+        gateway=_gateway(),
+        tools=[],
+        sources=[_vector_source()],
+        query="what do you know",
+        accuracy_mode="accurate",
+        verifier_tools=True,
+    )
+    assert "Independent verification lookup" not in provider.critic_system
+
+
 def test_tool_armed_verifier_runs_an_independent_lookup() -> None:
     # Tool-armed verifier (#465): in accurate mode with verifier_tools on and sources present, the
     # verifier runs ONE fresh retrieval and folds it into the judging context as an independent
