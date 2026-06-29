@@ -112,7 +112,7 @@ def test_reasoning_frame_carries_per_step_ts() -> None:
     boot.registries.model_providers.register("ollama", _ThinkUsage(name="ollama"), overwrite=True)
     body = _body(
         TestClient(create_app(boot)),
-        {"messages": [{"role": "user", "content": "hi"}], "reasoning": "full"},
+        {"messages": [{"role": "user", "content": "hi"}], "reasoning": "high"},
     )
     assert '"thinking": "pondering"' in body
     assert '"ts":' in body

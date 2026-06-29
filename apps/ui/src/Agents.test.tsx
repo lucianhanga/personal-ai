@@ -132,3 +132,91 @@ test("surfaces a load error", async () => {
   render(<Agents token="demo" />);
   await waitFor(() => expect(screen.getByTestId("agents-error")).toHaveTextContent(/503/));
 });
+
+const MODEL_INFO: api.ModelInfo = {
+  name: "qwen3:7b",
+  local: true,
+  capabilities: {
+    text: true,
+    vision: false,
+    embeddings: false,
+    tool_calling: true,
+    structured_output: true,
+    thinking: false,
+    max_context_tokens: null,
+  },
+};
+
+test("per-agent reasoning dropdown defaults to Inherit and marks dirty on change", async () => {
+  mockLoad({ agent_mode: "multi" });
+  vi.spyOn(api, "fetchModels").mockResolvedValue({ defaultModel: "", models: [] });
+  const saveAgents = vi.spyOn(api, "saveAgentConfig").mockResolvedValue({ agents: [] });
+  vi.spyOn(api, "saveSettings").mockResolvedValue(SETTINGS);
+
+  render(<Agents token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("agents-card-planner")).toBeInTheDocument());
+
+  const select = screen.getByTestId("agents-reasoning-planner") as HTMLSelectElement;
+  expect(select.value).toBe(""); // Inherit by default
+
+  fireEvent.change(select, { target: { value: "high" } });
+  expect(screen.getByTestId("agents-dirty")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByTestId("agents-save"));
+  await waitFor(() => expect(saveAgents).toHaveBeenCalled());
+  const sentConfig = saveAgents.mock.calls[0][1];
+  const planner = sentConfig.agents.find((a: { name: string }) => a.name === "planner");
+  expect(planner?.reasoning).toBe("high");
+});
+
+test("per-agent model dropdown lists available models and sends the selected model on save", async () => {
+  mockLoad({ agent_mode: "multi" });
+  vi.spyOn(api, "fetchModels").mockResolvedValue({
+    defaultModel: "qwen3:7b",
+    models: [MODEL_INFO],
+  });
+  const saveAgents = vi.spyOn(api, "saveAgentConfig").mockResolvedValue({ agents: [] });
+  vi.spyOn(api, "saveSettings").mockResolvedValue(SETTINGS);
+
+  render(<Agents token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("agents-card-planner")).toBeInTheDocument());
+
+  // Wait for model options to populate (separate async effect).
+  await waitFor(() =>
+    expect(screen.getByTestId("agents-model-planner")).toContainHTML("qwen3:7b"),
+  );
+
+  const select = screen.getByTestId("agents-model-planner") as HTMLSelectElement;
+  expect(select.value).toBe(""); // Inherit by default
+
+  fireEvent.change(select, { target: { value: "qwen3:7b" } });
+
+  fireEvent.click(screen.getByTestId("agents-save"));
+  await waitFor(() => expect(saveAgents).toHaveBeenCalled());
+  const sentConfig = saveAgents.mock.calls[0][1];
+  const planner = sentConfig.agents.find((a: { name: string }) => a.name === "planner");
+  expect(planner?.model).toBe("qwen3:7b");
+});
+
+test("loading saved per-agent reasoning and model restores the dropdown values", async () => {
+  const viewWithOverrides: api.AgentConfigView = {
+    ...VIEW,
+    config: {
+      agents: [{ name: "planner", prompt: null, disabled_tools: [], reasoning: "medium", model: "qwen3:7b" }],
+    },
+  };
+  mockLoad({ agent_mode: "multi" }, viewWithOverrides);
+  vi.spyOn(api, "fetchModels").mockResolvedValue({
+    defaultModel: "qwen3:7b",
+    models: [MODEL_INFO],
+  });
+
+  render(<Agents token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("agents-card-planner")).toBeInTheDocument());
+  await waitFor(() =>
+    expect((screen.getByTestId("agents-reasoning-planner") as HTMLSelectElement).value).toBe("medium"),
+  );
+  await waitFor(() =>
+    expect((screen.getByTestId("agents-model-planner") as HTMLSelectElement).value).toBe("qwen3:7b"),
+  );
+});

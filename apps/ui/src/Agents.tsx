@@ -4,11 +4,13 @@ import { AgentCollaborationGraph } from "./AgentGraph";
 import { AGENT_BG, AGENT_FG } from "./agentColors";
 import {
   fetchAgentConfig,
+  fetchModels,
   fetchSettings,
   saveAgentConfig,
   saveSettings,
   type AgentConfigView,
   type AgentGraphConfig,
+  type ModelInfo,
   type TenantSettings,
 } from "./api";
 
@@ -23,6 +25,8 @@ type Mode = "single" | "multi" | "custom";
 interface AgentDraft {
   prompt: string; // "" = inherit the default
   disabled: Set<string>; // tool/MCP names disabled for this agent
+  reasoning: string | null; // null = inherit the turn's reasoning level
+  model: string | null; // null = inherit the turn's model
 }
 
 const MODES: { value: Mode; label: string; desc: string; disabled?: boolean }[] = [
@@ -45,6 +49,7 @@ export function Agents({ token }: { token: string }): React.ReactElement {
   const [settings, setSettings] = useState<TenantSettings | null>(null);
   const [view, setView] = useState<AgentConfigView | null>(null);
   const [drafts, setDrafts] = useState<Record<string, AgentDraft>>({});
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +65,8 @@ export function Agents({ token }: { token: string }): React.ReactElement {
           next[a.name] = {
             prompt: saved?.prompt ?? "",
             disabled: new Set(saved?.disabled_tools ?? []),
+            reasoning: saved?.reasoning ?? null,
+            model: saved?.model ?? null,
           };
         }
         setDrafts(next);
@@ -71,6 +78,14 @@ export function Agents({ token }: { token: string }): React.ReactElement {
   }
 
   useEffect(reload, [token]);
+
+  // Fetch available model ids for the per-agent model override dropdown. Best-effort: if the
+  // models request fails the dropdown just shows "Inherit (turn model)" with no other options.
+  useEffect(() => {
+    fetchModels(token)
+      .then(({ models }) => setAvailableModels(models))
+      .catch(() => setAvailableModels([]));
+  }, [token]);
 
   function touch(): void {
     setDirty(true);
@@ -110,16 +125,29 @@ export function Agents({ token }: { token: string }): React.ReactElement {
     touch();
   }
 
+  function setAgentReasoning(agent: string, value: string | null): void {
+    setDrafts((d) => ({ ...d, [agent]: { ...d[agent], reasoning: value } }));
+    touch();
+  }
+
+  function setAgentModel(agent: string, value: string | null): void {
+    setDrafts((d) => ({ ...d, [agent]: { ...d[agent], model: value } }));
+    touch();
+  }
+
   async function onSave(): Promise<void> {
     if (settings === null) return;
-    // Only persist agents that actually deviate from the defaults (non-empty prompt or any tool off).
+    // Only persist agents that actually deviate from the defaults (non-empty prompt, any tool
+    // disabled, or a reasoning/model override set).
     const config: AgentGraphConfig = {
       agents: Object.entries(drafts)
-        .filter(([, d]) => d.prompt.trim() !== "" || d.disabled.size > 0)
+        .filter(([, d]) => d.prompt.trim() !== "" || d.disabled.size > 0 || d.reasoning !== null || d.model !== null)
         .map(([name, d]) => ({
           name,
           prompt: d.prompt.trim() === "" ? null : d.prompt,
           disabled_tools: [...d.disabled],
+          reasoning: d.reasoning,
+          model: d.model,
         })),
     };
     try {
@@ -268,6 +296,37 @@ export function Agents({ token }: { token: string }): React.ReactElement {
                 rows={3}
                 style={{ width: "100%", boxSizing: "border-box", fontSize: "0.8rem" }}
               />
+              <div style={{ display: "flex", gap: "1rem", marginTop: "0.35rem", flexWrap: "wrap" }}>
+                <label style={{ fontSize: "0.78rem" }}>
+                  Reasoning{" "}
+                  <select
+                    data-testid={`agents-reasoning-${a.name}`}
+                    value={drafts[a.name]?.reasoning ?? ""}
+                    onChange={(e) => setAgentReasoning(a.name, e.target.value || null)}
+                  >
+                    <option value="">Inherit (default)</option>
+                    <option value="off">Off</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </label>
+                <label style={{ fontSize: "0.78rem" }}>
+                  Model{" "}
+                  <select
+                    data-testid={`agents-model-${a.name}`}
+                    value={drafts[a.name]?.model ?? ""}
+                    onChange={(e) => setAgentModel(a.name, e.target.value || null)}
+                  >
+                    <option value="">Inherit (turn model)</option>
+                    {availableModels.map((m) => (
+                      <option key={m.name} value={m.name}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               {a.uses_tools ? (
                 <div data-testid={`agents-tools-${a.name}`} style={{ marginTop: "0.35rem" }}>
                   <span style={{ fontSize: "0.75rem", color: "#555" }}>Tools / MCPs:</span>

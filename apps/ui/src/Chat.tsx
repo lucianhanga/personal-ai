@@ -413,9 +413,9 @@ export function Chat({
   const [useMemory, setUseMemory] = useState(true);
   const [useTools, setUseTools] = useState(true);
   const [approveTools, setApproveTools] = useState(true);
-  // Default to "brief": reasoning on but bounded, so large reasoning models (e.g. 35B) don't
-  // over-deliberate and appear to hang. "Off"/"Full" remain selectable.
-  const [reasoning, setReasoning] = useState<"off" | "brief" | "full">("brief");
+  // Default to "low": reasoning on but bounded, so large reasoning models (e.g. 35B) don't
+  // over-deliberate and appear to hang. "Off"/"Medium"/"High" remain selectable.
+  const [reasoning, setReasoning] = useState<"off" | "low" | "medium" | "high">("low");
   const [incognito, setIncognito] = useState(false);
   // Two-view navigation: the chat workspace vs the full-width Settings view (#290 redesign).
   const [tab, setTab] = useState<"chat" | "settings">("chat");
@@ -2003,17 +2003,18 @@ export function Chat({
               </label>
               <label
                 style={{ marginLeft: "auto" }}
-                title="How much the model thinks before answering. Off = none; Brief = concise; Full = think freely (slower)."
+                title="How much the model thinks before answering. Off = none; Low = concise; Medium = balanced; High = think freely (slower)."
               >
                 Reasoning{" "}
                 <select
                   data-testid="reasoning-select"
                   value={reasoning}
-                  onChange={(e) => setReasoning(e.target.value as "off" | "brief" | "full")}
+                  onChange={(e) => setReasoning(e.target.value as "off" | "low" | "medium" | "high")}
                 >
                   <option value="off">Off</option>
-                  <option value="brief">Brief</option>
-                  <option value="full">Full</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
                 </select>
               </label>
             </div>

@@ -1251,7 +1251,7 @@ test("per-session toggles default on; the Chat/Settings tabs switch views", asyn
   expect(screen.getByTestId("memory-toggle")).toBeChecked();
   expect(screen.getByTestId("tools-toggle")).toBeChecked();
   expect(screen.getByTestId("approve-tools-toggle")).toBeChecked();
-  expect((screen.getByTestId("reasoning-select") as HTMLSelectElement).value).toBe("brief");
+  expect((screen.getByTestId("reasoning-select") as HTMLSelectElement).value).toBe("low");
 
   // Switch to the Settings view: the section nav appears and the chat workspace is hidden.
   fireEvent.click(screen.getByTestId("nav-settings"));
@@ -1340,12 +1340,12 @@ test("the chosen reasoning amount is sent to the chat request", async () => {
   await waitFor(() =>
     expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("qwen3.6:35b-a3b"),
   );
-  // Default is Brief (think on, bounded).
+  // Default is Low (think on, bounded).
   fireEvent.change(screen.getByTestId("composer"), { target: { value: "why?" } });
   fireEvent.click(screen.getByTestId("send"));
   await waitFor(() =>
     expect(stream).toHaveBeenCalledWith(
-      expect.objectContaining({ reasoning: "brief", think: true }),
+      expect.objectContaining({ reasoning: "low", think: true }),
       ...Array(13).fill(expect.any(Function)),
     ),
   );

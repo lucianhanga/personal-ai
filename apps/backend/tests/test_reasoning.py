@@ -1,4 +1,4 @@
-"""The `reasoning` amount control maps to think + an optional brief hint (no DB needed)."""
+"""The `reasoning` amount control maps to think + a graded reasoning-budget nudge (no DB needed)."""
 
 from __future__ import annotations
 
@@ -46,26 +46,48 @@ def _send(reasoning: str) -> GenerationRequest:
     return rec.last
 
 
-def test_reasoning_off_disables_think() -> None:
-    assert _send("off").think is False
+def test_reasoning_off_disables_think_no_nudge() -> None:
+    gen = _send("off")
+    assert gen.think is False
+    assert not any(m.role == Role.SYSTEM and "/think" in m.content for m in gen.messages)
 
 
-def test_reasoning_full_enables_think_no_hint() -> None:
-    gen = _send("full")
+def test_reasoning_low_thinks_with_brief_nudge() -> None:
+    gen = _send("low")
     assert gen.think is True
-    assert not any(m.role == Role.SYSTEM and "brief" in m.content.lower() for m in gen.messages)
+    assert any(m.role == Role.SYSTEM and "briefly" in m.content.lower() for m in gen.messages)
 
 
-def test_reasoning_brief_thinks_and_injects_hint() -> None:
-    gen = _send("brief")
+def test_reasoning_medium_thinks_with_nudge() -> None:
+    gen = _send("medium")
     assert gen.think is True
-    assert any(m.role == Role.SYSTEM and "brief" in m.content.lower() for m in gen.messages)
+    assert any(m.role == Role.SYSTEM and "/think" in m.content for m in gen.messages)
+
+
+def test_reasoning_high_thinks_with_thorough_nudge() -> None:
+    gen = _send("high")
+    assert gen.think is True
+    assert any(m.role == Role.SYSTEM and "thoroughly" in m.content.lower() for m in gen.messages)
+
+
+def test_resolve_reasoning_maps_levels_to_distinct_nudges() -> None:
+    from personalai_backend.app import _resolve_reasoning
+
+    assert _resolve_reasoning(None, True) == (True, [])  # None -> raw think flag
+    think_off, msgs_off = _resolve_reasoning("off", True)
+    assert think_off is False and msgs_off == []  # off overrides think, no nudge
+    nudges = set()
+    for lvl in ("low", "medium", "high"):
+        think, msgs = _resolve_reasoning(lvl, False)
+        assert think is True and len(msgs) == 1 and "/think" in msgs[0].content
+        nudges.add(msgs[0].content)
+    assert len(nudges) == 3  # a real gradient: the three nudges are distinct
 
 
 def test_current_datetime_injected_as_authoritative_ground_truth() -> None:
     from datetime import datetime
 
-    gen = _send("full")
+    gen = _send("high")
     today = datetime.now().astimezone().date().isoformat()
     msg = next(
         (

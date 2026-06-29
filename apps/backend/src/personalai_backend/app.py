@@ -98,6 +98,7 @@ from personalai_core import (
     split_recent,
     summarize,
 )
+from personalai_core.reasoning import resolve_reasoning
 from personalai_core.registries import Registries
 from personalai_core.security import (
     assert_egress_allowed,
@@ -202,9 +203,10 @@ class ChatRequest(BaseModel):
     provider: str | None = None
     # Default reasoning off for clean chat; clients can opt into a model's thinking trace.
     think: bool | None = False
-    # Reasoning amount: "off" (no thinking), "brief" (think + concise hint), "full" (think). When
-    # set it takes precedence over `think`. None falls back to `think` for backward compatibility.
-    reasoning: Literal["off", "brief", "full"] | None = None
+    # Reasoning amount: how much to think. "off" (no trace) / "low" / "medium" / "high" — the latter
+    # three enable thinking + a graded reasoning-budget nudge. Overrides `think` when set; None
+    # falls back to `think`. See _resolve_reasoning.
+    reasoning: Literal["off", "low", "medium", "high"] | None = None
     # Retrieval-augmented generation over ingested documents (M3-3).
     use_rag: bool = False
     rag_top_k: int = 4
@@ -215,6 +217,21 @@ class ChatRequest(BaseModel):
     # Autonomous tool use: let the model call tools through the gateway (M6-2).
     use_tools: bool = False
     approve_tools: bool = False  # approve high-risk tools for this turn
+
+
+def _resolve_reasoning(
+    reasoning: str | None, think: bool | None
+) -> tuple[bool | None, list[ChatMessage]]:
+    """Map a request's reasoning level to ``(think, nudge_messages)`` via the shared core mechanism.
+
+    ``reasoning`` (off/low/medium/high) overrides the legacy boolean ``think`` when set; when None,
+    fall back to the raw ``think`` flag for backward compatibility. The level -> (think, nudge)
+    mapping lives in ``personalai_core.reasoning`` so the multi-agent graph applies the same rule.
+    """
+    if reasoning is None:
+        return think, []
+    think_val, nudge = resolve_reasoning(reasoning)
+    return think_val, [ChatMessage(Role.SYSTEM, nudge)] if nudge else []
 
 
 class ResumeRequest(BaseModel):
@@ -260,7 +277,7 @@ class ExecuteRequest(BaseModel):
     model: str | None = None
     provider: str | None = None
     think: bool | None = False
-    reasoning: Literal["off", "brief", "full"] | None = None
+    reasoning: Literal["off", "low", "medium", "high"] | None = None
     agent_mode: Literal["single", "multi", "custom"] | None = None
     use_tools: bool = False
     approve_tools: bool = False
@@ -1771,6 +1788,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             else AgentGraphConfig()
         )
         agent_prompts = agent_cfg.prompt_overrides()
+        agent_reasoning = agent_cfg.reasoning_levels()
+        agent_models = agent_cfg.model_overrides()
         researcher_disabled = agent_cfg.disabled_tools("researcher")
 
         # Durable human gate (M8.1c): active only when the graph is enabled, the gate is on, and a
@@ -1877,18 +1896,9 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             [] if multi_source_active else await _memory_context(req, incognito, query=standalone)
         )
         stm_messages = await _assemble_stm(req, provider, conv)
-        # Reasoning amount: `reasoning` (off/brief/full) overrides `think`; "brief" also nudges the
-        # model to keep its reasoning short (no hard length dial exists for local models).
-        think_effective = req.think if req.reasoning is None else req.reasoning != "off"
-        brief_messages = (
-            [
-                ChatMessage(
-                    Role.SYSTEM, "Keep your reasoning brief and focused; do not over-deliberate."
-                )
-            ]
-            if req.reasoning == "brief"
-            else []
-        )
+        # Reasoning amount: `reasoning` (off/low/medium/high) overrides `think`; low/medium/high add
+        # a graded reasoning-budget nudge (see _resolve_reasoning).
+        think_effective, reasoning_messages = _resolve_reasoning(req.reasoning, req.think)
         # Grounding/anti-hallucination: ground answers in the provided context/tools; admit
         # uncertainty rather than fabricating (the #1 cause of "invented" answers).
         grounding_messages = (
@@ -1902,7 +1912,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 *date_messages,
                 *grounding_messages,
                 *hint_messages,
-                *brief_messages,
+                *reasoning_messages,
                 *context_messages,
                 *memory_messages,
                 *stm_messages,
@@ -1916,7 +1926,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 ("Current date/time", date_messages),
                 ("Grounding", grounding_messages),
                 ("Interpreted request", hint_messages),
-                ("Reasoning hint", brief_messages),
+                ("Reasoning hint", reasoning_messages),
                 ("Documents", context_messages),
                 ("Memory", memory_messages),
                 ("Conversation + your message", stm_messages),
@@ -2058,6 +2068,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                             max_iterations=config.agent_max_iterations,
                             graph_enabled=graph_enabled,
                             agent_prompts=agent_prompts,
+                            agent_reasoning=agent_reasoning,
+                            agent_models=agent_models,
                             accuracy_mode=config.agent_accuracy_mode,
                             verifier_tools=config.agent_verifier_check,
                             context=_agent_context(req.conversation_id),
@@ -2215,7 +2227,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                             code="E_EMPTY",
                             message=(
                                 "No answer was produced — the model may have spent the turn "
-                                "reasoning. Try again, or set reasoning to Off/Brief."
+                                "reasoning. Try again, or set reasoning to Off/Low."
                             ),
                         ),
                     )
@@ -2496,6 +2508,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             else AgentGraphConfig()
         )
         agent_prompts = agent_cfg.prompt_overrides()
+        agent_reasoning = agent_cfg.reasoning_levels()
+        agent_models = agent_cfg.model_overrides()
         researcher_disabled = agent_cfg.disabled_tools("researcher")
 
         # Assemble the generation context exactly like /chat (minus persistence + STM-from-a-conv).
@@ -2514,18 +2528,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         context_messages, _citations = await _retrieve_context(chat_req, query=standalone)
         memory_messages = await _memory_context(chat_req, False, query=standalone)
         stm_messages = await _assemble_stm(chat_req, provider, None)
-        think_effective = (
-            chat_req.think if chat_req.reasoning is None else chat_req.reasoning != "off"
-        )
-        brief_messages = (
-            [
-                ChatMessage(
-                    Role.SYSTEM, "Keep your reasoning brief and focused; do not over-deliberate."
-                )
-            ]
-            if chat_req.reasoning == "brief"
-            else []
-        )
+        think_effective, reasoning_messages = _resolve_reasoning(chat_req.reasoning, chat_req.think)
         grounding_messages = (
             [ChatMessage(Role.SYSTEM, _GROUNDING)] if config.grounding_enabled else []
         )
@@ -2535,7 +2538,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 *date_messages,
                 *grounding_messages,
                 *hint_messages,
-                *brief_messages,
+                *reasoning_messages,
                 *context_messages,
                 *memory_messages,
                 *stm_messages,
@@ -2580,6 +2583,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     max_iterations=config.agent_max_iterations,
                     graph_enabled=graph_enabled,
                     agent_prompts=agent_prompts,
+                    agent_reasoning=agent_reasoning,
+                    agent_models=agent_models,
                     accuracy_mode=config.agent_accuracy_mode,
                     verifier_tools=config.agent_verifier_check,
                     context=_agent_context(None),
