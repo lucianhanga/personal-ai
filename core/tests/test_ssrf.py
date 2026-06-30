@@ -36,24 +36,24 @@ from personalai_core.security.ssrf import (
 @pytest.mark.parametrize(
     "ip",
     [
-        "127.0.0.1",          # loopback
-        "127.0.0.5",          # loopback range
-        "::1",                 # IPv6 loopback
-        "10.0.0.1",           # RFC-1918 class A
-        "10.255.255.255",     # RFC-1918 class A (boundary)
-        "172.16.0.1",         # RFC-1918 class B
-        "172.31.255.255",     # RFC-1918 class B (boundary)
-        "192.168.1.100",      # RFC-1918 class C
-        "192.168.255.255",    # RFC-1918 class C (boundary)
-        "169.254.169.254",    # AWS/GCP/Azure IMDS metadata endpoint
-        "169.254.0.1",        # link-local range
-        "0.0.0.0",            # unspecified
-        "::",                  # IPv6 unspecified
-        "fc00::1",             # IPv6 unique-local (fc00::/7)
-        "fd00::1",             # IPv6 unique-local (fd00::/8 subset)
-        "fe80::1",             # IPv6 link-local
-        "224.0.0.1",          # multicast
-        "255.255.255.255",    # limited broadcast / reserved
+        "127.0.0.1",  # loopback
+        "127.0.0.5",  # loopback range
+        "::1",  # IPv6 loopback
+        "10.0.0.1",  # RFC-1918 class A
+        "10.255.255.255",  # RFC-1918 class A (boundary)
+        "172.16.0.1",  # RFC-1918 class B
+        "172.31.255.255",  # RFC-1918 class B (boundary)
+        "192.168.1.100",  # RFC-1918 class C
+        "192.168.255.255",  # RFC-1918 class C (boundary)
+        "169.254.169.254",  # AWS/GCP/Azure IMDS metadata endpoint
+        "169.254.0.1",  # link-local range
+        "0.0.0.0",  # unspecified
+        "::",  # IPv6 unspecified
+        "fc00::1",  # IPv6 unique-local (fc00::/7)
+        "fd00::1",  # IPv6 unique-local (fd00::/8 subset)
+        "fe80::1",  # IPv6 link-local
+        "224.0.0.1",  # multicast
+        "255.255.255.255",  # limited broadcast / reserved
     ],
 )
 def test_assert_public_ip_blocks_non_public(ip: str) -> None:
@@ -292,6 +292,31 @@ def test_fetch_image_uniform_error_message(monkeypatch: pytest.MonkeyPatch) -> N
     _patch_fetch(monkeypatch, response=httpx.Response(200, content=_SVG_BYTES))
     with pytest.raises(SsrfBlockedError, match="image could not be fetched"):
         asyncio.run(fetch_image("https://cdn.example.com/img.png"))
+
+
+def test_fetch_image_sends_descriptive_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Many image hosts (Wikimedia etc.) reject the default httpx UA with 403; fetch_image must send
+    # a descriptive User-Agent (and keep Accept-Encoding: identity for the size cap).
+    captured: dict[str, str | None] = {}
+
+    class _CapTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            captured["ua"] = request.headers.get("user-agent")
+            captured["ae"] = request.headers.get("accept-encoding")
+            return httpx.Response(200, content=_PNG_BYTES)
+
+        async def aclose(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "personalai_core.security.ssrf.resolve_and_validate", lambda host: ["1.1.1.1"]
+    )
+    monkeypatch.setattr(
+        "personalai_core.security.ssrf.httpx.AsyncHTTPTransport", lambda **kw: _CapTransport()
+    )
+    asyncio.run(fetch_image("https://cdn.example.com/img.png"))
+    assert captured["ua"] is not None and "PersonalAI" in captured["ua"]
+    assert captured["ae"] == "identity"
 
 
 class _CapturingTransport(httpx.AsyncBaseTransport):

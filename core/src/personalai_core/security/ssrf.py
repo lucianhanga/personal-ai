@@ -55,6 +55,9 @@ class SsrfBlockedError(Exception):
 _DEFAULT_MAX_BYTES: Final[int] = 5 * 1024 * 1024  # 5 MiB
 _ALLOWED_PORTS: Final[frozenset[int | None]] = frozenset({80, 443, None})
 _ALLOWED_SCHEMES: Final[frozenset[str]] = frozenset({"http", "https"})
+# A descriptive User-Agent: many image hosts (e.g. Wikimedia) reject the default httpx UA with 403.
+# Identifies the local image proxy honestly rather than spoofing a browser.
+_USER_AGENT: Final[str] = "PersonalAI/1.0 (+https://github.com/lucianhanga/personal-ai)"
 
 # Magic byte signatures for accepted raster image formats.
 # SVG is explicitly excluded: it is text/XML and can contain scripts.
@@ -272,7 +275,7 @@ async def _fetch_image_inner(
         client.stream(
             "GET",
             url,
-            headers={"Accept-Encoding": "identity"},
+            headers={"Accept-Encoding": "identity", "User-Agent": _USER_AGENT},
         ) as response,
     ):
         # --- Redirect block (3xx = block, not follow) -----------------------

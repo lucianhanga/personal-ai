@@ -1046,6 +1046,7 @@ def test_sanitize_attachments_mixed_valid_and_invalid() -> None:
 
 # --- Rich-output injection tests (#517) ---
 
+
 def test_rich_output_system_message_injected_when_enabled() -> None:
     """_RICH_OUTPUT system message is present in the generation request when enabled."""
     captured: list[GenerationRequest] = []
@@ -1229,5 +1230,3 @@ def test_localize_image_egress_disabled_returns_needs_approval() -> None:
     assert body["ok"] is False
     assert body["error"]["code"] == "E_EGRESS_APPROVAL_NEEDED"
     assert body["data"]["needs_approval"] is True
-
-
