@@ -1,4 +1,4 @@
-# Files + RAG: chat with your documents (M3)
+# Files + RAG: chat with your documents
 
 PersonalAI can ingest your files and use them to ground answers, with citations and persistent
 conversation history. This is **local-first**: parsing, embeddings, and storage all run on your

@@ -3,7 +3,7 @@
 [![CI](https://github.com/lucianhanga/personal-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/lucianhanga/personal-ai/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-0.9.0-blue.svg)](./CHANGELOG.md)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![Status: M0-M9 + M11 shipped (latest 0.9.0)](https://img.shields.io/badge/status-M0--M9%20%2B%20M11%20shipped-brightgreen.svg)](./CHANGELOG.md)
+[![Status: actively developed](https://img.shields.io/badge/status-actively%20developed-brightgreen.svg)](./CHANGELOG.md)
 [![Local-first](https://img.shields.io/badge/local--first-yes-brightgreen.svg)](#principles)
 [![Structured-output-first](https://img.shields.io/badge/structured--output--first-yes-brightgreen.svg)](#principles)
 [![Security-first](https://img.shields.io/badge/security--first-yes-brightgreen.svg)](./SECURITY.md)
@@ -17,11 +17,11 @@ PersonalAI is **extensible** (tools + MCP), **structured-output-first** (schemas
 **open-source-first** (verified provenance only), and **security-first** (zero-trust toward
 tools, files, prompts, model outputs, and MCP servers).
 
-**Current state:** the core product works end to end. Milestones **M0–M9** are shipped, and the
-latest release (**0.9.0**) brings **M11 — the entity knowledge graph (KAG)** forward ahead of M10,
-together with **Documents v2** (on-device OCR + continuously-synced folders), **multi-source RAG**,
-and a **multi-agent redesign** (a tool-armed judge fact-check + evaluator-optimizer re-planning).
-The MV3 browser extension (**M10**) is next.
+**Current state:** the core product works end to end — streaming chat, document RAG with on-device
+OCR, continuously-synced folders with an entity knowledge graph (KAG), controllable memory, a
+security-first tool/MCP gateway, and single- or multi-agent answering with a tool-armed judge
+fact-check and evaluator-optimizer re-planning. The latest release is **0.9.0** (see the
+[CHANGELOG](./CHANGELOG.md)). An MV3 browser extension is in early scaffolding.
 
 What it does today:
 
@@ -42,9 +42,11 @@ What it does today:
 Learn more:
 
 - **What's new / full history:** [CHANGELOG](./CHANGELOG.md)
-- **Roadmap:** [§22 Modular Implementation Roadmap](./docs/architecture/PersonalAI-Architecture-Research.md#22-modular-implementation-roadmap)
 - **How it works:** the [How it works](#how-it-works) section below, then the
   [Documentation](#documentation) table.
+- **Deep dives:** [model suite](./docs/reference/models.md),
+  [data extraction pipeline](./docs/architecture/extraction-pipeline.md),
+  [context assembly](./docs/architecture/context-assembly.md).
 
 ## Quickstart (local chat)
 
@@ -126,13 +128,15 @@ Full diagram and rationale: [architecture report](./docs/architecture/PersonalAI
 | UI | React + Vite SPA (Tauri shell for desktop) |
 | Database / RAG | PostgreSQL + pgvector |
 | Model providers | Ollama (local, default) and OpenAI-compatible (remote, opt-in) |
+| Model suite | Chat `qwen3.6`, embeddings `qwen3-embedding`, NER `qwen3:14b`, STT faster-whisper — see [model suite](./docs/reference/models.md) |
 | Agent orchestration | Single-agent loop + opt-in LangGraph multi-agent graph (ADR-0012) |
 | Auth / multi-tenancy | argon2id + server sessions + Postgres Row-Level Security (ADR-0010) |
 | Schemas | Pydantic / Zod + JSON Schema |
 
-The complete provenance register (maintainer, license, maturity, security notes) lives in
-[`SUPPLY-CHAIN.md`](./docs/supply-chain/SUPPLY-CHAIN.md). The full roadmap and milestone status is in
-[§22 Modular Implementation Roadmap](./docs/architecture/PersonalAI-Architecture-Research.md#22-modular-implementation-roadmap).
+The complete provenance register (maintainer, license, what each adopted dependency is used for)
+lives in [`SUPPLY-CHAIN.md`](./docs/supply-chain/SUPPLY-CHAIN.md). The modular design and extension
+seams are described in the architecture report's
+[§22 modular seams](./docs/architecture/PersonalAI-Architecture-Research.md#22-modular-implementation-roadmap).
 
 ---
 
@@ -156,12 +160,15 @@ The complete provenance register (maintainer, license, maturity, security notes)
 
 | Doc | Purpose |
 |---|---|
-| [Architecture report](./docs/architecture/PersonalAI-Architecture-Research.md) | The full research + high-level architecture (22 sections), incl. the roadmap. |
+| [Architecture report](./docs/architecture/PersonalAI-Architecture-Research.md) | The full architecture: principles, components, runtime, security, and the modular seams. |
+| [Model suite](./docs/reference/models.md) | The layered model stack and what each model is for. |
+| [Data extraction pipeline](./docs/architecture/extraction-pipeline.md) | How documents are parsed, OCR'd, chunked, embedded, and turned into a knowledge graph. |
+| [Context assembly](./docs/architecture/context-assembly.md) | How prompt context is built (first vs follow-up questions). |
 | [ADRs](./docs/architecture/adr/) | Architecture Decision Records. |
 | [Threat model](./docs/architecture/THREAT-MODEL.md) | Trust boundaries and threats (v1). |
 | [Security policy](./SECURITY.md) | Reporting and security posture. |
 | [Dependency policy](./docs/policies/DEPENDENCY-POLICY.md) | Provenance, verification, SBOM, scanning rules. |
-| [Supply-chain register](./docs/supply-chain/SUPPLY-CHAIN.md) | Living inventory of every dependency + creator. |
+| [Supply-chain register](./docs/supply-chain/SUPPLY-CHAIN.md) | Living inventory of every adopted dependency + creator. |
 | [Onboarding / dev guide](./docs/ONBOARDING.md) | How to work in this repo. |
 | [Remote A100 dev VM](./docs/development/remote-dev-a100.md) | Provision/sync/teardown an Azure A100 GPU dev VM (Terraform + ops scripts in [`infra/`](./infra/)). |
 | [Releasing & versioning](./docs/development/releasing.md) | Version source of truth, release & signing. |

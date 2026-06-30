@@ -1,6 +1,6 @@
 # personalai-tool-mcp
 
-MCP client adapter (M7). Connects to [Model Context Protocol](https://modelcontextprotocol.io)
+MCP client adapter. Connects to [Model Context Protocol](https://modelcontextprotocol.io)
 servers (stdio now; Streamable HTTP next), lists their tools, and exposes each as a
 `RegisteredTool` behind the PersonalAI **tool gateway** — so MCP tools get the same permissions,
 egress allowlist, JSON-Schema validation, risk approval, timeout, and audit as built-in tools.

@@ -1,4 +1,4 @@
-# Using MCP servers (M7)
+# Using MCP servers
 
 PersonalAI is an **MCP client**: it can connect to published [Model Context
 Protocol](https://modelcontextprotocol.io) servers, pull in **their** tools, and let the agent use

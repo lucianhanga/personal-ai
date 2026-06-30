@@ -2,7 +2,7 @@
 
 > Status: Research and high-level architecture only. No implementation.
 > Date: 2026-06-05
-> Scope: System shape, technology selection, security posture, and phased roadmap.
+> Scope: System shape, technology selection, and security posture.
 
 ---
 
@@ -28,7 +28,7 @@ Start as a modular monolith; split into separate services *only* where an isolat
 2. **Supply-chain / MCP provenance.** 30+ MCP CVEs were filed in early 2026, including CVE-2025-6514 (CVSS 9.6) in the widely used `mcp-remote` proxy. ([Wikipedia MCP][wiki-mcp])
 3. **Untrusted-code execution from tools.** Containers share the host kernel; true isolation needs gVisor/microVM-class boundaries. ([SoftwareSeni isolation][ss-iso])
 4. **Local resource limits (GPU/RAM)** constraining multimodal and larger models.
-5. **Scope creep** across 7 phases diluting the security core. Mitigated by the roadmap below.
+5. **Scope creep** across many capabilities diluting the security core. Mitigated by earning each capability behind the security envelope before adding the next.
 
 ---
 
@@ -282,7 +282,7 @@ flowchart TB
 | OCR | In ingestion pipeline | Tika/Docling pipelines; Tesseract as fallback |
 | Audio → text | STT | **faster-whisper** (SYSTRAN, MIT/CTranslate2) ([whisper][whisper]) |
 | Text → audio | TTS | **Piper** (rhasspy) ([whisper][whisper]) |
-| Video | Deferred | Frame sampling + vision later (Phase 5+) |
+| Video | Deferred | Frame sampling + vision later |
 | Multimodal routing | Capability-based router | Model abstraction layer (§6) selects by required capability |
 | RAG/indexing | Hybrid retrieval | pgvector (§11) |
 | Privacy | Local-by-default | Modality processing stays local unless a remote provider is explicitly chosen; egress is logged. |
@@ -307,7 +307,7 @@ flowchart TB
 
 ### 11.1 Knowledge-Augmented Generation (KAG / GraphRAG) — optional hybrid layer
 
-> **Status: not in v1. Documented as an optional Phase 4+ enhancement, not a replacement for vector RAG.**
+> **Status: not in v1. Documented as an optional future enhancement, not a replacement for vector RAG.**
 
 **What it is.** Where vector RAG retrieves *semantically similar text chunks*, KAG first **extracts structured knowledge** — entities (people, projects, files, concepts) and the relationships between them — into a **knowledge graph**, then traverses/reasons over explicit facts at query time. (The term overlaps heavily with what Microsoft calls **GraphRAG**; there is also a specific framework literally named "KAG" from Ant Group/OpenSPG — here "KAG" means the general graph-backed approach, *not* that product, which would need separate verification.)
 
@@ -393,7 +393,7 @@ flowchart TB
 - **Language decision (open):**
   - **Python (FastAPI)** — Recommended if the agent/ML ecosystem (LangGraph, Pydantic, Docling, faster-whisper, HF) is used directly in-process. Best ecosystem fit.
   - **Node/TypeScript (NestJS/Fastify)** — Recommended if maximizing shared types with the SPA/extension (Zod end-to-end) matters more than ML ecosystem proximity.
-  - Likely outcome: **Python core** for AI/agents, with model runtimes and some tools as separate processes; TS only in UI/extension. (Decide in Phase 0.)
+  - Likely outcome: **Python core** for AI/agents, with model runtimes and some tools as separate processes; TS only in UI/extension. (Decide early.)
 
 ---
 
@@ -412,45 +412,29 @@ flowchart TB
 
 ---
 
-## 17. Recommended Technology Stack
+## 17. Technology Stack (as wired today)
 
-| Area | Recommended | Maintainer | License | Why | Risks | Alternatives |
-|---|---|---|---|---|---|---|
-| Local model serving | **Ollama** | Ollama | MIT (OSS) | Easiest local mgmt; native structured outputs + tool calling ([ollama-so][ollama-so]) | Newer ecosystem; perf below vLLM at scale | llama.cpp, vLLM, LM Studio API |
-| Low-level inference | **llama.cpp** | ggml-org / G. Gerganov | MIT | Max hardware reach, GGUF, CPU ([lcpp][lcpp]) | Lower-level to operate | Ollama (wraps it) |
-| GPU serving | **vLLM** | vLLM project | Apache-2.0 | Throughput + guided decoding ([vllm-so][vllm-so]) | Linux+GPU only | TGI (HF) |
-| Remote provider gateway | **LiteLLM** | BerriAI | MIT (Enterprise paid) | 100+ providers, OpenAI format, egress chokepoint, cost/guardrails ([litellm][litellm]) | Enterprise features gated | Direct SDKs |
-| Agent orchestration | **LangGraph** | LangChain | OSS (MIT) | Graph, checkpointing, HITL ([langfuse][langfuse]) | LangChain churn | MS Agent Framework ([msaf][msaf]) |
-| Schemas (PY/TS) | **Pydantic / Zod** | Pydantic / Colin McDonnell | MIT | De-facto validation; JSON-Schema bridge | — | attrs, io-ts |
-| Vector + relational | **PostgreSQL + pgvector** | PostgreSQL / pgvector | PostgreSQL License | One store, transactional ([pgq][pgq]) | Lower vector throughput at huge scale | Qdrant |
-| Dedicated vector DB | **Qdrant** | Qdrant | Apache-2.0 | Rust engine, filtering, quantization ([pgq][pgq]) | Extra service | Weaviate, Milvus, Chroma, LanceDB |
-| Document parsing | **Apache Tika** / **IBM Docling** | ASF / IBM Research | Apache-2.0 | Broad formats / AI layout+tables ([tika][tika], [docling][docling]) | Docling heavier (AI models) | Unstructured |
-| STT | **faster-whisper** | SYSTRAN | MIT | ~4x faster Whisper ([whisper][whisper]) | GPU helps | openai/whisper, WhisperLive |
-| TTS | **Piper** | rhasspy | MIT | Fast local neural TTS ([whisper][whisper]) | Voice quality vs cloud | Coqui-class alternatives |
-| Desktop shell | **Tauri** | Tauri (Commons Conservancy) | MIT/Apache-2.0 | Small, secure, capability-based ([tauri][tauri]) | Smaller ecosystem than Electron; native WebView quirks | Electron |
-| Sandbox (untrusted) | **gVisor** / **Firecracker** / **Wasmtime** | Google / AWS / Bytecode Alliance | Apache-2.0 (各) | Strong isolation tiers ([ss-iso][ss-iso]) | Linux-centric; Tauri capability model on desktop | Plain containers (insufficient alone) |
-| Tool standard | **MCP** | Anthropic + community | Open standard (MIT SDKs) | Ecosystem interop ([mcp-spec][mcp-spec]) | Security is implementor's job; CVE history ([wiki-mcp][wiki-mcp]) | Bespoke tool API |
-| Observability | **OpenTelemetry** (+ optional Langfuse) | CNCF / Langfuse | Apache-2.0 / MIT | Standard tracing; agent traces | — | Vendor APMs |
-| Supply-chain | **CycloneDX/SPDX**, **Trivy/Grype**, **Sigstore/cosign** | OWASP/Linux Fdn / Aqua / OpenSSF | Apache-2.0 (各) | SBOM, scan, signing | Setup effort | Snyk (commercial) |
+This is the stack actually implemented and wired in the repository today, not an aspirational list. Where the research sections above (§5–§16) discuss alternatives, those remain *options*, not current dependencies.
 
-> *Uncertainty notes:* Some licenses (e.g., Ollama MIT, LangGraph MIT) should be re-verified at pin time from each repo's LICENSE file before adoption; this report's license claims are grounded in the cited sources but must be re-checked in Phase 0. vLLM governance/maintainer details beyond "Apache-2.0 OSS project" were not fully confirmable from search and are marked uncertain.
-
----
-
-## 18. Phased Roadmap
-
-| Phase | Goal | Exit criteria |
+| Area | Wired technology | Notes |
 |---|---|---|
-| **0 — Research & validation** | Confirm stack, language decision, license re-verification, threat model v1, schema conventions | ADRs written; SBOM/scan/signing pipeline skeleton; this report ratified |
-| **1 — Local chat with Ollama** | Streaming chat over local models; provider abstraction; structured-output validation core; loopback auth | Chat works offline; badges show local; schemas validated |
-| **2 — Files & RAG** | Ingestion (Tika/Docling) → pgvector retrieval; sandboxed parsing; per-workspace file jails | Upload→ask works; malicious-file parsing contained |
-| **2+ — Memory (short-term + long-term)** | STM: per-chat context assembly + rolling summary (isolated); LTM: semantic memory on pgvector with background extraction, "What I remember" injection, and a visualize/edit/erase Memory UI | Chats stay isolated; durable user facts are inspectable & deletable; graph upgrade deferred (§11.1) |
-| **3 — Tools & MCP gateway** | Tool registry, manifests, permission model, sandbox tiers, MCP verification workflow, audit log | No side effect without gateway+approval; egress allowlist enforced |
-| **4 — Structured multi-agent workflows** | LangGraph planner/executor; typed agent messages; HITL approvals; retries/fallbacks | Multi-step task with approval gates and full trace |
-| **4+ — KAG / graph-backed memory (optional)** | Graph upgrade of the long-term memory (phase 2+): hybrid graph+vector retrieval; entity/relationship extraction + resolution (Postgres + Apache AGE first) | Multi-hop/global question answered with entity-edge provenance; gated by whether semantic memory/RAG hit their limits (§11.1, §20) |
-| **5 — Multimodal** | Vision routing; STT (faster-whisper); TTS (Piper); image gen optional | Image/audio in and out, local-first |
-| **6 — Browser extension** | MV3, minimal perms, explicit capture, authenticated localhost messaging | Page capture only on user action; audited |
-| **7 — Hardening & ecosystem** | Signed releases, reproducible builds, SBOM/scan in CI, packaging (desktop + Compose), docs | Release pipeline signed; security policy + user/admin docs published |
+| Backend runtime | **Python 3.12**, **uv** workspace (hatchling build) | Single modular-monolith backend. |
+| API | **FastAPI** + **uvicorn**, loopback-bound `/api/v1` | Local-first; loopback by default. |
+| Orchestration | **LangGraph** (opt-in multi-agent graph) + a single-agent loop | `langchain-core` is a thin dependency only; graph nodes call PersonalAI's own provider/tool seams directly (no LangChain model/tool abstractions). |
+| UI | **React 19** + **Vite** + **TypeScript** SPA, wrapped by **Tauri 2** desktop shell; **pnpm** workspace | One SPA reused for desktop and web. |
+| Storage + RAG | **PostgreSQL + pgvector** (single relational + vector store), **Row-Level Security**, **asyncpg**, **langgraph-checkpoint** | One store for relational data, vectors, memory, and durable graph checkpoints. |
+| Retrieval ranking | **Reciprocal Rank Fusion (RRF, k=60)** | Hybrid retrieval fuses ranked lists; there is **no reranker model**. |
+| Models — chat | **Ollama** (local default) + **OpenAI-compatible remote** (opt-in) | Chat default **qwen3.6:35b-a3b**. |
+| Models — embeddings | Ollama | **qwen3-embedding:0.6b** (pinned; changing it reindexes). |
+| Models — NER | Ollama, dedicated loopback runner | **qwen3:14b**; entity extraction is **LLM structured output** — there is **no GLiNER or dedicated extraction model**. |
+| Models — STT | **faster-whisper** | **large-v3-turbo**. |
+| Models — TTS | **Browser speech synthesis** (Web Speech API) | Read-aloud in the SPA. |
+| Ingestion | **pypdf**, **python-docx**, **RapidOCR** (`rapidocr-onnxruntime` + `pypdfium2`) | RapidOCR handles scanned-PDF OCR. |
+| Tools | **MCP Python SDK** (`mcp`), built-in tools, **markitdown-ollama** tool server | All side effects route through the tool/MCP gateway (§8). |
+| Schemas | **Pydantic** (Python) + **Zod** (TS) + **JSON Schema** at boundaries | Structured-output-first (§9). |
+| Supply chain | **CycloneDX SBOM** (`cyclonedx-bom`), **pip-audit**, **pnpm audit**, **detect-secrets**, **cosign** (Sigstore) | SBOM + dependency scan + secret scan + signed releases. |
+
+> **Not currently wired (possible future scale-out, documented only — not part of the stack):** dedicated vector engines (Qdrant), graph stores (Neo4j, Apache AGE), high-throughput GPU serving (vLLM), a remote-provider gateway (LiteLLM), microVM/gVisor/WASM sandbox tiers, and richer document parsers (Apache Tika, IBM Docling). These appear as alternatives in the research sections above; none is a current dependency.
 
 ---
 
@@ -463,7 +447,7 @@ flowchart TB
 - **Tauri vs Electron.** Tauri is smaller/more secure but has a smaller ecosystem and native-WebView inconsistencies. Electron is the safe fallback if WebView issues block delivery.
 - **Sandbox strength vs cross-platform.** Strong isolation (gVisor/microVM) is Linux-centric; desktop macOS/Windows lean on Tauri capabilities + OS sandboxing + WASM for plugins. This is a genuine gap to design around.
 - **MCP ecosystem risk.** Powerful but young and CVE-prone; the verification workflow is non-negotiable overhead.
-- **Python vs Node core.** ML ecosystem (Python) vs end-to-end shared types (Node). Either works; pick in Phase 0.
+- **Python vs Node core.** ML ecosystem (Python) vs end-to-end shared types (Node). Either works; pick early.
 
 ---
 
@@ -479,7 +463,7 @@ flowchart TB
 8. **Image generation:** in-scope locally (heavy) or remote-only/opt-in?
 9. **Update/distribution channel** and signing identity for releases.
 10. **Default egress posture:** fully offline until configured, or pre-allow a curated set?
-11. **KAG / knowledge graph (§11.1):** do we add a graph-backed hybrid layer at all, and if so — start on long-term memory or document Q&A? Single-store (Postgres + Apache AGE) or dedicated (Neo4j)? Is the extraction compute cost acceptable on local hardware? Default position: *defer to Phase 4+, RAG-first.*
+11. **KAG / knowledge graph (§11.1):** do we add a graph-backed hybrid layer at all, and if so — start on long-term memory or document Q&A? Single-store (Postgres + Apache AGE) or dedicated (Neo4j)? Is the extraction compute cost acceptable on local hardware? Default position: *defer; RAG-first.*
 
 ---
 
@@ -487,13 +471,13 @@ flowchart TB
 
 Build PersonalAI as a **local-first modular monolith** with a **Tauri desktop shell**, a **Python (FastAPI) core**, **Ollama** as the default local runtime behind an **OpenAI-compatible model-router** (with **LiteLLM** as the opt-in remote adapter and **vLLM/llama.cpp** as alternative local backends), **PostgreSQL + pgvector** as the single relational+vector store, **LangGraph** for orchestration, and **Pydantic/Zod + JSON Schema** enforcing structured outputs at every boundary. Route **all** side effects through a **Tool/MCP gateway** that enforces deny-by-default permissions, runs tools in **tiered sandboxes**, controls **network egress with allowlists**, and writes an **append-only audit log** — with **MCP verification, SBOM, scanning, and signed releases** as hard requirements, not extras.
 
-This is the safest and most practical starting point because it: (1) keeps the user's data and compute **local by default** with egress as a visible, logged, opt-in exception; (2) concentrates all danger (tools, MCP, remote providers, file parsing) **behind explicit chokepoints** that can be reasoned about and audited; (3) uses **boring, reputable, well-licensed** components with verifiable maintainers; (4) treats **every input as adversarial**, directly answering the dominant prompt-injection/exfiltration/supply-chain threats that the MCP ecosystem's own CVE record makes concrete; and (5) stays **portable** so local↔remote models and pgvector↔Qdrant can evolve without re-architecting. Start at Phase 1 (local chat) and earn each capability behind the security envelope before adding the next.
+This is the safest and most practical starting point because it: (1) keeps the user's data and compute **local by default** with egress as a visible, logged, opt-in exception; (2) concentrates all danger (tools, MCP, remote providers, file parsing) **behind explicit chokepoints** that can be reasoned about and audited; (3) uses **boring, reputable, well-licensed** components with verifiable maintainers; (4) treats **every input as adversarial**, directly answering the dominant prompt-injection/exfiltration/supply-chain threats that the MCP ecosystem's own CVE record makes concrete; and (5) stays **portable** so local↔remote models and pgvector↔Qdrant can evolve without re-architecting. Start with local chat and earn each capability behind the security envelope before adding the next.
 
 ---
 
 ## 22. Modular Implementation Roadmap
 
-This section turns the capability phases (§18) into an *implementation* plan whose central goal is **modularity**: adding a feature should mean **adding a new adapter behind an existing contract + a registry entry + a schema** — *not* editing the core. This keeps future changes (by humans or by Claude Code agents) **local and additive** instead of sweeping.
+This section describes the *implementation* approach whose central goal is **modularity**: adding a feature should mean **adding a new adapter behind an existing contract + a registry entry + a schema** — *not* editing the core. This keeps future changes (by humans or by Claude Code agents) **local and additive** instead of sweeping.
 
 ### 22.1 The modularity rule (read this first)
 
@@ -536,84 +520,6 @@ A monorepo where each seam is its own package keeps blast radius small and lets 
 ```
 
 The dependency arrow always points **inward to `/contracts`**. Adapters never import each other; the core never imports a concrete adapter.
-
-### 22.4 Implementation milestones (start simple → add complexity)
-
-Each milestone is shippable, builds on the previous, and **exercises a seam** so the next milestone slots in without rework. "Owner agent" = which Claude Code specialist naturally owns that slice.
-
-> **Status:** **M0–M9 + M11 (first delivery) complete** — including an **Identity + multi-tenancy** milestone (ADR-0010:
-> always-on auth + Postgres RLS), a **Pre-M8 hardening** pass, the **M8.1 multi-agent graph**
-> (planner → researcher → critic + durable answer-approval gate, ADR-0012), **M8.2** (tiered
-> verification ladder + bounded schema-repair + accuracy-mode + per-tenant agent config), and **M8.3**
-> (a second durable gate — the **blocking egress-approval gate**, ADR-0013 — plus a transparency
-> panel: Activity timeline, tool-I/O progressive disclosure, per-question context + token/time
-> metrics), all shipped. **M9 (multimodal — vision · STT · browser TTS)** shipped in 0.8.3, and
-> **0.9.0** brought **M11 (knowledge graph / KAG)** forward ahead of M10, together with Documents v2
-> (on-device OCR + continuously-synced folders), multi-source RAG, and a multi-agent redesign
-> (a tool-armed judge fact-check + evaluator-optimizer re-planning). **M10 (browser extension) is
-> next.**
-> **Note (orchestration engine):** this report recommended **LangGraph**. ADR-0011 briefly chose a
-> hand-rolled typed graph instead (rejecting LangGraph on dependency weight), but **ADR-0012
-> superseded ADR-0011 and adopted LangGraph** as the orchestration engine — so this report's original
-> "LangGraph" recommendation now holds. The load-bearing invariant: LangGraph orchestrates only;
-> graph nodes call PersonalAI's own `ModelProvider` and `ToolGateway` seams directly (no LangChain
-> model/tool abstractions). The ADRs are authoritative.
-
-| M | Milestone | What ships | Seam established | Additive guarantee | Owner agent | Status |
-|---|---|---|---|---|---|---|
-| **M0** | **Skeleton + contracts** | Monorepo, `/contracts` (ports, base schemas, message envelope), DI wiring, CI with SBOM/scan/signing skeleton, loopback FastAPI + empty SPA | All ports defined as interfaces | Everything later is an adapter behind these | backend-api-architect, architecture | done |
-| **M1** | **Local chat (1 provider)** | Streaming chat over **Ollama**; provider registry with one adapter; structured-output validation core; provider badge in UI | Model-provider seam, schema seam, UI-renderer seam | Add providers later = new adapter, no core change | ollama-llm-agent, ui-developer | done |
-| **M2** | **Provider portability** | Add **remote OpenAI-compatible** provider (OpenAI/Azure/vLLM/llama.cpp in OpenAI mode); capability detection + per-request routing | Proves the model seam works (≥2 adapters) | Switching/adding models never touches core | ollama-llm-agent | done |
-| **M3** | **Files & vector RAG** | Ingestion pipeline (txt/md/pdf/docx) → **pgvector**; `Retriever` + `Storage` ports with one adapter each; sandboxed parsing; file jails | Retrieval seam, storage seam, modality seam | Add Qdrant/graph later = new adapter | database-architect, backend-api-architect | done |
-| **M4** | **Memory (short-term + long-term)** | **STM** (isolated per chat): token-budgeted context assembly + rolling per-conversation summary; incognito chats. **LTM** (cross-chat, semantic): `MemoryStore` on Postgres+pgvector; background fact extraction (structured output + salience, provenance + temporal validity); recency/importance/relevance retrieval injected as "What I remember" (untrusted data); **Memory UI** to view/edit/delete facts + "Forget everything" + "Use my memory" toggle | Memory seam (reuses Retriever/Storage); STM vs LTM isolation | Graph (KAG) upgrade is M11; RAG/chat untouched | agentic-ai-architect, database-architect, ui-developer | done |
-| **M5** | **Tool/MCP gateway** | Registry + manifests + permission model + tiered sandbox + egress allowlist + audit log; built-in tools (calculator, http_fetch) | Tool seam (the side-effect chokepoint) | New tools = drop-in manifest+handler, verified & sandboxed | agentic-ai-architect, backend-api-architect | done |
-| **M6** | **Single-agent loop + tools** | Hand-rolled streaming agent loop (ADR-0008): autonomous tool calling through the gateway, **streamed reasoning + answer**, tool calls parsed from the provider stream (Ollama + OpenAI); per-message **Details** (`meta.trace`); built-in **web_search** (DuckDuckGo); per-chat Activity + App logs; context-usage meter; rename chats | Agent seam, message-contract seam | Add MCP sources / roles later behind the same gateway | agentic-ai-architect | done |
-| **M7** | **MCP plug-in/out + verification** | Local/third-party MCP servers via the gateway; MCP verification workflow; per-scope enable/disable; sandbox tiers (ADR-0007), incl. the Microsoft Playwright MCP goal | Tool seam hardened for external code | Plug/unplug tools without redeploy | agentic-ai-architect | done |
-| **IAM** | **Identity + multi-tenancy** | Always-on auth + Postgres RLS tenant isolation; `IdentityProvider`/`SessionStore`/`KeyProvider`(planned) ports; argon2id + cookie sessions + CSRF; `app_mode` local/hosted (ADR-0010) | Auth + tenant-isolation seam | New IdP (OIDC) = drop-in adapter | ciso-security-auditor, backend, db | done |
-| **M8.1** | **Multi-agent graph** | Role-specialized **LangGraph** graph (planner → researcher → critic → finalize) above the same gateway/provider seams (ADR-0012); **durable answer-approval gate** (tenant-scoped checkpointer, Postgres RLS) with SSE `plan`/`critique`/`approval_request` frames + a `/resume` endpoint; color-coded agent trace in the UI | Agent seam at scale | New roles/critics are additive nodes | agentic-ai-architect | done |
-| **M8.2** | **Selective verification + config** | **Tiered verification ladder** (schema-always → conditional LLM-judge → ground-truth → human) for factuality/anti-hallucination; **bounded schema-repair**; `accuracy mode` toggle (`PERSONALAI_AGENT_ACCURACY_MODE`); per-tenant **agent modes** + per-agent prompts/tool-scoping; query contextualization; **Chat \| Settings** UI | Verification seam | New critics/verifiers are additive nodes | agentic-ai-architect | done |
-| **M8.3** | **Egress gate + transparency** | **Blocking egress-approval gate** — a second durable LangGraph gate that pauses the run on a non-allowlisted host (allow-once/always/deny/more-info), host-from-checkpoint + subject-authz + SSRF-survives-allow (ADR-0013); a transparency **info panel** (reverse-chronological **Activity timeline**, **tool-I/O progressive disclosure**, per-question **context snapshot** + **token/time metrics**); composer draft + attachment persistence | Agent-safety + transparency seam | A second gate reuses the same durable machinery | agentic-ai-architect, ui-developer, ciso-security-auditor | done |
-| **M9** | **Multimodal** | Vision routing; **faster-whisper** STT; browser TTS (read-aloud); **Piper** neural TTS + optional image gen are follow-ups | Modality seam at scale | Each modality = a handler, no core change | ollama-llm-agent, ui-developer | done (Piper / image-gen follow-ups) |
-| **M10** | **Browser extension** | MV3, minimal perms, explicit capture, authenticated localhost messaging | New client behind existing gateway contract | Extension is just another authenticated client | chrome-extension-architect/developer | next |
-| **M11** | **KAG / knowledge graph** | First delivery (0.9.0): a **relational** entity store (`entities`/`entity_documents`/`entity_edges`) populated by **local LLM-NER** over the document corpus, with entity resolution, a KAG aggregation/enumeration retrieval source, and a Settings → Knowledge graph + corpus explorer (ADR-0014). Still planned: Apache AGE / multi-hop graph retrieval and the graph upgrade of long-term memory | Reuses retrieval + storage seams | Pure add-on; vector RAG + semantic memory untouched | database-architect, agentic-ai-architect | in progress (first delivery in 0.9.0) |
-| **M12** | **Hardening & packaging** | Signed releases, reproducible builds, SBOM/scan in CI, desktop + Compose packaging, docs/ADRs | Cross-cutting | Ongoing, per-release | github-repository-manager, documentation | planned |
-
-> **Roadmap note (2026-06-07):** Memory was pulled forward to **M4** (the opportune moment — it
-> reuses the M3 pgvector storage seam, delivers user-facing visualize/erase of memory, and gives
-> later agents, M7–M8, a memory to use). **KAG** is reframed as **M11**, the graph upgrade of M4's
-> long-term memory (start semantic-first; add the graph only when multi-hop demands it). Everything
-> M5+ shifted down by one.
->
-> **Roadmap note (2026-06-08):** **M6 and M7 swapped** — the **single-agent loop + tools (incl. web
-> search)** is now **M6**, and **MCP plug-in/out** is **M7**. Rationale: the agent loop is what lets
-> the user simply *ask the model to search/act*, it only needs the M5 gateway (already shipped), and
-> MCP then plugs published tools into that same loop. Both still run every call through the gateway.
->
-> **Roadmap note (2026-06-29):** **M11 (knowledge graph / KAG) was brought forward ahead of M10**
-> (browser extension) and is its **first delivery** in 0.9.0. It ships a **relational** entity store
-> populated by **local LLM-NER over the document corpus** (with a KAG aggregation retrieval source
-> and a Settings → Knowledge explorer), rather than the originally-sketched **Apache AGE** graph, and
-> it does not yet upgrade long-term memory to a graph — those remain planned. The decision and its
-> rationale are recorded in [ADR-0014](./adr/0014-kag-entity-store.md). M10 is now next.
-
-### 22.5 High-horizon view
-
-```mermaid
-timeline
-    title PersonalAI - High-Horizon Implementation Roadmap
-    Foundation : M0 Skeleton + contracts (all ports defined)
-    Talk       : M1 Local chat (Ollama) : M2 Provider portability (llama.cpp / vLLM / remote)
-    Know       : M3 Files + vector RAG (pgvector)
-    Remember   : M4 Memory (short-term + long-term, semantic)
-    Act        : M5 Tool/MCP gateway + sandbox : M6 Single-agent loop + tools
-    Reason     : M7 MCP plug-in/out + verification : M8 Multi-agent + selective verification
-    Sense      : M9 Multimodal (vision / STT / TTS)
-    Reach      : M10 Browser extension
-    Connect    : M11 KAG / graph memory (graph upgrade of M4)
-    Harden     : M12 Signing / SBOM / packaging / docs
-```
-
-**Reading the horizon:** the system grows along an axis — **Talk → Know → Act → Reason → Sense → Reach** — and each stage is *unlocked by a seam established in an earlier milestone*, so complexity is added at the edges, never by rewriting the center. M0 pays the up-front cost of defining contracts so that M1–M11 are overwhelmingly *additive*.
 
 ---
 

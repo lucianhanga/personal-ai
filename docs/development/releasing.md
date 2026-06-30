@@ -1,7 +1,7 @@
 # Releasing & Signing
 
 PersonalAI releases are **signed with Sigstore/cosign** and ship a **CycloneDX SBOM**
-(DEPENDENCY-POLICY). M0-9 provides the signing skeleton.
+(DEPENDENCY-POLICY).
 
 ## Versioning
 
@@ -22,18 +22,17 @@ PersonalAI uses **one product version**, kept as a single source of truth.
   versions don't gate resolution. Leaving them at `0.0.0` keeps the product version unambiguous.
 
 **Policy (pre-1.0)** — same as the [CHANGELOG](../../CHANGELOG.md) header: `MAJOR` stays `0` until
-the first stable release; `MINOR` bumps as each milestone (M1, M2, …) lands; `PATCH` bumps for
-fixes/UX tweaks between milestones. The shipped state is **M11 (knowledge graph / KAG)** — brought
-forward ahead of M10 — so the version is **0.9.0**. The HTTP API is versioned independently in the
-URL path (`/api/v1`).
+the first stable release; `MINOR` bumps for new capabilities; `PATCH` bumps for fixes/UX tweaks.
+The current version is **0.9.0** (read it from the [`VERSION`](../../VERSION) file). The HTTP API is
+versioned independently in the URL path (`/api/v1`).
 
 **To bump the product version**, update all five product files together — `VERSION`, the backend
 `__init__.py` `__version__`, `apps/backend/pyproject.toml`, `tools/mcp/pyproject.toml`, and
 `apps/ui/package.json` — then cut the CHANGELOG release (move `[Unreleased]` into a dated
 `[x.y.z]` section and update the compare-link footers). Tagging is `vX.Y.Z`.
 
-> Status: the pipeline and a CI signing smoke test exist (M0-9). Distribution channels and a
-> reproducible-build guarantee are refined in M11.
+> Status: the release pipeline and a CI signing smoke test exist. Distribution channels and a
+> reproducible-build guarantee are still being refined (see the note below).
 
 ## What gets signed
 
@@ -80,5 +79,5 @@ reproducible. Current status and next steps:
 
 - The SBOM generator already uses `--output-reproducible` for stable output.
 - Python wheels via `uv build` are largely deterministic but embed timestamps; pinning
-  `SOURCE_DATE_EPOCH` and auditing the build for nondeterminism is a follow-up (tracked for M11).
+  `SOURCE_DATE_EPOCH` and auditing the build for nondeterminism is a follow-up.
 - No reproducible-build guarantee is claimed yet.

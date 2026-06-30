@@ -4,9 +4,6 @@ PersonalAI wires adapters to the core through **registries** and a **composition
 (ADR-0001). The rule: *adding a capability = registering an adapter*. The core never imports a
 concrete adapter; it only depends on the ports in `personalai_contracts`.
 
-> Status: the registry/DI machinery lands in M0-4. Concrete adapters (Ollama, pgvector, ...) are
-> registered from M0-5 onward.
-
 ## Pieces
 
 | Piece | Module | Role |
@@ -16,7 +13,7 @@ concrete adapter; it only depends on the ports in `personalai_contracts`.
 | `CoreConfig` | `personalai_core.config` | Config-driven selection of the active singleton adapters + local-first defaults (`bind_host=127.0.0.1`, `egress_enabled=False`). Reads `PERSONALAI_*` env. |
 | `bootstrap` | `personalai_backend.composition` | The composition root: build config + registries, register adapters, return wiring. Resolves the active adapter for each seam by name via `registries.<seam>.get(config.<name>)` (fail-closed). |
 
-UI renderers are a frontend seam and are registered in the SPA (M0-6), not in the Python registries.
+UI renderers are a frontend seam and are registered in the SPA, not in the Python registries.
 
 ## How to add an adapter
 
@@ -63,8 +60,8 @@ Beyond the registries, `create_app()` wires the auth + tenant-isolation layer:
   fail-closed. `app.state.storage`'s stores are built on it, so all data access is RLS-scoped with no
   per-endpoint changes. The raw pool is reserved for identity/auth tables (not RLS-gated) + shutdown.
 - **`app.state.tenant_db`** (`TenantDb`) is the unit-of-work primitive: `acquire(tenant_id)` yields a
-  tenant-bound connection in ONE transaction for multi-statement writes (used by M8 agent writes).
+  tenant-bound connection in ONE transaction for multi-statement writes (used by agent writes).
 - **Chat orchestration** is `run_turn` (`turn.py`), FastAPI-independent + fake-testable; the route is
-  a thin SSE + persistence adapter. M8's typed graph grows inside `run_turn`.
+  a thin SSE + persistence adapter. The multi-agent typed graph runs inside `run_turn`.
 - **Planned, not yet wired:** `KeyProvider` (per-tenant secret encryption). OIDC is a future
   `IdentityProvider` adapter (drop-in, no core change).

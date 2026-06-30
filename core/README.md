@@ -5,4 +5,4 @@ engine, structured-output validation, and the **registries** that discover adapt
 
 - Depends **only** on `personalai_contracts`.
 - Must **not** import `personalai_backend` or any concrete adapter package.
-- Registries + DI wiring land in **M0-4**; this milestone (M0-1) only establishes the package.
+- Holds the registries and DI wiring that compose adapters behind their ports.

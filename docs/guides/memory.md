@@ -1,4 +1,4 @@
-# Memory: short-term + long-term (M4)
+# Memory: short-term + long-term
 
 PersonalAI has two kinds of memory. Both are **local-first** (extraction + embeddings + storage run
 on your machine) and the long-term one is **fully inspectable and erasable**.
@@ -67,10 +67,10 @@ inherits the deployment default above.
 
 ## How it relates to RAG and KAG
 
-- **RAG** (M3) answers from **documents you upload**; **memory** (M4) is about **you** and persists
+- **RAG** answers from **documents you upload**; **memory** is about **you** and persists
   across chats. They compose — both inject reference context, both treated as data.
-- **KAG** (M11) is the planned **graph upgrade** of long-term memory: extract entities + relations
-  into a knowledge graph for multi-hop reasoning. Today's memory is **semantic** (vector) first.
+- **KAG** is the **graph upgrade** of long-term memory: extract entities + relations
+  into a knowledge graph for multi-hop reasoning. Semantic (vector) memory remains the first layer.
 
 ## Full integration test (opt-in)
 

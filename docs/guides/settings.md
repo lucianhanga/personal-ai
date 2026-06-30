@@ -1,4 +1,4 @@
-# Settings: per-tenant preferences (M8.2)
+# Settings: per-tenant preferences
 
 PersonalAI persists per-tenant **preferences** that overlay the boot-time deployment config for each
 request. The UI is a **Chat | Settings** two-view split; the **Settings** view groups them into

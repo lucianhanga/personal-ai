@@ -12,8 +12,7 @@ repeat them.
 - Architecture enforcement: `.importlinter`
 - Task runner: `Makefile`
 - CI: `.github/workflows/ci.yml`
-- JS workspace: `package.json` + `pnpm-workspace.yaml` *(declared; JS apps are placeholders until
-  M0-6)*
+- JS workspace: `package.json` + `pnpm-workspace.yaml`
 
 ## Python workspace (uv)
 
@@ -26,9 +25,9 @@ members = ["contracts", "core", "apps/backend"]
 
 | Member | Package | Role |
 |---|---|---|
-| `contracts` | `personalai_contracts` | Stable core API: ports (M0-2), schemas (M0-3). Innermost layer. |
+| `contracts` | `personalai_contracts` | Stable core API: ports, schemas. Innermost layer. |
 | `core` | `personalai_core` | Orchestration, gateway, validation (depends only on contracts). |
-| `apps/backend` | `personalai_backend` | FastAPI wiring; DI picks adapters from registries (M0-4). |
+| `apps/backend` | `personalai_backend` | FastAPI wiring; DI picks adapters from registries. |
 
 Dev tools are pinned in `[dependency-groups] dev`: `ruff>=0.6`, `mypy>=1.11`, `pytest>=8.2`,
 `pytest-cov>=5.0`, `import-linter>=2.0`. Install everything with `uv sync` (or `make setup`,
@@ -40,8 +39,8 @@ The dependency direction between members is enforced by import-linter — see
 ## JS/TS workspace (pnpm)
 
 A separate **pnpm workspace** holds the TS packages and frontend apps: `packages/contracts`
-(Zod bindings, M0-3), `apps/ui` (**React SPA + Tauri shell**, M0-6), and `apps/extension`
-(MV3 browser extension, **placeholder until M9**). `apps/ui` has real `typecheck`/`test`/`build`
+(Zod bindings), `apps/ui` (**React SPA + Tauri shell**), and `apps/extension`
+(MV3 browser extension, **placeholder**). `apps/ui` has real `typecheck`/`test`/`build`
 scripts plus `test:e2e` (Playwright) and `tauri` (desktop, local-only). The pnpm version is read
 from the `packageManager` field in `package.json`. The Tauri native build needs Rust and is not
 run in CI (see [apps/ui/src-tauri/README.md](../../apps/ui/src-tauri/README.md)).
@@ -58,11 +57,11 @@ Run `make help` for the live list. Current targets:
 | `make typecheck` | `uv run mypy contracts core apps/backend` | mypy strict type check. |
 | `make test` | `uv run pytest` | Python tests with coverage. |
 | `make arch` | `uv run lint-imports` | Enforce hexagonal dependency direction. |
-| `make schemas` | `scripts/generate_schemas.py` | Regenerate canonical JSON Schema (M0-3). |
-| `make run-backend` | `python -m personalai_backend` | Run the loopback backend (M0-5). |
-| `make sbom` | `scripts/generate_sbom.sh` | Generate the CycloneDX SBOM (M0-8). |
-| `make audit` | `pip-audit` + `pnpm audit` | Vulnerability scan, blocks on high/critical (M0-8). |
-| `make drift` | `scripts/check_supply_chain_drift.sh` | Fail if deps changed without updating the register (M0-8). |
+| `make schemas` | `scripts/generate_schemas.py` | Regenerate canonical JSON Schema. |
+| `make run-backend` | `python -m personalai_backend` | Run the loopback backend. |
+| `make sbom` | `scripts/generate_sbom.sh` | Generate the CycloneDX SBOM. |
+| `make audit` | `pip-audit` + `pnpm audit` | Vulnerability scan, blocks on high/critical. |
+| `make drift` | `scripts/check_supply_chain_drift.sh` | Fail if deps changed without updating the register. |
 | `make js` | `js-typecheck` + `js-test` + `js-lint` | All JS/TS checks. |
 | `make check` | `lint` + `typecheck` + `test` + `arch` + `js` | All checks (Python + JS) — run before a PR. |
 
@@ -82,9 +81,10 @@ cancellation per ref and `contents: read` permissions. Three jobs run in paralle
 | `signing-smoke` | Signing smoke (cosign) | Install cosign -> sign + verify a test artifact offline (`scripts/signing_smoke.sh`). The real keyless release pipeline is `.github/workflows/release.yml` (see [releasing.md](./releasing.md)). |
 
 The first three jobs (`Repository health`, `Python ...`, `JS/TS ...`) are **required status
-checks** on `main` (M0-7). The `supply-chain` job runs on every PR/push and fails visibly on
-findings; it is not yet a required check (the audits depend on the advisory-DB network) and can be
-promoted later. Release signing (Sigstore/cosign) is added in **M0-9**.
+checks** on `main`. The `supply-chain` job runs on every PR/push and fails visibly on
+findings; it is not a required check (the audits depend on the advisory-DB network) and can be
+promoted later. Release signing (Sigstore/cosign) runs in the release pipeline — see
+[releasing.md](./releasing.md).
 
 The CI `python` job mirrors `make check` (Python portion) plus `ruff format --check`, so running
 `make check && uv run ruff format --check .` locally reproduces the gate.
@@ -112,7 +112,7 @@ documented in [coding-standards.md §8](./coding-standards.md#8-testing--coverag
 
 ## Last updated notes
 
-- 2026-06-05: Initial toolchain doc for the M0-1 monorepo.
-- 2026-06-05: M0-8 — added SBOM (`make sbom`), vulnerability audit (`make audit`), and the
+- 2026-06-05: Initial toolchain doc for the monorepo.
+- 2026-06-05: Added SBOM (`make sbom`), vulnerability audit (`make audit`), and the
   supply-chain drift check (`make drift`) plus the `supply-chain` CI job; documented the required
-  status checks (M0-7) and the runnable backend / schema targets.
+  status checks and the runnable backend / schema targets.

@@ -1,7 +1,9 @@
 # Onboarding / Developer Guide
 
-Welcome to PersonalAI. This guide gets you oriented. The project is at **Phase 0** — the
-architecture is defined; application code begins at milestone **M0**.
+Welcome to PersonalAI. This guide gets you oriented. PersonalAI is a working, local-first modular
+monolith: a FastAPI backend, a React SPA + Tauri shell, stable `contracts`, and the seam packages
+(providers, retrieval, storage, modalities, tools, agents) wired together through registries. This
+guide explains the mental model and how to start contributing.
 
 ## 1. What this project is
 
@@ -32,8 +34,8 @@ The seams (extension points) you will work in:
 | Agents / roles | a graph node + typed messages |
 | UI renderers | a component keyed by output type |
 
-The ports behind these seams already exist (M0-2). For exact signatures, value objects, the
-reference fakes, and the step-by-step "how to add an adapter" workflow, see the
+The ports behind these seams are defined in `personalai_contracts`. For exact signatures, value
+objects, the reference fakes, and the step-by-step "how to add an adapter" workflow, see the
 [Contracts & ports reference](./reference/contracts-and-ports.md). For the rules you must follow
 while writing code, see [Coding standards](./development/coding-standards.md) and the
 [Toolchain & monorepo](./development/toolchain.md) guide.
@@ -54,18 +56,30 @@ while writing code, see [Coding standards](./development/coding-standards.md) an
 /apps/extension   # MV3 browser extension
 ```
 
-> The package roots and the `contracts` ports exist now (M0-1, M0-2). The `core`,
-> `apps`, and seam (`providers`, `retrieval`, ...) packages fill in over later milestones.
+> `contracts` is the stable core API; `core` holds the orchestration, gateway, and validation;
+> `apps` wires everything into the backend and UI; the seam packages (`providers`, `retrieval`,
+> `storage`, `modalities`, `tools`, `agents`) provide the concrete adapters.
 
 ## 4. How we work
 
 - **GitHub flow**, protected `main`, PRs required. See [CONTRIBUTING.md](../CONTRIBUTING.md).
 - **Conventional Commits**.
-- **Roadmap** milestones M0…M11. Track work on the GitHub Project board.
 - **Supply chain**: every dependency is vetted and recorded in
   [SUPPLY-CHAIN.md](./supply-chain/SUPPLY-CHAIN.md). See [Dependency Policy](./policies/DEPENDENCY-POLICY.md).
 
-## 5. Current focus: M0 — Skeleton + contracts
+## 5. Start contributing
 
-M0 establishes the contracts and the seams so that all later milestones are additive. See the
-Project board for the M0 task breakdown.
+1. **Set up** the workspace: `make setup` (uv + pnpm). See
+   [Toolchain & monorepo](./development/toolchain.md).
+2. **Run it locally**: `make run-backend` for the backend and `pnpm --filter @personalai/ui dev`
+   for the UI — see the [Local chat guide](./guides/local-chat.md).
+3. **Find the seam** your change belongs behind (the table above) and read the
+   [Contracts & ports reference](./reference/contracts-and-ports.md) and
+   [Dependency injection & registries](./reference/dependency-injection.md) for the
+   "how to add an adapter" workflow.
+4. **Follow the rules** in [Coding standards](./development/coding-standards.md) — typed under mypy
+   strict, structured-output-first, inward-only dependencies (enforced by import-linter).
+5. **Run the checks** before a PR: `make check` (lint + types + tests + architecture + JS).
+
+The golden rule keeps changes contained: a new capability is a new adapter behind an existing port,
+registered and schema-declared — the core stays stable.

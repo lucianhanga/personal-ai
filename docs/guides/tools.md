@@ -1,4 +1,4 @@
-# Tools: the gateway (M5)
+# Tools: the gateway
 
 PersonalAI can *act* through **tools** — but every tool call passes through one **gateway** (the
 side-effect chokepoint, ADR-0004). The gateway is where permissions, network egress, schemas,
@@ -106,9 +106,9 @@ Each tool declares a `ToolManifest`: provenance, version, capabilities, least-pr
 
 Tools run behind a `ToolExecutor` seam:
 
-- **Tier 0 — in-process (now):** trusted first-party tools, time-bounded, fail-closed.
-- **Tier 1 — subprocess (M7):** the default for spawning MCP servers over stdio.
-- **Tier 2 — container/microVM (M7+):** untrusted/heavy MCP servers (e.g. Playwright) and
+- **Tier 0 — in-process:** trusted first-party tools, time-bounded, fail-closed.
+- **Tier 1 — subprocess:** the default for spawning MCP servers over stdio.
+- **Tier 2 — container/microVM:** untrusted/heavy MCP servers (e.g. Playwright) and
   multi-user worker pools.
 
 Adding a tier is a new adapter behind the port — the gateway and tools are unchanged.
@@ -120,5 +120,5 @@ Adding a tier is a new adapter behind the port — the gateway and tools are unc
 2. Declare a `ToolManifest` (permissions, JSON-Schema I/O, egress, risk).
 3. Register `RegisteredTool(manifest, handler)` in the composition root.
 
-That's it — the gateway enforces everything else. Third-party **MCP servers** (M7) plug into the
+That's it — the gateway enforces everything else. Third-party **MCP servers** plug into the
 same gateway as tool sources, sandboxed via tier 1/2.

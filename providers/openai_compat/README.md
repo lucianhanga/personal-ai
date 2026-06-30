@@ -13,4 +13,4 @@ This is a **remote** provider:
 - `capabilities()` is best-effort (remote APIs expose no capability endpoint); `list_models()`
   reports `local=False`.
 
-Wired into config/egress/secrets and registered in the composition root in **M2-2**.
+Wired into config/egress/secrets and registered in the composition root.

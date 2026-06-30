@@ -3,12 +3,13 @@
 The **ports** are the stable interfaces (seams) that adapters implement. They live in the
 `personalai_contracts` package — the innermost layer of the hexagonal architecture
 ([ADR-0001](../architecture/adr/0001-modular-monolith-hexagonal.md)). This document describes
-every port as it is **actually implemented today (M0-2)**: its responsibility, its `Protocol`
-methods, its value objects, sync-vs-async surface, and a minimal adapter example.
+every port as it is implemented: its responsibility, its `Protocol` methods, its value objects,
+sync-vs-async surface, and a minimal adapter example.
 
-> Status: M0-2 delivers the ports and the reference fakes. Versioned schemas, the agent message
-> envelope, and the tool-invocation/manifest contracts arrive in **M0-3**. The registries and DI
-> wiring that discover adapters arrive in **M0-4**. Items marked *planned (Mx)* do not exist yet.
+The ports pair with versioned schemas (the agent message envelope and the tool-invocation/manifest
+contracts) and are wired to adapters through the registries and DI layer — see the
+[structured-output schemas reference](./structured-output-schemas.md) and
+[dependency-injection.md](./dependency-injection.md).
 
 ## Source of truth
 
@@ -35,19 +36,19 @@ If this document disagrees with the code, the code wins — please open a fix.
 
 ## Ports at a glance
 
-| Port | Module | Sync methods | Async methods | Establishing milestone |
-|---|---|---|---|---|
-| `ModelProvider` | `ports/model_provider.py` | — | `capabilities`, `generate`, `stream`, `embed` | M1 |
-| `Retriever` | `ports/retriever.py` | — | `retrieve` | M3 |
-| `Repository[T]` | `ports/storage.py` | — | `add`, `get`, `list`, `delete` | M3 |
-| `VectorRepository` | `ports/storage.py` | — | `upsert`, `query`, `delete` | M3 |
-| `ObjectStore` | `ports/storage.py` | — | `put`, `get`, `exists`, `delete` | M3 |
-| `GraphStore` | `ports/storage.py` | — | `add_edge`, `neighbors` | M10 (stub now) |
-| `ModalityHandler` | `ports/modality.py` | `can_handle` | `parse` | M3 / M8 |
-| `AgentRole` / `AgentNode` | `ports/agent.py` | `node` | `run` | M6 |
-| `ToolHandler` | `ports/tool.py` | — | `invoke` | M4 |
-| `IdentityProvider` | `ports/identity.py` | — | `authenticate_password` | IAM (ADR-0010) |
-| `SessionStore` | `ports/identity.py` | — | `create`, `get`, `revoke`, `revoke_all_for_subject` | IAM (ADR-0010) |
+| Port | Module | Sync methods | Async methods |
+|---|---|---|---|
+| `ModelProvider` | `ports/model_provider.py` | — | `capabilities`, `generate`, `stream`, `embed` |
+| `Retriever` | `ports/retriever.py` | — | `retrieve` |
+| `Repository[T]` | `ports/storage.py` | — | `add`, `get`, `list`, `delete` |
+| `VectorRepository` | `ports/storage.py` | — | `upsert`, `query`, `delete` |
+| `ObjectStore` | `ports/storage.py` | — | `put`, `get`, `exists`, `delete` |
+| `GraphStore` | `ports/storage.py` | — | `add_edge`, `neighbors` |
+| `ModalityHandler` | `ports/modality.py` | `can_handle` | `parse` |
+| `AgentRole` / `AgentNode` | `ports/agent.py` | `node` | `run` |
+| `ToolHandler` | `ports/tool.py` | — | `invoke` |
+| `IdentityProvider` | `ports/identity.py` | — | `authenticate_password` |
+| `SessionStore` | `ports/identity.py` | — | `create`, `get`, `revoke`, `revoke_all_for_subject` |
 
 > **Identity & multi-tenancy (ADR-0010).** `ports/identity.py` adds the auth seam: `SecurityContext`
 > (request principal+tenant), `AuthResult`, `Session`, and the `IdentityProvider` (built-in argon2id
@@ -66,7 +67,7 @@ If this document disagrees with the code, the code wins — please open a fix.
 
 An OpenAI-compatible abstraction over a model runtime (local or remote). Concrete adapters
 (Ollama, llama.cpp, vLLM, remote via LiteLLM) implement this and are selected through the
-provider registry (M0-4). Streaming is intentionally omitted at M0-2 and added in M1.
+provider registry. Both non-streaming `generate` and streaming `stream` are part of the port.
 
 ### Protocol
 
@@ -81,7 +82,7 @@ class ModelProvider(Protocol):
     async def embed(self, texts: Sequence[str], model: str) -> EmbeddingResult: ...
 ```
 
-`stream()` yields `GenerationChunk(delta, thinking, done, finish_reason)` increments (M1-2).
+`stream()` yields `GenerationChunk(delta, thinking, done, finish_reason)` increments.
 `GenerationRequest.think` controls a reasoning model's thinking trace (e.g. set `think=False` for
 clean chat from qwen3 "thinking" models); `GenerationResult.thinking` / `GenerationChunk.thinking`
 carry the reasoning separately from the answer.
@@ -91,17 +92,17 @@ carry the reasoning separately from the answer.
 | Type | Kind | Fields |
 |---|---|---|
 | `Role` | `StrEnum` | `SYSTEM`, `USER`, `ASSISTANT`, `TOOL` |
-| `ChatMessage` | frozen dataclass | `role: Role`, `content: str` (multimodal parts arrive M8) |
+| `ChatMessage` | frozen dataclass | `role: Role`, `content: str` |
 | `ModelCapabilities` | frozen dataclass | `text=True`, `vision=False`, `embeddings=False`, `tool_calling=False`, `structured_output=False`, `max_context_tokens: int | None = None` |
 | `GenerationRequest` | frozen dataclass | `messages: Sequence[ChatMessage]`, `model: str`, `temperature: float | None = None`, `max_tokens: int | None = None`, `json_schema: Mapping[str, Any] | None = None` |
 | `GenerationResult` | frozen dataclass | `text: str`, `model: str`, `finish_reason: str | None = None`, `usage: Mapping[str, int] = {}` |
 | `EmbeddingResult` | frozen dataclass | `vectors: Sequence[Sequence[float]]`, `model: str`, `dimensions: int` |
 
 `GenerationRequest.json_schema` requests structured output constrained to that JSON Schema,
-validated by the structured-output layer (M0-3) — see
+validated by the structured-output layer — see
 [ADR-0003](../architecture/adr/0003-structured-output-first.md). `capabilities()` may query the
 runtime (e.g. Ollama's `/api/show`) and is `async`; the router uses it for capability-based
-routing. The first real implementation is `personalai_provider_ollama.OllamaProvider` (M1).
+routing. The reference implementation is `personalai_provider_ollama.OllamaProvider`.
 
 ### Minimal adapter
 
@@ -140,7 +141,7 @@ A retrieval strategy (vector, keyword, or graph/KAG) that, given a query, return
 **with citations** so answers stay explainable
 ([ADR-0003](../architecture/adr/0003-structured-output-first.md),
 [ADR-0005](../architecture/adr/0005-postgres-pgvector-storage.md)). Strategies are registered
-with the core (M0-4) and invoked by the orchestrator.
+with the core and invoked by the orchestrator.
 
 ### Protocol
 
@@ -191,9 +192,9 @@ class FirstNRetriever:
 
 The repository interfaces for the storage spine
 ([ADR-0005](../architecture/adr/0005-postgres-pgvector-storage.md)): a generic relational
-repository, a vector repository, an object store, and a graph-store stub (KAG, M10). Concrete
+repository, a vector repository, an object store, and a graph-store stub (KAG). Concrete
 adapters (postgres, pgvector, qdrant, object-store, neo4j/age) are selected via dependency
-injection (M0-4). All methods are async.
+injection. All methods are async.
 
 ### `Repository[T]`
 
@@ -238,7 +239,7 @@ class ObjectStore(Protocol):
 
 ### `GraphStore`
 
-Graph/KAG store stub (optional, M10) — a minimal edge + neighbour interface.
+Graph/KAG store stub (optional) — a minimal edge + neighbour interface.
 
 ```python
 @runtime_checkable
@@ -283,7 +284,7 @@ class DictRepository[T]:
 
 Normalizes a piece of media into text/structured content for the omni-capability pipeline. The
 base port covers parsing/ingestion; specialized handlers (OCR, STT, TTS, render) are added as
-adapters from M3/M8. **Implementations must sandbox parsing** — media is untrusted input (see the
+adapters. **Implementations must sandbox parsing** — media is untrusted input (see the
 [threat model](../architecture/THREAT-MODEL.md)).
 
 ### Protocol
@@ -334,13 +335,14 @@ class PlainTextHandler:
 
 An `AgentNode` is a single step in an orchestration graph (LangGraph-style): it maps an input
 state to an output state. An `AgentRole` is a named, described capability that exposes such a
-node. Typed agent-message envelopes that flow as state are defined as schemas in **M0-3**;
-orchestration wiring is **M6**.
+node. Typed agent-message envelopes that flow as state are defined as schemas (see the
+[structured-output schemas reference](./structured-output-schemas.md)); the orchestration wiring
+lives in the core.
 
 ### Protocols
 
 ```python
-AgentState = Mapping[str, Any]  # opaque, schema-validated; M0-3 refines its shape
+AgentState = Mapping[str, Any]  # opaque, schema-validated
 
 
 @runtime_checkable
@@ -393,8 +395,8 @@ class TagRole:
 ### Responsibility
 
 The execution contract for a single tool or MCP server action. The full tool/MCP **manifest**
-(provenance, permissions, I/O schemas, egress, risk, signature) is defined as a schema in
-**M0-3**; permission enforcement and sandboxing live in the Tool/MCP gateway (**M4**). Tool
+(provenance, permissions, I/O schemas, egress, risk, signature) is defined as a schema;
+permission enforcement and sandboxing live in the Tool/MCP gateway. Tool
 handlers are **never invoked directly by agents** — only through the gateway
 ([ADR-0004](../architecture/adr/0004-tool-mcp-gateway-sandbox.md)). The `ToolInvocation` and
 `ToolManifest` schema contracts (provenance, permissions, egress, risk) are documented in the
@@ -412,7 +414,7 @@ class ToolHandler(Protocol):
 
 | Type | Kind | Fields |
 |---|---|---|
-| `ToolCall` | frozen dataclass | `tool: str`, `version: str`, `args: Mapping[str, Any] = {}` (mirrors the M0-3 tool-invocation contract) |
+| `ToolCall` | frozen dataclass | `tool: str`, `version: str`, `args: Mapping[str, Any] = {}` (mirrors the tool-invocation contract) |
 | `ToolResult` | frozen dataclass | `ok: bool`, `output: Mapping[str, Any] = {}`, `error: str | None = None` |
 
 `ToolResult` is **fail-closed**: on error, return `ok=False` and an `error` string rather than
@@ -502,12 +504,12 @@ Concretely:
 2. **Implement the port.** Create a new package/folder per the planned layout
    (`/providers/*`, `/retrieval/*`, `/storage/*`, `/modalities/*`, `/tools/*`, `/agents/*`).
    Import **only** from `personalai_contracts`. Do not import sibling adapters.
-3. **Declare its schema** (M0-3). Add/extend the versioned schema (`$id` + semver) for any data
+3. **Declare its schema.** Add/extend the versioned schema (`$id` + semver) for any data
    the adapter produces or consumes; validate at the boundary
    ([ADR-0003](../architecture/adr/0003-structured-output-first.md)). Tools/MCP additionally ship
    a manifest.
-4. **Register it** (M0-4). Add the adapter to the appropriate registry so the FastAPI app can
-   select it via dependency injection. Until M0-4 lands, registration is a documented placeholder.
+4. **Register it.** Add the adapter to the appropriate registry so the FastAPI app can
+   select it via dependency injection.
 5. **Add tests.** Assert `isinstance(adapter, ThePort)` for the structural check, then exercise
    behaviour with `asyncio.run`. Reuse the in-memory fakes for collaborators. Keep coverage at or
    above the gate (`fail_under = 90`).
@@ -530,5 +532,5 @@ seam — see [coding-standards.md](../development/coding-standards.md).
 
 ## Last updated notes
 
-- 2026-06-05: Initial reference for the M0-2 ports and fakes. Schemas (M0-3), registries/DI
-  (M0-4), and streaming (M1) are referenced as upcoming, not documented as existing.
+- 2026-06-05: Initial reference for the ports and fakes, covering schemas, registries/DI, and
+  streaming.

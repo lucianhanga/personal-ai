@@ -8,4 +8,4 @@ Storage adapters for **PostgreSQL + pgvector** (ADR-0005), via **asyncpg**. Depe
   query / delete) over a `vectors` table. Embedding dim 1024 (qwen3-embedding:0.6b).
 
 Run a local DB with `make db` (docker-compose `pgvector/pgvector`). Relational repos for documents
-(M3-2) and conversations (M3-4) build on the same pool. Backend wiring lands with ingestion (M3-2).
+and conversations build on the same pool.
