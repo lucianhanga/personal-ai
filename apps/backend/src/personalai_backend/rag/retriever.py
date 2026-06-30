@@ -25,6 +25,7 @@ from langchain_core.retrievers import BaseRetriever
 from personalai_backend.rag.embeddings import ProviderEmbeddings
 from personalai_contracts.ports import (
     Citation,
+    Reranker,
     RetrievalQuery,
     RetrievedItem,
     VectorMatch,
@@ -133,3 +134,20 @@ class VectorItemRetriever:
     async def retrieve(self, query: RetrievalQuery) -> list[RetrievedItem]:
         docs = await self._inner.ainvoke(query.text)
         return [_document_to_item(d) for d in docs]
+
+
+async def rerank_documents(reranker: Reranker, query: str, docs: list[Document]) -> list[Document]:
+    """Reorder hybrid-retrieval ``Document``s by a cross-encoder reranker (#492).
+
+    Adapts each ``Document`` to a ``RetrievedItem`` at the ADR-0012 boundary, reranks, then maps
+    the reranked items back to their source ``Document`` so the caller's citation/context building
+    (which reads ``doc.metadata``) is unchanged -- only the order changes. The reranker returns the
+    SAME item objects reordered, so identity mapping is exact. A reranker that slices (``top_n``)
+    simply yields fewer documents. This is the single-agent-path counterpart to ``VectorSource``'s
+    rerank step, so reranking applies to both retrieval paths when ``RERANK_ENABLED`` is set."""
+    if not docs:
+        return docs
+    items = [_document_to_item(d) for d in docs]
+    by_id = {id(item): doc for item, doc in zip(items, docs, strict=True)}
+    ordered = await reranker.rerank(query, items)
+    return [by_id[id(item)] for item in ordered]
