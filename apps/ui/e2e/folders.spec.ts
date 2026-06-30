@@ -138,7 +138,7 @@ test("add a folder source, watch it sync over SSE, pause/resume, then remove it"
   });
 
   await page.goto("/");
-  await expect(page.getByTestId("model-select")).toHaveValue("qwen3-vl:8b");
+  await expect(page.getByTestId("composer")).toBeVisible();
 
   // Go to Settings > Documents (the default section); the folder region renders its empty state.
   await page.getByTestId("nav-settings").click();
@@ -194,7 +194,7 @@ test("a register error (E_FOLDER_NOT_FOUND) shows inline; the card is not added"
   });
 
   await page.goto("/");
-  await expect(page.getByTestId("model-select")).toHaveValue("qwen3-vl:8b");
+  await expect(page.getByTestId("composer")).toBeVisible();
   await page.getByTestId("nav-settings").click();
 
   await page.getByTestId("folder-sources-add-toggle").click();
@@ -265,7 +265,7 @@ test("expand a folder card -> the nested file tree renders; expand a subdirector
   await page.route("**/api/v1/folders/*", (r) => json(r, JSON.stringify(DETAIL)));
 
   await page.goto("/");
-  await expect(page.getByTestId("model-select")).toHaveValue("qwen3-vl:8b");
+  await expect(page.getByTestId("composer")).toBeVisible();
   await page.getByTestId("nav-settings").click();
 
   const card = page.getByTestId("folder-card");

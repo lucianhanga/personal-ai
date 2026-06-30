@@ -173,7 +173,7 @@ test("attach an image, describe it, send -> thumbnail + hover description, persi
   );
 
   await page.goto("/");
-  await expect(page.getByTestId("model-select")).toHaveValue("qwen3-vl:8b");
+  await expect(page.getByTestId("composer")).toBeVisible();
 
   // Drop an image onto the composer; it is described eagerly and a chip appears.
   await dropFiles(page, [{ name: "cat.png", type: "image/png" }]);
@@ -219,7 +219,7 @@ test("a small document folds inline; a large document is RAG-indexed (Searched i
   await withConversation(page, [], ANSWER_SSE);
 
   await page.goto("/");
-  await expect(page.getByTestId("model-select")).toHaveValue("qwen3-vl:8b");
+  await expect(page.getByTestId("composer")).toBeVisible();
 
   // Small doc -> "In message" inline badge.
   await dropFiles(page, [{ name: "notes.txt", type: "text/plain" }]);
@@ -272,7 +272,7 @@ test("large doc send carries documents_full + use_rag + conversation_id in the /
   });
 
   await page.goto("/");
-  await expect(page.getByTestId("model-select")).toHaveValue("qwen3-vl:8b");
+  await expect(page.getByTestId("composer")).toBeVisible();
 
   // Attach the large doc; the chip must classify as `large` (otherwise it never enters documents_full).
   await dropFiles(page, [{ name: "report.pdf", type: "application/pdf" }]);
@@ -318,7 +318,7 @@ test("#446: a scanned/image-only PDF shows 'no text found' and an explanation, n
   await page.route("**/api/v1/conversations", (r) => json(r, '{"ok":true,"data":{"conversations":[]}}'));
 
   await page.goto("/");
-  await expect(page.getByTestId("model-select")).toHaveValue("qwen3-vl:8b");
+  await expect(page.getByTestId("composer")).toBeVisible();
 
   await dropFiles(page, [{ name: "scanned.pdf", type: "application/pdf" }]);
 
@@ -346,7 +346,7 @@ test("dropping an audio file yields a transcript chip with a snippet", async ({ 
   await page.route("**/api/v1/conversations", (r) => json(r, '{"ok":true,"data":{"conversations":[]}}'));
 
   await page.goto("/");
-  await expect(page.getByTestId("model-select")).toHaveValue("qwen3-vl:8b");
+  await expect(page.getByTestId("composer")).toBeVisible();
 
   await dropFiles(page, [{ name: "call.mp3", type: "audio/mpeg" }]);
 
@@ -382,7 +382,7 @@ test("the Activity panel shows resource + indexing/retrieval steps and a RAG fil
   await withConversation(page, [], RAG_SSE);
 
   await page.goto("/");
-  await expect(page.getByTestId("model-select")).toHaveValue("qwen3-vl:8b");
+  await expect(page.getByTestId("composer")).toBeVisible();
 
   await dropFiles(page, [{ name: "report.pdf", type: "application/pdf" }]);
   await expect(
@@ -432,7 +432,7 @@ test("Stop cancels an in-flight generation and keeps the partial answer", async 
   });
 
   await page.goto("/");
-  await expect(page.getByTestId("model-select")).toHaveValue("qwen3-vl:8b");
+  await expect(page.getByTestId("composer")).toBeVisible();
 
   await page.getByTestId("composer").fill("tell me a long story");
   await page.getByTestId("send").click();
@@ -487,7 +487,7 @@ test("Copy a question into another chat rehydrates the target composer (#441)", 
   );
 
   await page.goto("/");
-  await expect(page.getByTestId("model-select")).toHaveValue("qwen3-vl:8b");
+  await expect(page.getByTestId("composer")).toBeVisible();
 
   await page.getByTestId("open-c1").click();
   await expect(page.getByTestId("msg-user").first()).toContainText("capital of France");
@@ -536,7 +536,7 @@ test("Edit truncates from the turn (the later turn is discarded) and re-runs (#4
   );
 
   await page.goto("/");
-  await expect(page.getByTestId("model-select")).toHaveValue("qwen3-vl:8b");
+  await expect(page.getByTestId("composer")).toBeVisible();
   await page.getByTestId("open-c1").click();
   await expect(page.getByTestId("msg-user")).toHaveCount(2);
 
@@ -589,7 +589,7 @@ test("Delete truncates from the turn and does not re-run (#441)", async ({ page 
   });
 
   await page.goto("/");
-  await expect(page.getByTestId("model-select")).toHaveValue("qwen3-vl:8b");
+  await expect(page.getByTestId("composer")).toBeVisible();
   await page.getByTestId("open-c1").click();
   await expect(page.getByTestId("msg-user")).toHaveCount(2);
 

@@ -34,7 +34,7 @@ const CHAT_SSE =
 
 const FILES_BODY = JSON.stringify({ ok: true, data: { files: [] } });
 
-test("user can pick a model and stream a chat reply", async ({ page }) => {
+test("user can stream a chat reply", async ({ page }) => {
   // Pre-set the API token so the Chat view renders without manual entry.
   await page.addInitScript(() => localStorage.setItem("personalai_token", "demo"));
   await page.route("**/api/v1/auth/session/me", (r) =>
@@ -132,8 +132,9 @@ test("user can pick a model and stream a chat reply", async ({ page }) => {
 
   await page.goto("/");
   await expect(page.getByTestId("backend-status")).toHaveText(/connected/i);
-  await expect(page.getByTestId("provider-select")).toHaveValue("ollama");
-  await expect(page.getByTestId("model-select")).toHaveValue("qwen3:8b");
+  // Model/provider selection moved out of the composer into Settings -> Agents (#290); the chat
+  // view just needs to be interactive here. Default-model coverage lives in Agents.test.tsx.
+  await expect(page.getByTestId("composer")).toBeVisible();
 
   await page.getByTestId("composer").fill("hi there");
   await page.getByTestId("send").click();
