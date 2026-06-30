@@ -32,23 +32,6 @@ interface Group {
 // Declarative layout. Field names match the backend; a blank/Default value sends null (inherit).
 const GROUPS: Group[] = [
   {
-    title: "Model",
-    note: "The active model is chosen in the top bar (it persists as your default).",
-    fields: [
-      { key: "ollama_num_ctx", label: "Ollama context window", kind: "number" },
-      { key: "ollama_keep_alive", label: "Ollama keep-alive", kind: "text", help: '"30m", "-1"' },
-    ],
-  },
-  {
-    title: "Agent",
-    note: "Agent mode, prompts, and per-agent tools are configured in the Agents panel.",
-    fields: [
-      { key: "agent_accuracy_mode", label: "Accuracy mode", kind: "enum", options: ["standard", "accurate"] },
-      { key: "agent_max_iterations", label: "Max tool iterations", kind: "number" },
-      { key: "agent_timeout_seconds", label: "Turn timeout (seconds)", kind: "number" },
-    ],
-  },
-  {
     title: "Behavior",
     fields: [
       { key: "memory_enabled", label: "Long-term memory", kind: "bool" },
@@ -74,7 +57,7 @@ const GROUPS: Group[] = [
   },
   {
     title: "Document indexing engine (advanced)",
-    note: "How documents are embedded for search — not the chat model (that's in the top bar). Changing this re-defines indexing; existing documents were embedded with the current setting, so you may need to re-upload them. Endpoint changes apply after a backend restart.",
+    note: "How documents are embedded for search — not the chat model (that's in Settings → Agents → Defaults). Changing this re-defines indexing; existing documents were embedded with the current setting, so you may need to re-upload them. Endpoint changes apply after a backend restart.",
     fields: [
       { key: "ollama_host", label: "Ollama host", kind: "text" },
       { key: "embed_provider", label: "Index provider", kind: "enum", options: ["ollama", "openai_compat"] },

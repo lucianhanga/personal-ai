@@ -153,6 +153,24 @@ export function Agents({ token }: { token: string }): React.ReactElement {
     touch();
   }
 
+  function setAccuracyMode(value: string | null): void {
+    if (settings === null) return;
+    setSettings({ ...settings, agent_accuracy_mode: value as "standard" | "accurate" | null });
+    touch();
+  }
+
+  function setMaxIterations(value: number | null): void {
+    if (settings === null) return;
+    setSettings({ ...settings, agent_max_iterations: value });
+    touch();
+  }
+
+  function setTimeoutSeconds(value: number | null): void {
+    if (settings === null) return;
+    setSettings({ ...settings, agent_timeout_seconds: value });
+    touch();
+  }
+
   async function onSave(): Promise<void> {
     if (settings === null) return;
     // Only persist agents that actually deviate from the defaults (non-empty prompt, any tool
@@ -303,6 +321,52 @@ export function Agents({ token }: { token: string }): React.ReactElement {
               <option value="medium">Medium</option>
               <option value="high">High</option>
             </select>
+          </label>
+        </div>
+      </fieldset>
+
+      {/* Execution knobs that apply to every mode. Accuracy mode drives the verification ladder
+          depth (verifier vs critic) shown in the graph above; max-iterations and timeout bound a
+          single turn. Moved here from Preferences (#513) so all agent config lives in one panel. */}
+      <fieldset
+        data-testid="agents-execution"
+        style={{ border: "1px solid #eee", borderRadius: 6, margin: "0 0 0.5rem", padding: "0.5rem" }}
+      >
+        <legend style={{ fontSize: "0.8rem", color: "#555" }}>Execution</legend>
+        <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+          <label style={{ fontSize: "0.78rem" }}>
+            Accuracy mode{" "}
+            <select
+              data-testid="agents-accuracy-mode"
+              value={settings.agent_accuracy_mode ?? ""}
+              onChange={(e) => setAccuracyMode(e.target.value || null)}
+            >
+              <option value="">Inherit (server default)</option>
+              <option value="standard">standard</option>
+              <option value="accurate">accurate</option>
+            </select>
+          </label>
+          <label style={{ fontSize: "0.78rem" }}>
+            Max tool iterations{" "}
+            <input
+              data-testid="agents-max-iterations"
+              type="number"
+              placeholder="server default"
+              value={settings.agent_max_iterations ?? ""}
+              onChange={(e) => setMaxIterations(e.target.value === "" ? null : Number(e.target.value))}
+              style={{ width: "5rem" }}
+            />
+          </label>
+          <label style={{ fontSize: "0.78rem" }}>
+            Turn timeout (seconds){" "}
+            <input
+              data-testid="agents-timeout-seconds"
+              type="number"
+              placeholder="server default"
+              value={settings.agent_timeout_seconds ?? ""}
+              onChange={(e) => setTimeoutSeconds(e.target.value === "" ? null : Number(e.target.value))}
+              style={{ width: "6rem" }}
+            />
           </label>
         </div>
       </fieldset>

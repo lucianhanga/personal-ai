@@ -103,21 +103,6 @@ test("editing a field saves only the override", async () => {
   await waitFor(() => expect(screen.getByTestId("preferences-saved")).toBeInTheDocument());
 });
 
-test("the accuracy-mode enum is tri-state (default/standard/accurate)", async () => {
-  mockLoad();
-  const save = vi.spyOn(api, "saveSettings").mockResolvedValue({ ...EMPTY, agent_accuracy_mode: "accurate" });
-  render(<Preferences token="demo" />);
-  await waitFor(() => expect(screen.getByTestId("preferences-agent_accuracy_mode")).toBeInTheDocument());
-
-  fireEvent.change(screen.getByTestId("preferences-agent_accuracy_mode"), {
-    target: { value: "accurate" },
-  });
-  fireEvent.click(screen.getByTestId("preferences-save"));
-  await waitFor(() =>
-    expect(save).toHaveBeenCalledWith("demo", { ...EMPTY, agent_accuracy_mode: "accurate" }),
-  );
-});
-
 test("reset clears every override back to null", async () => {
   mockLoad({ ...EMPTY, ollama_host: "http://gpu:11434", agent_accuracy_mode: "accurate" });
   const save = vi.spyOn(api, "saveSettings").mockResolvedValue(EMPTY);

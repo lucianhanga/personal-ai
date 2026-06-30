@@ -325,3 +325,46 @@ test("changing default provider marks dirty and saves the updated model_provider
   const sentSettings = saveSettings.mock.calls[0][1] as api.TenantSettings;
   expect(sentSettings.model_provider).toBe("ollama");
 });
+
+test("Execution accuracy mode is tri-state and persists on save (moved from Preferences #513)", async () => {
+  mockLoad({ agent_accuracy_mode: null });
+  vi.spyOn(api, "fetchModels").mockResolvedValue({ defaultModel: "", models: [] });
+  const saveSettings = vi
+    .spyOn(api, "saveSettings")
+    .mockResolvedValue({ ...SETTINGS, agent_accuracy_mode: "accurate" });
+  vi.spyOn(api, "saveAgentConfig").mockResolvedValue({ agents: [] });
+
+  render(<Agents token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("agents-accuracy-mode")).toBeInTheDocument());
+
+  const select = screen.getByTestId("agents-accuracy-mode") as HTMLSelectElement;
+  expect(select.value).toBe(""); // null -> empty = "Inherit (server default)"
+
+  fireEvent.change(select, { target: { value: "accurate" } });
+  expect(screen.getByTestId("agents-dirty")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByTestId("agents-save"));
+  await waitFor(() => expect(saveSettings).toHaveBeenCalled());
+  const sentSettings = saveSettings.mock.calls[0][1] as api.TenantSettings;
+  expect(sentSettings.agent_accuracy_mode).toBe("accurate");
+});
+
+test("Execution max-iterations and timeout persist their numeric overrides on save", async () => {
+  mockLoad({ agent_max_iterations: null, agent_timeout_seconds: null });
+  vi.spyOn(api, "fetchModels").mockResolvedValue({ defaultModel: "", models: [] });
+  const saveSettings = vi.spyOn(api, "saveSettings").mockResolvedValue(SETTINGS);
+  vi.spyOn(api, "saveAgentConfig").mockResolvedValue({ agents: [] });
+
+  render(<Agents token="demo" />);
+  await waitFor(() => expect(screen.getByTestId("agents-max-iterations")).toBeInTheDocument());
+
+  fireEvent.change(screen.getByTestId("agents-max-iterations"), { target: { value: "12" } });
+  fireEvent.change(screen.getByTestId("agents-timeout-seconds"), { target: { value: "600" } });
+  expect(screen.getByTestId("agents-dirty")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByTestId("agents-save"));
+  await waitFor(() => expect(saveSettings).toHaveBeenCalled());
+  const sentSettings = saveSettings.mock.calls[0][1] as api.TenantSettings;
+  expect(sentSettings.agent_max_iterations).toBe(12);
+  expect(sentSettings.agent_timeout_seconds).toBe(600);
+});
