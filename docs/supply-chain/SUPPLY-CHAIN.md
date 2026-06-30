@@ -13,7 +13,7 @@
 > this file and the [Dependency Policy](../policies/DEPENDENCY-POLICY.md)). The generated
 > CycloneDX SBOM (`sbom/python.cdx.json`) is the machine-readable companion to this register.
 
-- **Last reviewed:** _date placeholder — update on next dependency change._
+- **Last reviewed:** 2026-06-30 (added `mermaid`, `dompurify`, `@types/dompurify` for chat diagram/image rendering).
 
 ---
 
@@ -85,6 +85,8 @@ workspace (`apps/ui`, `packages/contracts`).
 | **react-dom** (`^19`) | Meta | MIT | React DOM renderer. |
 | **react-markdown** (`^9`) | unified / remark collective | MIT | Renders assistant replies as Markdown. No raw HTML (no rehype-raw); default URL transform strips `javascript:`. |
 | **remark-gfm** (`^4`) | unified / remark collective | MIT | GFM tables, task lists, and strikethrough for react-markdown. |
+| **mermaid** (`^11.10.0`) | Mermaid (Knut Sveidqvist et al.) | MIT | Renders ```mermaid fenced code blocks in chat as diagrams. Lazy-loaded (its own Vite chunk; zero initial-load cost). Pinned `>=11.10.0` (CVE-2025-54880/54881 render-time XSS sinks fixed in 11.10.0); rendered with `securityLevel: 'strict'` and the SVG output sanitized via DOMPurify before injection. |
+| **dompurify** (`^3`) | Cure53 | Apache-2.0 / MPL-2.0 | Sanitizes the SVG produced by mermaid (strict SVG profile; forbids `foreignObject`/`script`/`iframe`/`a` and event-handler attributes) before it is injected into the DOM via `dangerouslySetInnerHTML`. |
 | **react-force-graph-2d** (`^1.29`) | Vasco Asturiano | MIT | 2D force-directed graph visualization in the UI (knowledge/graph view). |
 | **gpt-tokenizer** (`^3.4`) | dqbd | MIT | Pure-JS, in-browser BPE tokenizer (o200k_base) used UI-only to render an approximate token visualization of the assembled-context panel. No network, no weights. |
 | **zod** (`^3.23`) | Colin McDonnell | MIT | TS runtime validation in `packages/contracts`, aligned with the Python/JSON-Schema contracts. |
@@ -136,6 +138,7 @@ devDependencies (JS). Not shipped to end users, but part of build integrity.
 | **@testing-library/react, @testing-library/jest-dom** | Testing Library | MIT | React component tests. |
 | **jsdom** (`^25`) | jsdom | MIT | DOM environment for Vitest. |
 | **@types/react, @types/react-dom** (`^19`) | DefinitelyTyped | MIT | React type definitions (type-only). |
+| **@types/dompurify** (`^3`) | DefinitelyTyped | MIT | DOMPurify type definitions (type-only, dev). |
 
 **pnpm security overrides** (in `pnpm-workspace.yaml`): the transitive `esbuild` is forced to
 `>=0.28.1` (high-severity RCE advisory in `<0.28.1`, pulled via Vite) and `form-data` to
