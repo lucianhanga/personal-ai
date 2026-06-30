@@ -47,6 +47,27 @@ _LOOKUP_TOOL = RegisteredTool(
 )
 
 
+class _WriteTool:
+    name = "remember"
+
+    async def invoke(self, call: object) -> ToolResult:
+        return ToolResult(ok=True, output={"ok": True})
+
+
+# A memory-WRITE tool: judges must never be offered it (it mutates user state); only the researcher.
+_REMEMBER_TOOL = RegisteredTool(
+    ToolManifest(
+        name="remember",
+        version="1.0.0",
+        provenance=Provenance(maintainer="tests"),
+        description="remember",
+        risk=RiskLevel.LOW,
+        capabilities=["memory.write"],
+    ),
+    _WriteTool(),
+)
+
+
 def _gateway() -> ToolGateway:
     reg: Registry[RegisteredTool] = Registry("tool")
     return ToolGateway(reg, InProcessExecutor(), audit=AuditLog(), egress_check=lambda h: None)
@@ -334,6 +355,23 @@ def test_judge_tool_verify_skipped_when_judges_tool_is_disabled() -> None:
         tools=[_LOOKUP_TOOL],
         verifier_tools=True,
         disabled_tools={"critic": ["lookup"]},
+    )
+    assert "Independent tool verification" not in provider.critic_system
+
+
+def test_judge_tool_verify_strips_memory_write_tools_by_default() -> None:
+    # Judge safety default (#290 follow-up): the critic/verifier verify-only fact-check confirms or
+    # refutes a draft and must never mutate state, so memory.write tools are stripped from a judge
+    # by default. Here the ONLY tool is a write tool -> the judge has nothing to check with -> no
+    # tool verification block (whereas the researcher would still be offered it).
+    provider = _CapturingCritic()
+    _drain(
+        messages=[ChatMessage(Role.USER, "how much did I spend at Amazon?")],
+        provider=provider,
+        model="m",
+        gateway=_gateway(),
+        tools=[_REMEMBER_TOOL],
+        verifier_tools=True,
     )
     assert "Independent tool verification" not in provider.critic_system
 
