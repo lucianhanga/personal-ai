@@ -37,7 +37,9 @@ function safeUrlTransform(url: string): string {
 
 // SafeImage: allow inline images for data:image/, blob:, or same-origin/relative URLs directly.
 // Remote http(s) URLs are routed through LocalizedImage (server-side fetch, no direct browser egress)
-// when a token is available; without a token they fall through to the inert fallback span.
+// whenever the component is rendered inside a chat (a token prop is present — note local zero-login
+// passes an EMPTY string, which is still a valid auth context). A `Markdown` used WITHOUT a token
+// prop (e.g. standalone doc previews) leaves the token undefined and remote images fall back inert.
 // All other schemes (javascript:, data:text/html, etc.) render the inert fallback span.
 function SafeImage({
   src,
@@ -80,12 +82,13 @@ function SafeImage({
     );
   }
 
-  // Remote http(s): localize server-side when a token is present; fall back to inert span otherwise.
-  if ((src.startsWith("http://") || src.startsWith("https://")) && token) {
+  // Remote http(s): localize server-side whenever we have an auth context (token defined, incl. the
+  // empty-string local zero-login token). Only a `Markdown` rendered with NO token prop stays inert.
+  if ((src.startsWith("http://") || src.startsWith("https://")) && token !== undefined) {
     return <LocalizedImage url={src} alt={alt} token={token} />;
   }
 
-  // All other schemes (javascript:, data:text/html, etc.) or http(s) without a token: inert fallback.
+  // Other schemes (javascript:, data:text/html, …) or a tokenless standalone Markdown: inert fallback.
   return <span className="md-img-fallback">{alt ?? src}</span>;
 }
 

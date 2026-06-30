@@ -108,6 +108,15 @@ test("http image URL with token -> routes to LocalizedImage, no direct <img src>
   expect(stub?.getAttribute("data-url")).toBe("https://upload.wikimedia.org/image.png");
 });
 
+test("http image URL with empty-string token (local zero-login) -> routes to LocalizedImage", () => {
+  // Local zero-login passes token="" (a valid auth context, not "no token"); remote images must
+  // still localize rather than fall back inert. Regression guard for the truthy-token bug.
+  render(<Markdown content={"![alt](https://upload.wikimedia.org/image.png)"} token="" />);
+  const md = screen.getByTestId("markdown");
+  expect(md.querySelector("[data-testid='localized-image-stub']")).not.toBeNull();
+  expect(md.querySelector(".md-img-fallback")).toBeNull();
+});
+
 test("rejects javascript: image URL -> fallback span, no <img>", () => {
   render(<Markdown content={"![js](javascript:alert(1))"} />);
   const md = screen.getByTestId("markdown");
