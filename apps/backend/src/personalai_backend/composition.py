@@ -23,7 +23,7 @@ from personalai_core.security import (
 )
 
 if TYPE_CHECKING:
-    from personalai_tool_builtin import WebSearchProvider
+    from personalai_tool_builtin import ImageSearchProvider, WebSearchProvider
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +68,19 @@ def _build_web_search_provider(config: CoreConfig) -> WebSearchProvider:
     if provider != "duckduckgo":
         logger.warning("unknown web_search provider %r; falling back to DuckDuckGo.", provider)
     return DuckDuckGoSearch()
+
+
+def _build_image_search_provider(config: CoreConfig) -> ImageSearchProvider:
+    """Select the image_search backend from config, falling back to Wikimedia Commons (the
+    zero-setup, no-key default) when an unknown provider is named (logged, never crashes)."""
+    from personalai_tool_builtin import WikimediaCommonsImageSearch
+
+    provider = (config.image_search_provider or "wikimedia").strip().lower()
+    if provider != "wikimedia":
+        logger.warning(
+            "unknown image_search provider %r; falling back to Wikimedia Commons.", provider
+        )
+    return WikimediaCommonsImageSearch()
 
 
 def register_adapters(registries: Registries, config: CoreConfig) -> None:
@@ -132,7 +145,9 @@ def register_adapters(registries: Registries, config: CoreConfig) -> None:
         HTTP_FETCH_MANIFEST,
         Calculator,
         HttpFetch,
+        ImageSearch,
         WebSearch,
+        image_search_manifest,
         web_search_manifest,
     )
 
@@ -146,6 +161,18 @@ def register_adapters(registries: Registries, config: CoreConfig) -> None:
         RegisteredTool(
             web_search_manifest(search_provider.host),
             WebSearch(search_provider, max_results=config.web_search_max_results),
+        ),
+    )
+
+    # image_search: same pattern as web_search — build the manifest with the ACTIVE provider's
+    # egress host so the gateway enforces the allowlist against the host actually contacted. The
+    # returned image_url values are real, fetchable URLs the model could not construct itself.
+    image_provider = _build_image_search_provider(config)
+    registries.tools.register(
+        "image_search",
+        RegisteredTool(
+            image_search_manifest(image_provider.host),
+            ImageSearch(image_provider, max_results=config.image_search_max_results),
         ),
     )
 

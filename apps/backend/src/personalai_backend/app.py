@@ -880,15 +880,15 @@ _RICH_OUTPUT = (
     "any label containing special characters. Do not add a diagram when plain prose answers the "
     "question. "
     "You can also display an image inline with standard markdown image syntax — "
-    "![short alt text](URL) — when an image genuinely helps the answer (for example a portrait, "
-    "chart, photo, or figure the user asked about). Link directly to the image file itself (a URL "
-    "ending in .png, .jpg/.jpeg, .webp, or .gif), preferring stable, well-known public sources. "
-    "The app fetches and displays the image locally, asking the user to approve the source host "
-    "the first time — so just emit the image markdown directly; do NOT say you cannot display "
-    "images, "
-    "and do NOT ask for permission in prose. Never invent or guess a URL: if you are not confident "
-    "the image exists at that address, link to the page that contains it instead of using image "
-    "syntax."
+    "![short alt text](image_url) — when an image genuinely helps the answer (for example a "
+    "portrait, chart, photo, or figure the user asked about). To do this you MUST first get a real "
+    "image URL from the `image_search` tool; NEVER write, guess, or construct an image URL "
+    "yourself — hand-built URLs are almost always wrong and fail to load. Call `image_search` "
+    "with a concise query, pick the result that best matches what the user wants, and use its "
+    "`image_url` verbatim in the markdown. The app fetches and displays the image locally, asking "
+    "the user to approve the source the first time — so just emit the image markdown directly; do "
+    "NOT say you cannot display images, and do NOT ask for permission in prose. If `image_search` "
+    "returns no suitable result, say so plainly instead of inventing a URL."
 )
 
 
@@ -1858,12 +1858,14 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         # uses to resume. The checkpointer is bound to THIS request's tenant (RLS), so a run is only
         # ever resumable by its owner.
         sec = current_security.get()
-        gate_on = (
-            graph_enabled
-            and config.agent_human_gate
-            and app.state.tenant_db is not None
-            and sec is not None
-        )
+        # The answer gate and the network-egress gate (#377) are independent; each needs a DB-backed
+        # (tenant-scoped) checkpointer to interrupt. The answer gate is multi-agent-only (it sits in
+        # the graph after the critic); the egress gate works in EITHER mode now (single-agent runs
+        # through the minimal gated graph). Provision the checkpointer when EITHER is on.
+        db_ready = app.state.tenant_db is not None and sec is not None
+        human_gate_on = db_ready and graph_enabled and config.agent_human_gate
+        egress_gate_on = db_ready and config.agent_egress_gate
+        gate_on = human_gate_on or egress_gate_on
         run_id = uuid.uuid4().hex if gate_on else None
         checkpointer = (
             TenantCheckpointSaver(app.state.tenant_db, sec.tenant_id)
@@ -2141,6 +2143,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                             verifier_tools=config.agent_verifier_check,
                             context=_agent_context(req.conversation_id),
                             checkpointer=checkpointer,
+                            human_gate=human_gate_on,
+                            egress_gate=egress_gate_on,
                             thread_id=run_id,
                             runaway=config.runaway_config(),
                             sources=sources,
@@ -2447,7 +2451,12 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     grants=grants,
                     gateway=app.state.bootstrap.gateway,
                     max_iterations=config.agent_max_iterations,
-                    graph_enabled=True,
+                    # Rebuild the topology that was checkpointed: original mode (single vs multi) +
+                    # both gate flags, so resume re-enters the exact graph that suspended (#377). A
+                    # single-agent run resumes through its minimal gated graph.
+                    graph_enabled=eg_config.agent_mode == "multi",
+                    human_gate=eg_config.agent_human_gate,
+                    egress_gate=eg_config.agent_egress_gate,
                     context=_agent_context(persist_id),
                     checkpointer=checkpointer,
                     thread_id=run_id,
@@ -2551,7 +2560,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         # One-shot, non-streaming run with per-run overrides on a config COPY (never persisted) so a
         # benchmark/automation can sweep modes without mutating the tenant's saved settings (#313).
         base = await _effective_config()
-        overrides: dict[str, Any] = {"agent_human_gate": False}  # automated runs never suspend
+        # Automated runs never suspend at either gate (no client to approve/deny).
+        overrides: dict[str, Any] = {"agent_human_gate": False, "agent_egress_gate": False}
         if req.agent_mode is not None:
             overrides["agent_mode"] = req.agent_mode
         if req.max_iterations is not None:

@@ -98,12 +98,6 @@ export function Agents({ token }: { token: string }): React.ReactElement {
     touch();
   }
 
-  function setGate(on: boolean): void {
-    if (settings === null) return;
-    setSettings({ ...settings, agent_human_gate: on });
-    touch();
-  }
-
   function setVerifierCheck(on: boolean): void {
     if (settings === null) return;
     setSettings({ ...settings, agent_verifier_check: on });
@@ -132,24 +126,6 @@ export function Agents({ token }: { token: string }): React.ReactElement {
 
   function setAgentModel(agent: string, value: string | null): void {
     setDrafts((d) => ({ ...d, [agent]: { ...d[agent], model: value } }));
-    touch();
-  }
-
-  function setDefaultProvider(value: string | null): void {
-    if (settings === null) return;
-    setSettings({ ...settings, model_provider: value as "ollama" | "openai_compat" | null });
-    touch();
-  }
-
-  function setDefaultModel(value: string | null): void {
-    if (settings === null) return;
-    setSettings({ ...settings, default_model: value });
-    touch();
-  }
-
-  function setDefaultReasoning(value: string | null): void {
-    if (settings === null) return;
-    setSettings({ ...settings, default_reasoning: value as "off" | "low" | "medium" | "high" | null });
     touch();
   }
 
@@ -274,57 +250,6 @@ export function Agents({ token }: { token: string }): React.ReactElement {
         ))}
       </fieldset>
 
-      {/* Global defaults: provider, model, and reasoning level the backend applies when no per-turn override is set. */}
-      <fieldset
-        data-testid="agents-defaults"
-        style={{ border: "1px solid #eee", borderRadius: 6, margin: "0 0 0.5rem", padding: "0.5rem" }}
-      >
-        <legend style={{ fontSize: "0.8rem", color: "#555" }}>Defaults</legend>
-        <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
-          <label style={{ fontSize: "0.78rem" }}>
-            Provider{" "}
-            <select
-              data-testid="agents-default-provider"
-              value={settings.model_provider ?? ""}
-              onChange={(e) => setDefaultProvider(e.target.value || null)}
-            >
-              <option value="">Use server default</option>
-              <option value="ollama">ollama</option>
-              <option value="openai_compat">openai_compat</option>
-            </select>
-          </label>
-          <label style={{ fontSize: "0.78rem" }}>
-            Default model{" "}
-            <select
-              data-testid="agents-default-model"
-              value={settings.default_model ?? ""}
-              onChange={(e) => setDefaultModel(e.target.value || null)}
-            >
-              <option value="">Use server default</option>
-              {availableModels.map((m) => (
-                <option key={m.name} value={m.name}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label style={{ fontSize: "0.78rem" }}>
-            Default reasoning{" "}
-            <select
-              data-testid="agents-default-reasoning"
-              value={settings.default_reasoning ?? ""}
-              onChange={(e) => setDefaultReasoning(e.target.value || null)}
-            >
-              <option value="">Inherit (server default)</option>
-              <option value="off">Off</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
-          </label>
-        </div>
-      </fieldset>
-
       {/* Execution knobs that apply to every mode. Accuracy mode drives the verification ladder
           depth (verifier vs critic) shown in the graph above; max-iterations and timeout bound a
           single turn. Moved here from Preferences (#513) so all agent config lives in one panel. */}
@@ -373,17 +298,10 @@ export function Agents({ token }: { token: string }): React.ReactElement {
 
       {effectiveMode === "multi" && (
         <>
-          <label style={{ display: "flex", gap: "0.5rem", alignItems: "center", padding: "0.25rem 0" }}>
-            <input
-              data-testid="agents-human-gate"
-              type="checkbox"
-              checked={settings.agent_human_gate ?? false}
-              onChange={(e) => setGate(e.target.checked)}
-            />
-            <span style={{ fontSize: "0.85rem" }}>
-              Human approval gate — pause each turn for approve/reject before finalizing
-            </span>
-          </label>
+          <p data-testid="agents-approvals-moved" style={{ fontSize: "0.78rem", color: "#777", margin: "0.25rem 0" }}>
+            Approval gates (per-turn answer approval, network-egress approval) now live in{" "}
+            <strong>Settings → Security</strong>.
+          </p>
 
           <label style={{ display: "flex", gap: "0.5rem", alignItems: "center", padding: "0.25rem 0" }}>
             <input

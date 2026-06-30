@@ -2,6 +2,13 @@
 
 from personalai_tool_builtin.calculator import CALCULATOR_MANIFEST, Calculator
 from personalai_tool_builtin.http_fetch import HTTP_FETCH_MANIFEST, EgressAllowed, HttpFetch
+from personalai_tool_builtin.image_search import (
+    IMAGE_SEARCH_MANIFEST,
+    ImageSearch,
+    ImageSearchProvider,
+    WikimediaCommonsImageSearch,
+    image_search_manifest,
+)
 from personalai_tool_builtin.memory_edit import (
     FORGET_MEMORY_MANIFEST,
     UPDATE_MEMORY_MANIFEST,
@@ -24,6 +31,7 @@ __all__ = [
     "CALCULATOR_MANIFEST",
     "FORGET_MEMORY_MANIFEST",
     "HTTP_FETCH_MANIFEST",
+    "IMAGE_SEARCH_MANIFEST",
     "REMEMBER_MANIFEST",
     "UPDATE_MEMORY_MANIFEST",
     "WEB_SEARCH_MANIFEST",
@@ -33,6 +41,8 @@ __all__ = [
     "EmbedText",
     "ForgetMemoryTool",
     "HttpFetch",
+    "ImageSearch",
+    "ImageSearchProvider",
     "RememberTool",
     "SaveMemory",
     "SearxngSearch",
@@ -40,5 +50,7 @@ __all__ = [
     "UpdateMemoryTool",
     "WebSearch",
     "WebSearchProvider",
+    "WikimediaCommonsImageSearch",
+    "image_search_manifest",
     "web_search_manifest",
 ]

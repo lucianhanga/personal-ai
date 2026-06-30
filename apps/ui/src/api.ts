@@ -793,13 +793,18 @@ export interface TenantSettings {
   embed_provider: "ollama" | "openai_compat" | null;
   embed_model: string | null;
   openai_base_url: string | null;
+  ner_model: string | null;
+  rerank_enabled: boolean | null;
+  rerank_model: string | null;
   agent_mode: "single" | "multi" | "custom" | null;
   /** @deprecated Backend-only legacy flag, superseded by `agent_mode` (#290). Still echoed by the
    * settings API, but no UI component reads or writes it — do not surface it in any panel (#513). */
   agent_graph_enabled: boolean | null;
   agent_human_gate: boolean | null;
+  agent_egress_gate: boolean | null;
   agent_accuracy_mode: "standard" | "accurate" | null;
   agent_verifier_check: boolean | null;
+  tool_approval_required: boolean | null;
   agent_max_iterations: number | null;
   agent_timeout_seconds: number | null;
   memory_enabled: boolean | null;

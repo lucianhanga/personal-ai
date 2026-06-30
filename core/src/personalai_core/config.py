@@ -53,8 +53,10 @@ _ENV_FIELDS = {
     "AGENT_MODE": "agent_mode",
     "AGENT_GRAPH_ENABLED": "agent_graph_enabled",
     "AGENT_HUMAN_GATE": "agent_human_gate",
+    "AGENT_EGRESS_GATE": "agent_egress_gate",
     "AGENT_ACCURACY_MODE": "agent_accuracy_mode",
     "AGENT_VERIFIER_CHECK": "agent_verifier_check",
+    "TOOL_APPROVAL_REQUIRED": "tool_approval_required",
     "RETRIEVER": "retriever",
     "VECTOR_REPOSITORY": "vector_repository",
     "OBJECT_STORE": "object_store",
@@ -78,6 +80,8 @@ _ENV_FIELDS = {
     "WEB_SEARCH_BASE_URL": "web_search_base_url",
     "WEB_SEARCH_API_KEY": "web_search_api_key",  # pragma: allowlist secret  (env var name)
     "WEB_SEARCH_MAX_RESULTS": "web_search_max_results",
+    "IMAGE_SEARCH_PROVIDER": "image_search_provider",
+    "IMAGE_SEARCH_MAX_RESULTS": "image_search_max_results",
     "DATABASE_URL": "database_url",
     "DB_POOL_MAX_SIZE": "db_pool_max_size",
     "EMBED_PROVIDER": "embed_provider",
@@ -120,6 +124,7 @@ _INT_FIELDS = {
     "session_idle_seconds",
     "session_absolute_seconds",
     "web_search_max_results",
+    "image_search_max_results",
 }
 _FLOAT_FIELDS = {
     "ner_memory_fraction",
@@ -140,7 +145,9 @@ _BOOL_FIELDS = {
     "rich_output_enabled",
     "agent_graph_enabled",
     "agent_human_gate",
+    "agent_egress_gate",
     "agent_verifier_check",
+    "tool_approval_required",
     "transcribe_enabled",
     "tts_enabled",
     "runaway_guard_enabled",
@@ -258,12 +265,22 @@ class CoreConfig(StrictModel):
     # (after the critic) for approve/reject before finalizing. Requires the graph; default off so
     # the normal flow finalizes without a gate. The checkpoint is tenant-scoped (RLS) via TenantDb.
     agent_human_gate: bool = False
+    # Network-egress approval gate (#377), decoupled from the answer gate. With the graph enabled,
+    # suspend the turn when a tool's outbound call hits a non-allowlisted host and surface an
+    # allow/deny decision that auto-resumes the blocked call. Independent of the answer gate; either
+    # gate being on provisions the (tenant-scoped, RLS) checkpointer. Default off (degrades to the
+    # inline allow-on-deny + re-send behavior).
+    agent_egress_gate: bool = False
     agent_accuracy_mode: str = "standard"
     # Judge fact-check (#465): let the final judge do ONE bounded INDEPENDENT retrieval (re-query
     # RAG/KAG/memory) to fact-check the answer's claims, not just judge it against the researcher's
     # own sources. The verifier runs it in accurate mode; the critic runs it in standard mode (it is
     # the last judge there) -- exactly one lookup per turn. Fail-open + conservative. In Settings.
     agent_verifier_check: bool = True
+    # Tool-approval policy: when on, HIGH-risk tools require explicit per-turn approval before the
+    # gateway runs them (the chat composer's "approve tools" default follows this). Off by default,
+    # so high-risk tools run without a prompt (convenience). Security-sensitive setting.
+    tool_approval_required: bool = False
     retriever: str = "pgvector"
     vector_repository: str = "pgvector"
     object_store: str = "local"
@@ -369,6 +386,14 @@ class CoreConfig(StrictModel):
     )
     web_search_max_results: int = Field(
         default=5, description="Default number of web_search results (the tool caps it at 10)."
+    )
+    # Image search provider: the built-in image_search tool's backend. The model calls it to obtain
+    # real, fetchable image URLs instead of guessing them (a hand-built image URL is almost always
+    # wrong and never renders). "wikimedia" = Wikimedia Commons API, zero-setup, no key, egress
+    # commons.wikimedia.org (the default). An unknown provider falls back to wikimedia (logged).
+    image_search_provider: str = Field(default="wikimedia", description="wikimedia")
+    image_search_max_results: int = Field(
+        default=5, description="Default number of image_search results (the tool caps it at 10)."
     )
 
     def runaway_config(self) -> RunawayConfig:

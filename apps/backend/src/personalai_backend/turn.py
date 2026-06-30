@@ -20,7 +20,7 @@ from personalai_contracts.ports import (
     RetrievalSource,
     Role,
 )
-from personalai_core import RunawayConfig, run_agent, run_graph
+from personalai_core import AgentEvent, RunawayConfig, run_agent, run_graph
 
 # The single-agent loop has no agent persona, so without a nudge the model answers from "head" even
 # when a tool would be exact — tools end up enabled but unused (#318). Encourage tool use here; the
@@ -97,6 +97,8 @@ async def run_turn(
     verifier_tools: bool = False,
     context: AgentContext | None = None,
     checkpointer: Any | None = None,
+    human_gate: bool = True,
+    egress_gate: bool = True,
     thread_id: str | None = None,
     resume: Any | None = None,
     runaway: RunawayConfig | None = None,
@@ -118,8 +120,9 @@ async def run_turn(
     loop.
     """
     if use_tools:
-        agent_events = (
-            run_graph(
+        agent_events: AsyncIterator[AgentEvent]
+        if graph_enabled:
+            agent_events = run_graph(
                 messages=generation.messages,
                 provider=provider,
                 model=generation.model,
@@ -131,6 +134,8 @@ async def run_turn(
                 max_iterations=max_iterations,
                 context=context,
                 checkpointer=checkpointer,
+                human_gate=human_gate,
+                egress_gate=egress_gate,
                 thread_id=thread_id,
                 resume=resume,
                 prompts=agent_prompts,
@@ -144,8 +149,31 @@ async def run_turn(
                 query=retrieval_query,
                 verifier_tools=verifier_tools,
             )
-            if graph_enabled
-            else run_agent(
+        elif checkpointer is not None and egress_gate:
+            # Single-agent mode WITH the network-egress gate on (#377): drive run_agent through the
+            # minimal single-agent graph so a blocked host durably pauses for allow/deny and resumes
+            # the exact call -- the same UX as multi-agent, not the inline error+re-send degrade.
+            agent_events = run_graph(
+                messages=generation.messages,
+                provider=provider,
+                model=generation.model,
+                gateway=gateway,
+                tools=tools,
+                grants=grants,
+                approved=approve_tools,
+                think=generation.think,
+                max_iterations=max_iterations,
+                context=context,
+                checkpointer=checkpointer,
+                egress_gate=egress_gate,
+                single_agent=True,
+                single_agent_prompt=_SINGLE_AGENT_TOOL_PROMPT,
+                thread_id=thread_id,
+                resume=resume,
+                runaway=runaway,
+            )
+        else:
+            agent_events = run_agent(
                 # Prepend the tool-use nudge so the single-agent model actually calls tools (#318).
                 messages=[
                     ChatMessage(Role.SYSTEM, _SINGLE_AGENT_TOOL_PROMPT),
@@ -161,7 +189,6 @@ async def run_turn(
                 max_iterations=max_iterations,
                 runaway=runaway,
             )
-        )
         async for ev in agent_events:
             if ev.type == "reasoning":
                 yield TurnEvent("reasoning", text=ev.thinking or "")
