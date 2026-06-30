@@ -630,7 +630,7 @@ export function MessageList({
               defaultOpen={busy && i === lastIndex}
               onAllowHost={onAllowHost}
             />
-            <Markdown content={m.content} />
+            <Markdown content={m.content} streaming={busy && i === lastIndex} />
             {citations[i]?.length ? (
               <div data-testid="citations" style={{ fontSize: "0.75rem", color: "#555" }}>
                 Sources:{" "}
