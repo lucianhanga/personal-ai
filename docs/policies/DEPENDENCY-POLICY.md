@@ -33,8 +33,9 @@ Each adopted dependency is recorded in
 
 ## 4. SBOM & scanning
 
-- Generate a **CycloneDX SBOM** on every build.
-- Run **vulnerability scanning** (Trivy/Grype, `pip-audit`, `npm audit`) in CI; block on
+- Generate a **CycloneDX SBOM** on every build. The SBOM currently covers **Python runtime
+  dependencies only** — JS/TS and Rust/Tauri are not yet included.
+- Run **vulnerability scanning** — `pip-audit` (Python) and `pnpm audit` (JS) — in CI; block on
   new critical/high findings.
 - The human-readable register and the machine SBOM must agree (drift check in CI).
 

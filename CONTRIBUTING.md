@@ -73,4 +73,3 @@ PersonalAI is hexagonal (ports & adapters + registries). Honor the **golden rule
 ## Issues & project tracking
 
 Work is tracked on the GitHub Project board. Use the issue templates (Task / Feature / Bug).
-Milestones map to the roadmap (M0, M1, …).

@@ -7,35 +7,40 @@ Start here:
   structured outputs, omni-capability, storage, security, UI/UX, browser extension, backend,
   deployment, stack, roadmap, risks, open questions, sources.
 - **[ADRs](./architecture/adr/)** — Architecture Decision Records.
+- **[Data extraction & enrichment pipeline](./architecture/extraction-pipeline.md)** — how documents
+  are parsed, chunked, embedded, and enriched into retrievable, citable knowledge.
+- **[Context assembly](./architecture/context-assembly.md)** — how context is built (first vs
+  follow-up questions).
 - **[Threat model](./architecture/THREAT-MODEL.md)** — trust boundaries and threats (v1).
 - **[Onboarding / dev guide](./ONBOARDING.md)** — how to work in this repo.
-- **[Local chat guide (M1)](./guides/local-chat.md)** — run streaming chat over local Ollama models.
-- **[Remote / frontier providers (M2)](./guides/remote-providers.md)** — opt into OpenAI-compatible
+- **[Local chat guide](./guides/local-chat.md)** — run streaming chat over local Ollama models.
+- **[Remote / frontier providers](./guides/remote-providers.md)** — opt into OpenAI-compatible
   providers (OpenAI/Azure/vLLM/...) with egress + secrets controls.
-- **[Files + RAG (M3)](./guides/files-and-rag.md)** — ingest documents, chat with citations, and
+- **[Files + RAG](./guides/files-and-rag.md)** — ingest documents, chat with citations, and
   persistent conversation history (PostgreSQL + pgvector).
 - **[Documents & folders (Documents v2)](./guides/documents-and-folders.md)** — continuously-synced
   local folders, on-device OCR for scanned PDFs, and the browsable knowledge graph of your entities.
-- **[Memory (M4)](./guides/memory.md)** — short-term per-chat summary + cross-chat long-term memory
+- **[Memory](./guides/memory.md)** — short-term per-chat summary + cross-chat long-term memory
   you can visualize, edit, and erase; incognito chats.
-- **[Tools (M5)](./guides/tools.md)** — the Tool/MCP gateway: permissions, egress allowlist,
+- **[Tools](./guides/tools.md)** — the Tool/MCP gateway: permissions, egress allowlist,
   schema-validated I/O, risk approval, audit; built-in calculator + http_fetch.
-- **[The agent loop (M6)](./guides/agent.md)** — autonomous tool use (calculator, web search) with
+- **[The agent loop](./guides/agent.md)** — autonomous tool use (calculator, web search) with
   streamed reasoning + answer, ordered per-message details, all through the gateway.
-- **[Using MCP servers (M7)](./guides/mcp.md)** — connect published MCP servers (e.g. Playwright)
+- **[Using MCP servers](./guides/mcp.md)** — connect published MCP servers (e.g. Playwright)
   via an `mcp.json`; their tools run through the gateway and the agent can use them.
-- **[Settings (M8.2)](./guides/settings.md)** — per-tenant preferences (models, agent mode, memory,
+- **[Settings](./guides/settings.md)** — per-tenant preferences (models, agent mode, memory,
   egress, timeout, embeddings) that overlay the boot config; the Settings view panels and the API.
 
 Reference & development:
 
+- **[Model suite](./reference/models.md)** — the layered model stack and what each model is for.
 - **[Contracts & ports reference](./reference/contracts-and-ports.md)** — every port, value object,
-  and reference fake (M0-2), plus the "how to add an adapter" seam workflow.
-- **[Structured-output schemas reference](./reference/structured-output-schemas.md)** — the M0-3
+  and reference fake, plus the "how to add an adapter" seam workflow.
+- **[Structured-output schemas reference](./reference/structured-output-schemas.md)** — the
   schema backbone: strict/versioned models, the five contracts, the schema registry, the canonical
   JSON Schema + drift test, and the TS/Zod bindings kept aligned by shared fixtures.
 - **[Dependency injection & registries](./reference/dependency-injection.md)** — registries,
-  config-driven selection, the composition root, and how to register an adapter (M0-4).
+  config-driven selection, the composition root, and how to register an adapter.
 - **[Backend API (loopback)](./reference/backend-api.md)** — running the backend, the versioned
   `/api/v1` endpoints, the chat SSE protocol, and the security posture (loopback, auth, origin
   allowlist, egress fail-closed).
@@ -44,9 +49,9 @@ Reference & development:
 - **[Toolchain & monorepo](./development/toolchain.md)** — uv + pnpm workspaces, Makefile targets,
   and CI jobs.
 - **[Releasing & signing](./development/releasing.md)** — Sigstore/cosign signing, SBOM attachment,
-  verification, and the reproducible-build note (M0-9).
-- **[Changelog](../CHANGELOG.md)** — versioning policy (pre-1.0 semver in `VERSION`; one MINOR per
-  milestone) and the per-release history. The HTTP API is versioned independently as `/api/v1`.
+  verification, and the reproducible-build note.
+- **[Changelog](../CHANGELOG.md)** — versioning policy (pre-1.0 semver in `VERSION`) and the
+  per-release history. The HTTP API is versioned independently as `/api/v1`.
 
 Policies & supply chain:
 

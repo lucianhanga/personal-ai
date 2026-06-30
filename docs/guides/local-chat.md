@@ -1,4 +1,4 @@
-# Local Chat (M1)
+# Local Chat
 
 Run PersonalAI as a local, streaming chat app over your own Ollama models — fully offline.
 
@@ -55,15 +55,15 @@ The UI reads `VITE_API_BASE` (default `http://127.0.0.1:8765`) and an optional `
 ```
 Browser SPA (React)  --SSE-->  /api/v1/chat  -->  ModelProvider (ollama)  -->  Ollama REST API
         |                          |                    ^
-   /api/v1/models  <-------------/             registered in the composition root (M0-4)
+   /api/v1/models  <-------------/             registered in the composition root
 ```
 
 - The SPA streams Server-Sent Events from `POST /api/v1/chat`; `GET /api/v1/models` populates the
   model selector with detected capabilities. See [backend API](../reference/backend-api.md).
-- The chat is **stateless** at M1 (the client sends the message history each turn); conversation
-  persistence arrives in **M3**.
+- Local chat itself is **stateless** (the client sends the message history each turn); persistent
+  conversation history is provided by the documents/RAG layer (PostgreSQL + pgvector).
 - The Ollama adapter is one implementation of the `ModelProvider` seam; a remote/OpenAI provider
-  plugs into the same seam — see [Remote / frontier providers](./remote-providers.md) (M2).
+  plugs into the same seam — see [Remote / frontier providers](./remote-providers.md).
 
 ## Verify against your real Ollama
 

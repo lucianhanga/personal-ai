@@ -4,15 +4,15 @@ PersonalAI's safety model rests on **structured outputs at every boundary**: fre
 the transport between models, agents, tools, and the UI — a schema-validated structure is
 ([ADR-0003](../architecture/adr/0003-structured-output-first.md), architecture report
 [§9](../architecture/PersonalAI-Architecture-Research.md#9-structured-output-architecture)).
-This document describes the schema backbone **as actually implemented today (M0-3)**: the model
-hierarchy, each contract and its wire shape, the versioned registry, the canonical JSON Schema
-artifacts, the TS/Zod bindings, and the versioning policy.
+This document describes the schema backbone: the model hierarchy, each contract and its wire
+shape, the versioned registry, the canonical JSON Schema artifacts, the TS/Zod bindings, and the
+versioning policy.
 
-> Status: M0-3 delivers the strict/versioned Pydantic models, the five built-in contracts, the
-> schema registry, the canonical JSON Schema export + drift test, and the TS/Zod bindings aligned
-> by shared fixtures. The **registries and dependency injection** that wire these into the running
-> FastAPI app — model-provider structured generation, the Tool/MCP gateway, the orchestrator —
-> arrive in **M0-4 and beyond**. Items marked *planned (Mx)* do not exist yet.
+The strict/versioned Pydantic models, the five built-in contracts, the schema registry, the
+canonical JSON Schema export + drift test, and the TS/Zod bindings aligned by shared fixtures all
+live in `contracts`. They are wired into the running FastAPI app — model-provider structured
+generation, the Tool/MCP gateway, the orchestrator — through the registries and dependency
+injection layer.
 
 ## Source of truth
 
@@ -99,7 +99,7 @@ JSON Schema is exported `by_alias=True`, so the canonical wire key is `from`, no
 ### ToolInvocation
 
 The validated request an agent emits to call a tool. It is checked and authorized by the Tool/MCP
-gateway before any execution (M4); it mirrors the `ToolCall` value object on the `ToolHandler` port
+gateway before any execution; it mirrors the `ToolCall` value object on the `ToolHandler` port
 (see [contracts-and-ports.md](./contracts-and-ports.md#toolhandler)).
 
 | Field | Type | Required | Notes |
@@ -210,9 +210,9 @@ never executes an unvalidated payload ([ADR-0003](../architecture/adr/0003-struc
 }
 ```
 
-> Note: the repair *loop* (re-ask, deterministic repair, give-up bound) is a consumer concern that
-> lands with the structured-generation wiring (M0-4+). M0-3 ships only the `RepairRequest`
-> contract, not a runner that drives it.
+> Note: `RepairRequest` is the contract; the repair *loop* (re-ask, deterministic repair, give-up
+> bound) is a consumer concern driven by the structured-generation layer in
+> `core/src/personalai_core/structured.py`.
 
 ## The schema registry
 
@@ -367,13 +367,14 @@ schema** — adding or evolving a schema is the normal, contained way the system
 - Editing a model and forgetting `make schemas`; the drift test then fails in CI.
 - Treating an empty `egress` or unset `risk` on a `ToolManifest` as "no opinion" — they mean
   "deny egress" and "HIGH risk" respectively.
-- Assuming the repair loop exists. M0-3 ships the `RepairRequest` *contract*; the runner is later.
+- Confusing the `RepairRequest` *contract* (in `contracts`) with the repair-loop *runner* that
+  drives it (in `core/src/personalai_core/structured.py`).
 
 ## Related
 
 - [ADR-0003 — structured-output-first](../architecture/adr/0003-structured-output-first.md)
 - [ADR-0004 — tool/MCP gateway + sandbox](../architecture/adr/0004-tool-mcp-gateway-sandbox.md)
-- [Contracts & ports reference](./contracts-and-ports.md) — the M0-2 ports these schemas pair with.
+- [Contracts & ports reference](./contracts-and-ports.md) — the ports these schemas pair with.
 - [Coding standards & conventions](../development/coding-standards.md) — structured-output-first rules.
 - [Toolchain & monorepo](../development/toolchain.md) — `make schemas`, `make js-test`, CI jobs.
 - [Architecture report §9 — structured output architecture](../architecture/PersonalAI-Architecture-Research.md#9-structured-output-architecture)
@@ -381,10 +382,10 @@ schema** — adding or evolving a schema is the normal, contained way the system
 
 ## Last updated notes
 
-- 2026-06-05: Initial reference for the M0-3 schema backbone (strict/versioned models, five
+- 2026-06-05: Initial reference for the schema backbone (strict/versioned models, five
   built-in contracts, registry, JSON Schema export + drift test, TS/Zod bindings, shared fixtures).
-  Registries/DI that consume these (structured generation, gateway, orchestrator) are M0-4+ and
-  referenced as upcoming, not documented as existing. Known binding gap: `ToolManifest` and
-  `RepairRequest` are not yet exported as Zod schemas.
+  The registries/DI that consume these (structured generation, gateway, orchestrator) are
+  documented separately. Known binding gap: `ToolManifest` and `RepairRequest` are not yet
+  exported as Zod schemas.
 </content>
 </invoke>

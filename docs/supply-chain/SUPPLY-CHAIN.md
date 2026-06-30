@@ -1,161 +1,176 @@
 # Supply-Chain & Provenance Register
 
-> **Living document.** This is the authoritative inventory of every third-party component
-> PersonalAI depends on (or plans to adopt), with its **creator/maintainer, license, maturity,
-> security considerations, reason for inclusion, and safer alternatives**.
+> **What this is.** The authoritative inventory of every third-party component PersonalAI
+> **actually depends on today** — what is declared in a manifest/lockfile or wired into CI.
+> For each component it records the maintainer, license, and what it is used for.
 >
-> **Maintenance rule:** This file MUST be updated in the **same pull request** that adds,
-> removes, upgrades, or changes the status of any dependency. See
-> [Dependency Policy](../policies/DEPENDENCY-POLICY.md). A generated SBOM (CycloneDX) is the
-> machine-readable companion to this human-readable register.
+> **Scope rule:** this register lists **adopted** components only. Roads not taken
+> (evaluated, planned, or rejected alternatives) are out of scope and live in ADRs or the
+> architecture research, not here.
+>
+> **Maintenance rule:** this file MUST be updated in the **same pull request** that adds,
+> removes, or upgrades any dependency. CI enforces this with a drift check (see the end of
+> this file and the [Dependency Policy](../policies/DEPENDENCY-POLICY.md)). The generated
+> CycloneDX SBOM (`sbom/python.cdx.json`) is the machine-readable companion to this register.
 
-- **Last reviewed:** 2026-06-29 (v0.9.0 release: **version-field bump only** — `VERSION`, `personalai-backend` (`__version__` + pyproject), `personalai-tool-mcp` pyproject, and `apps/ui` `package.json` moved `0.8.3` -> `0.9.0`, and `uv.lock` re-resolved so the editable workspace-member entries read `0.9.0`. **No dependency added, removed, upgraded, or re-resolved** — only the workspace-member version strings changed. Flagged solely because the drift check sees the manifests / `uv.lock` in the diff.)
-- **Earlier:** 2026-06-26 (#456: added **`watchdog`** (`>=4.0`, Apache-2.0, resolved 6.0.0) as a direct dep of **`personalai-backend`** — the cross-platform filesystem watcher for Settings->Documents folder sync. Pure-Python, no native build; bundled native bindings (FSEvents/inotify/ReadDirectoryChangesW) with a polling fallback. Trust posture: it only **observes** user-granted folder roots; the sync worker that consumes its events is **local-provider-only and fail-closed** (no egress — the interactive egress-approval gate can't mediate a headless background task), watched roots are an explicit user allowlist, and every file is containment-checked (symlink-escape blocked). See §4 row. `pip-audit` clean.)
-- **Earlier:** 2026-06-25 (#450: added OCR for scanned / image-only PDFs to `personalai-modality-files` — two new **direct** deps: **`rapidocr-onnxruntime`** (`>=1.2`, Apache-2.0, RapidAI — PaddleOCR models via ONNX Runtime) and **`pypdfium2`** (`>=4.0`, Apache-2.0/BSD-3-Clause — PDF page rasterizer). When `pypdf` extracts no text layer (a scan), `parse_document` renders pages and OCRs them, fully **on-device/offline** (models ship in the wheel; no egress, no key). **PyMuPDF was rejected** as the rasterizer because it is **AGPL-3.0**; pypdfium2 (PDFium binding) is permissive. `onnxruntime` was **already** in the tree (faster-whisper VAD), so no new heavy transitive entered. OCR is gated/optional (graceful degrade to the "no text found" state if deps absent). See §4 rows. `pip-audit` clean, full suite green.)
-- **Earlier:** 2026-06-25 (#420 Phase 0 PR2 / #434: promoted **`langchain-core`** from a transitive dep (it arrived with LangGraph, M8) to a **pinned DIRECT** dependency of **`personalai-backend`** (`langchain-core>=1.4,<2`; resolved at **1.4.6**, unchanged). Used ONLY for the RAG retriever/embeddings adapter interfaces (`BaseRetriever`, `Embeddings`, `Document`) behind our seams — the hybrid dense+lexical RRF query, RLS, scope, and citations stay on our `VectorRepository`/`ModelProvider` seams. **No other LangChain package was added** — `langchain` (meta), `langchain-community`, `langchain-postgres` (PGVector), and `langchain-ollama` were **considered and rejected** (see §2 row + alternatives). Security: CVE-2025-68664 ("LangGrinch", CVSS 9.3, serialization-injection via `load()/loads()`) is **patched in our >=1.2.5 line (we run 1.4.6)**; we never call LangChain `load()/loads()` on untrusted/LLM-influenced data, and LangSmith tracing (transitive `langsmith`) is **force-disabled at startup** because the in-process egress guard does not contain langsmith's own client. **No new transitive packages** entered the tree (lockfile re-resolved with only the new direct-dependency edge). SBOM regenerated; `pip-audit` clean.)
-- **Earlier:** 2026-06-24 (#391: added **`gpt-tokenizer`** (MIT, dqbd) to **`apps/ui`** — a pure-JS, in-**browser** BPE tokenizer (o200k_base encoding). Used UI-only to render an **approximate, GPT-style** token visualization of the "Context assembled" panel (show the actual token pieces, not just counts). **No runtime/backend dependency, no network, no model weights** — it ships the encoding tables as data. The honest "approx" label is shown because it won't exactly match the local qwen tokenizer. Affects `apps/ui/package.json` + `pnpm-lock.yaml` only.)
-- **Earlier:** 2026-06-24 (#393/#397: **`uv.lock` sync only** — regenerated the lockfile so the editable `personalai-backend` / `personalai-tool-mcp` entries read `0.8.3` (the #386 version bump didn't re-lock). **No dependency added, removed, upgraded, or re-resolved** — only the two workspace-member version strings changed. Flagged solely because the drift check sees `uv.lock` in the diff.)
-- **Earlier:** 2026-06-24 (v0.8.3 release, #386: **version-field bump only** — `VERSION`, `personalai-backend` (`__version__` + pyproject), `personalai-tool-mcp` pyproject, and `apps/ui` `package.json` moved `0.7.0`/`0.0.0` -> `0.8.3`. **No dependency added, removed, or upgraded**; no change to `uv.lock` / `pnpm-lock.yaml` resolution. This entry exists only because the drift check flags any manifest edit, including a self-version bump.)
-- **Earlier:** 2026-06-22 (M-Bench Phase 1, #313: added a new **dev-only** workspace member `personalai-benchmarks` (the benchmark harness). It declares `httpx`, `pyyaml`, and `pydantic` — all **already present** in the lockfile (httpx via the backend/clients, pyyaml transitively, pydantic core-wide), so **no new third-party dependency** enters the supply chain. The package imports no `personalai-*` package (it drives the backend over HTTP), so it is outside the hexagonal import graph and excluded from coverage `source` (consistent with `whisper_local`). No runtime/app dependency change.)
-- **Earlier:** 2026-06-21 (M9.2c: **faster-whisper** (MIT, SYSTRAN) promoted `planned` -> **adopted** as a new workspace package `personalai-provider-whisper-local` (`faster-whisper>=1.1`) — in-process, zero-setup local STT (CTranslate2), multilingual incl. Romanian, default `large-v3-turbo`. It is the new default transcribe provider; `openai_compat` (whisper server / OpenAI) stays selectable. Transitive (declared in `uv.lock`): **ctranslate2** (MIT, OpenNMT — inference engine), **av**/PyAV (BSD-3-Clause — audio decode via ffmpeg), **onnxruntime** (MIT, Microsoft — VAD), **tokenizers** (Apache-2.0, Hugging Face), **huggingface-hub** (Apache-2.0 — one-time model download, then offline), **flatbuffers** (Apache-2.0), **coloredlogs**/**humanfriendly** (MIT). Trust boundary: model weights fetched once from Hugging Face then cached and run fully offline; no egress and no API key required for the local provider. `pip-audit` clean, full suite green.)
-- **Earlier:** 2026-06-21 (M8.2 / v0.7.0: added **python-dotenv** (BSD-3-Clause) as a direct dependency of `personalai-backend` — the server entrypoint loads a local `.env` on startup so documented `PERSONALAI_*` settings apply (`load_dotenv()` does not override the real environment); see the runtime table. Also upgraded transitive deps to clear `pip-audit` advisories: **cryptography** 48.0.0->49.0.0 (GHSA-537c-gmf6-5ccf), **starlette** 1.2.1->1.3.1 (CVE-2026-54282/54283), **langsmith** 0.8.18, **msgpack** 1.2.1, **pydantic-settings** 2.14.2, **pypdf** 6.13.3. JS: forced **form-data** `>=4.0.6` via a pnpm override (CRLF-injection advisory, high; transitive through jsdom/vitest, dev/test only). `pip-audit` + `pnpm audit --audit-level high` clean, full suite green.)
-- **Earlier:** 2026-06-12 (security #275: patched the **esbuild** advisory (high — RCE via `NPM_CONFIG_REGISTRY`, missing binary integrity verification; affects `<0.28.1`, pulled transitively via `apps/ui` -> vite). Forced the patched line with a pnpm override `esbuild@<0.28.1 -> >=0.28.1` in `pnpm-workspace.yaml`, avoiding a disruptive vite 6->8 (rolldown) major bump. esbuild 0.28 declines to down-transform modern syntax to vite's old es2020 default, so the UI build target is pinned to `es2022` (a Tauri/modern-Chromium app; tsconfig already targets ES2022). Verified: `pnpm audit --audit-level high` clean, UI build + Vitest + Playwright green.)
-- **Earlier:** 2026-06-12 (M8.1a: **langgraph-checkpoint** (MIT) promoted to a **direct** dependency of `personalai-storage-postgres` (`>=4.1,<5`) for the tenant-scoped LangGraph checkpointer `TenantCheckpointSaver` — it persists durable interrupt/resume state into RLS-isolated tables (migration 0014). Was already present transitively via LangGraph; now declared where used. No new transitive packages.)
-- **Earlier:** 2026-06-12 (ADR-0012 / M8: **LangGraph** promoted `planned` -> `adopted` as the agent orchestration engine — see §2. Added as a `personalai-core` dependency `langgraph>=1.2,<2`. Transitive (LangChain ecosystem, all MIT): **langchain-core**, **langgraph-checkpoint**, **langgraph-prebuilt**, **langgraph-sdk**, plus **xxhash** (BSD). Usage surface kept tiny: LangGraph is the engine only; model+tool calls stay on our `ModelProvider`/`ToolGateway` seams, so the LangChain model/tool layers are not used.)
-- **Earlier:** 2026-06-11 (IAM P1.2: added **argon2-cffi** for built-in password hashing — see the runtime table. Transitive: cffi/pycparser, already common.)
-- **Earlier:** 2026-06-09 (M7: optional **MarkItDown-on-Ollama MCP** helper script `tools/markitdown-ollama/server.py` declares `markitdown[all]` + `openai` via PEP 723 inline metadata — **not** in the workspace lockfile; resolved into an ephemeral env only when the user runs it via `uv run --script`.)
-- **Status legend:** `planned` (vetted, not yet in code) · `adopted` (in the build) · `evaluating` · `rejected`
-- **Provenance note:** Licenses below are grounded in public sources cited in the architecture
-  report. They MUST be re-verified against each project's `LICENSE` file at pin time (Phase 0).
+- **Last reviewed:** _date placeholder — update on next dependency change._
+
+---
+
+## How the stack is built
+
+| Aspect | Toolchain |
+|---|---|
+| Python | 3.12; package/workspace manager **uv** (`uv.lock` committed); build backend **hatchling** |
+| JS/TS | Node >= 20 (CI runs Node 22); package manager **pnpm@11.5.1** (`pnpm-lock.yaml` committed) |
+| Desktop shell | **Tauri 2** (Rust). See the reproducibility gap note in section 5 |
+
+The Python side is a uv workspace of modular packages (`contracts`, `core`, `apps/backend`,
+`providers/*`, `storage/postgres`, `modalities/files`, `tools/*`). The JS side is a pnpm
+workspace (`apps/ui`, `packages/contracts`).
 
 ---
 
 ## 1. Model runtimes & LLM serving
 
-| Component | Maintainer / Org | License | Maturity | Status | Reason | Security notes | Alternatives |
-|---|---|---|---|---|---|---|---|
-| **Ollama** | Ollama | MIT (OSS) | Mature, very active | **adopted** (M1) | Default local runtime; `OllamaProvider` adapter via REST API | Loopback by default (egress guard allows loopback); validate all outputs | llama.cpp, vLLM, LM Studio API |
-| **llama.cpp** | ggml-org / Georgi Gerganov | MIT | Mature (~109k★) | planned | Low-level inference, CPU/GGUF, max hardware reach | C/C++ surface; pin releases | Ollama (wraps it) |
-| **vLLM** | vLLM project (OSS) | Apache-2.0 | Mature, active | planned | High-throughput GPU serving; guided decoding | Linux+GPU; server hardening | HF TGI |
-| **LiteLLM** | BerriAI | MIT (Enterprise tier paid) | Mature, active | planned | Opt-in remote provider gateway + egress chokepoint | Handles provider API keys — keep in vault; egress logged | Direct provider SDKs |
-| **Hugging Face (Transformers / TGI)** | Hugging Face | Apache-2.0 | Mature | evaluating | Source of weights/embeddings; alt serving | Verify model cards/weights provenance | Direct downloads |
-| **LM Studio (OpenAI-compatible API)** | LM Studio | Proprietary app (OpenAI-compatible API) | Mature | evaluating | Desktop GUI users; optional endpoint only | App not open source — keep optional, never core | Ollama |
-| **OpenAI-compatible APIs** (OpenAI/Azure/Together/Groq/OpenRouter/vLLM) | various | Service (per provider) | Mature | **adopted** (M2, via `personalai_provider_openai`) | Remote/frontier models via one adapter (httpx); opt-in | API key in secrets (never logged); egress allowlisted; off by default | LiteLLM (broader matrix, later) |
+| Component | Maintainer | License | Used for |
+|---|---|---|---|
+| **Ollama** | Ollama | MIT | Default local model runtime; reached over its REST API by `personalai_provider_ollama` (via `httpx`). Loopback by default; the egress guard allows loopback. |
+| **OpenAI-compatible APIs** | various providers | Service (per provider) | Optional remote/frontier models through one adapter (`personalai_provider_openai`, via `httpx`). Opt-in, off by default; API keys kept in secrets and never logged; egress allowlisted. |
 
 ## 2. Backend, orchestration & schemas
 
-| Component | Maintainer / Org | License | Maturity | Status | Reason | Security notes | Alternatives |
-|---|---|---|---|---|---|---|---|
-| **LangGraph** | LangChain | MIT (OSS) | Mature, active | **adopted** (M8, ADR-0012) | Agent orchestration engine: typed graph, checkpointing, human-in-the-loop interrupt/resume. Pinned `>=1.2,<2` in `personalai-core` | Ecosystem churn — pinned + used as engine only (model/tool calls stay on our seams, not LangChain's); transitive: langchain-core, langgraph-checkpoint/-prebuilt/-sdk, xxhash | Microsoft Agent Framework, PydanticAI |
-| **langchain-core** | LangChain | MIT (OSS) | Mature, active | **adopted** (#420 PR2, ADR-0012) | RAG retriever/embeddings adapter interfaces (`BaseRetriever`, `Embeddings`, `Document`) for the hybrid (dense+lexical RRF, k=60) retriever in `personalai-backend`. Was transitive via LangGraph; promoted to a **direct** dep so the pin is explicit and a downgrade below the CVE fix is blocked. Pinned `>=1.4,<2` in `personalai-backend` (resolved 1.4.6) | **CVE-2025-68664 "LangGrinch" (CVSS 9.3)** — serialization-injection in `dumps()/dumpd()` → `load()/loads()`; affected `<0.3.81` and `1.0.0–1.2.4`, **patched in 0.3.81 / 1.2.5; we run 1.4.6 (safe)**. Controls: `pip-audit` gates regressions; we **never call LangChain `load()/loads()` on untrusted/LLM-influenced data** (chunks, metadata); storage/RLS/scope stay on our seam (no `langchain-postgres`), embeddings stay on our `ModelProvider` (no `langchain-ollama`). Transitive `langsmith` tracing is **opt-in and force-disabled at startup** (the egress guard does not contain langsmith's own httpx client) | **Rejected:** `langchain` (meta — pulls the whole stack, unneeded); `langchain-community` (loader SSRF/arbitrary-file-read/deserialization CVE surface — loading stays in our `parse_document` seam); `langchain-postgres`/PGVector (a parallel store with **no RLS** and no arbitrary scope predicate — we use a thin adapter over our RLS-scoped `vectors`); `langchain-ollama` (bypasses the `ModelProvider` seam) |
-| **Microsoft Agent Framework** | Microsoft | OSS (verify) | GA Q1 2026 | evaluating | Enterprise/.NET alt (AutoGen + Semantic Kernel successor) | Azure-leaning; verify license | LangGraph |
-| **Pydantic** | Pydantic (Samuel Colvin et al.) | MIT | Mature | **adopted** (M0-3) | Python runtime validation; JSON-Schema bridge; strict fail-closed contracts | Pin major; `extra="forbid"` everywhere | attrs |
-| **Zod** | Colin McDonnell | MIT | Mature | **adopted** (M0-3) | TS runtime validation; `.strict()` bindings shared with UI/extension | Pin major | io-ts, valibot |
-| **JSON Schema** | JSON Schema Org / IETF | Spec (open) | Standard | **adopted** (M0-3) | Canonical interchange contract (generated from Pydantic into `schemas/json/`) | — | — |
-| **FastAPI** | Sebastián Ramírez (tiangolo) | MIT | Mature, very active | **adopted** (M0-5) | Loopback API: async, typed, OpenAPI, Pydantic-native | Bind loopback; auth + origin allowlist; validate I/O | Litestar, Flask |
-| **Uvicorn** | Encode | BSD-3-Clause | Mature | **adopted** (M0-5) | ASGI server for the backend | Bind loopback by default | Hypercorn |
-| **Starlette** | Encode | BSD-3-Clause | Mature | **adopted** (M0-5, via FastAPI) | ASGI toolkit underlying FastAPI | — | — |
-| **python-multipart** | Andrew Dunham / Encode | Apache-2.0 | Mature | **adopted** (M3-2) | Multipart file uploads for FastAPI | Size-limited uploads | — |
-| **python-dotenv** | Saurabh Kumar / theskumar | BSD-3-Clause | Very mature | **adopted** (M8.2) | Load `PERSONALAI_*` from a local `.env` at backend startup so documented settings apply | `load_dotenv()` does NOT override the real environment (prod/CI unaffected); only the server entrypoint loads it; never commit `.env` (gitignored) | os.environ only |
-| **jsonschema** | Julian Berman | MIT | Very mature | **adopted** (M5-1) | Validate tool/MCP I/O against manifest JSON Schemas at the gateway | Core trust boundary for tool args/results | fastjsonschema |
-| **argon2-cffi** | Hynek Schlawack | MIT | Very mature | **adopted** (IAM P1.2) | argon2id password hashing for the built-in IdentityProvider (ADR-0010) | The password trust boundary; OWASP/RFC 9106 recommended KDF; PHC strings only, never plaintext | bcrypt (weaker), scrypt |
-| **mcp** (Python SDK) | Model Context Protocol (Anthropic) | MIT | Maturing | **adopted** (M7-1) | MCP client: connect to MCP servers (stdio/HTTP), list + call tools, wrapped behind the gateway | Third-party MCP servers are untrusted (manifest risk HIGH, sandboxed via executor tiers); the SDK itself only speaks the protocol | hand-rolled JSON-RPC client |
-| **markitdown[all]** | Microsoft | MIT | Maturing | **opt-in tooling** (M7) | Document→Markdown conversion in the optional `tools/markitdown-ollama` MCP server | NOT in the workspace lockfile; runs as a separate stdio subprocess via `uv run --script`; parses untrusted files; HIGH-risk behind the gateway | official `markitdown-mcp` (no local LLM) |
-| **openai** (SDK) | OpenAI | Apache-2.0 | Mature | **opt-in tooling** (M7) | OpenAI-compatible client used by the markitdown-ollama server to reach **Ollama** for image OCR | Same opt-in script; points at local Ollama (no remote calls); key is a dummy | httpx direct |
-| **httpx** | Encode | BSD-3-Clause | Mature | **adopted** (M0-5 test; M1 runtime) | FastAPI TestClient transport; runtime HTTP client for the Ollama provider | — | — |
+| Component | Maintainer | License | Used for |
+|---|---|---|---|
+| **LangGraph** (`langgraph>=1.2,<2`) | LangChain | MIT | Agent orchestration engine (typed graph, checkpointing, human-in-the-loop interrupt/resume) in `personalai-core`. Used as the engine only; model/tool calls stay on our own `ModelProvider`/`ToolGateway` seams. |
+| **langchain-core** (`>=1.4,<2`) | LangChain | MIT | RAG retriever/embeddings adapter interfaces (`BaseRetriever`, `Embeddings`, `Document`) in `personalai-backend`. Direct pin (resolved 1.4.6) so a downgrade below the CVE-2025-68664 fix is blocked. We never call LangChain `load()/loads()` on untrusted data; `langsmith` tracing is force-disabled at startup. |
+| **langgraph-checkpoint** (`>=4.1,<5`) | LangChain | MIT | LangGraph checkpointer backend (`TenantCheckpointSaver`) in `personalai-storage-postgres`; persists interrupt/resume state into RLS-isolated tables. |
+| **Pydantic** (`>=2.7`) | Pydantic (Samuel Colvin et al.) | MIT | Python runtime validation and the JSON-Schema bridge in `personalai-contracts`; strict, fail-closed contracts (`extra="forbid"`). |
+| **jsonschema** (`>=4.21`) | Julian Berman | MIT | Validates tool/MCP I/O against manifest JSON Schemas at the gateway in `personalai-core`. |
+| **FastAPI** (`>=0.111`) | Sebastián Ramírez (tiangolo) | MIT | The loopback HTTP API in `personalai-backend` (async, typed, OpenAPI, Pydantic-native). Pulls in Starlette (Encode, BSD-3-Clause). |
+| **Uvicorn** (`>=0.30`) | Encode | BSD-3-Clause | ASGI server for the backend; binds loopback by default. |
+| **python-multipart** (`>=0.0.9`) | Andrew Dunham / Encode | Apache-2.0 | Multipart file uploads for FastAPI. |
+| **argon2-cffi** (`>=23.1`) | Hynek Schlawack | MIT | argon2id password hashing for the built-in identity provider (ADR-0010). PHC strings only, never plaintext. |
+| **python-dotenv** (`>=1.0`) | theskumar (Saurabh Kumar) | BSD-3-Clause | Loads `PERSONALAI_*` from a local `.env` at backend startup. `load_dotenv()` does not override the real environment, so prod/CI are unaffected. |
+| **watchdog** (`>=4.0`) | gorakhargosh | Apache-2.0 | Cross-platform filesystem watcher (FSEvents/inotify/ReadDirectoryChangesW + polling fallback) for Settings -> Documents folder sync in `personalai-backend`. Observes user-allowlisted roots only; the sync worker is local-provider-only and fail-closed (no egress). |
+| **mcp** (Python SDK) (`>=1.0`) | Model Context Protocol (Anthropic) | MIT | MCP client in `personalai-tool-mcp`: connect to MCP servers (stdio/HTTP), list and call tools, wrapped behind the gateway. Third-party MCP servers themselves are treated as untrusted. |
+| **httpx** (`>=0.27`) | Encode | BSD-3-Clause | Runtime HTTP client shared by `providers/ollama`, `providers/openai_compat`, and `tools/builtin`; also the FastAPI TestClient transport. |
 
 ## 3. Storage & retrieval
 
-| Component | Maintainer / Org | License | Maturity | Status | Reason | Security notes | Alternatives |
-|---|---|---|---|---|---|---|---|
-| **PostgreSQL** | PostgreSQL Global Dev Group | PostgreSQL License | Very mature | **adopted** (M3) | Relational + vector spine; `pgvector/pgvector` Docker image for dev/CI | Dev uses trust auth (no creds in code); prod via PERSONALAI_DATABASE_URL secret | SQLite (desktop single-user) |
-| **pgvector** | pgvector (Andrew Kane) | PostgreSQL License | Mature (0.8.x) | **adopted** (M3) | Vectors in the same store (cosine/HNSW) | — | Qdrant |
-| **asyncpg** | MagicStack | Apache-2.0 | Mature | **adopted** (M3) | Async Postgres driver for the storage adapters | Parameterized queries only | psycopg3 |
-| **Qdrant** | Qdrant | Apache-2.0 | Mature | evaluating | Dedicated vector engine at scale (Rust) | Separate service to secure | Weaviate, Milvus, Chroma, LanceDB |
-| **Apache AGE** | Apache Software Foundation | Apache-2.0 | Maturing | evaluating | Optional KAG/graph in Postgres (single-store) | — | Neo4j |
-| **Neo4j** | Neo4j, Inc. | GPLv3 (Community) / commercial | Mature | evaluating | Dedicated graph store if KAG outgrows AGE | License (GPL) implications — review | Apache AGE |
-| **MinIO** | MinIO, Inc. | AGPLv3 / commercial | Mature | evaluating | S3-compatible object store if needed | AGPL implications — review | Local encrypted FS |
+| Component | Maintainer | License | Used for |
+|---|---|---|---|
+| **PostgreSQL** | PostgreSQL Global Dev Group | PostgreSQL License | Relational + vector spine. Dev/CI use the `pgvector/pgvector` Docker image; prod connects via the `PERSONALAI_DATABASE_URL` secret. (Service dependency, not a Python package.) |
+| **pgvector** | Andrew Kane | PostgreSQL License | Vector storage/search (cosine/HNSW) inside the same Postgres store. Ships in the dev/CI Docker image. |
+| **asyncpg** (`>=0.29`) | MagicStack | Apache-2.0 | Async Postgres driver behind the storage adapters in `personalai-storage-postgres`. Parameterized queries only. |
 
 ## 4. Ingestion, OCR & audio
 
-| Component | Maintainer / Org | License | Maturity | Status | Reason | Security notes | Alternatives |
-|---|---|---|---|---|---|---|---|
-| **Apache Tika** | Apache Software Foundation | Apache-2.0 | Very mature | planned | Broad file-type detection/parsing (~75 parsers) | Parse untrusted files in sandbox | Unstructured |
-| **IBM Docling** | IBM Research (DS4SD) | Open source (verify, MIT-family) | Maturing, active | planned | AI layout + table extraction for complex PDFs | Runs AI models; sandbox; resource limits | Unstructured, Tika |
-| **pypdf** | py-pdf | BSD-3-Clause | Mature | **adopted** (M3-2) | PDF text extraction (lightweight) | Parse untrusted files; text only | Docling, Tika |
-| **python-docx** | python-openxml | MIT | Mature | **adopted** (M3-2) | DOCX text extraction | Text only | Docling, Tika |
-| **watchdog** | wm / gorakhargosh | Apache-2.0 | Mature, active | **adopted** (#456) | Cross-platform filesystem watcher (FSEvents/inotify/ReadDirectoryChangesW + polling fallback) for Settings->Documents folder sync — observes user-granted folder roots for changes | Pure-Python, no native build. Only OBSERVES paths; the sync worker is local-provider-only + fail-closed (no egress). Watched roots are an explicit user allowlist; per-file containment re-checked (symlink-escape blocked) | periodic polling only (DirectorySnapshotDiff, no native events) |
-| **faster-whisper** | SYSTRAN | MIT | Mature | **adopted** (M9.2c) | In-process local STT (CTranslate2), ~4x faster than openai/whisper; default transcribe provider, multilingual incl. Romanian (`large-v3-turbo`) | Local; weights fetched once from HF then run offline; no egress/key needed | openai/whisper, WhisperLive, whisper.cpp server |
-| **OpenAI Whisper** | OpenAI | MIT | Mature | evaluating | Reference STT model/weights | — | faster-whisper |
-| **Piper** | rhasspy | MIT | Mature | planned | Fast local neural TTS | Local | Coqui-family |
-| **RapidOCR** (`rapidocr-onnxruntime`) | RapidAI | Apache-2.0 | Mature, active | **adopted** (#450) | OCR fallback for scanned / image-only PDFs (`modalities/files`): when pypdf finds no text layer, render pages + OCR. PaddleOCR models via ONNX Runtime; ~0.6s/page CPU, fully on-device | Bundles recognition models in the wheel — runs fully offline, no egress/key; parses untrusted page rasters (image in, text out — no active content). `onnxruntime` already in the tree (faster-whisper VAD), so no new heavy transitive | Tesseract (lower accuracy, needs system binary); PaddleOCR (PaddlePaddle framework); Apple Vision (macOS-only); a vision LLM (Qwen3-VL — paraphrases) |
-| **pypdfium2** | pypdfium2-team (PDFium by Google/Foundation) | Apache-2.0 / BSD-3-Clause | Mature | **adopted** (#450) | PDF page rasterization feeding RapidOCR (render page -> image at 200 DPI) | Pure-Python binding over the PDFium C library (same engine as Chromium); permissive license chosen over AGPL PyMuPDF; renders untrusted PDFs (no script execution) | PyMuPDF (AGPL — rejected), pdf2image+poppler (system binary), Wand/ImageMagick |
-| **Tesseract OCR** | (UTC/Google-originated, community) | Apache-2.0 | Mature | evaluated -> **superseded** | OCR fallback candidate; **not adopted** (#450 chose RapidOCR: higher accuracy + pure-pip, no system binary) | — | RapidOCR (adopted) |
+| Component | Maintainer | License | Used for |
+|---|---|---|---|
+| **pypdf** (`>=4.0`) | py-pdf | BSD-3-Clause | Lightweight PDF text extraction in `personalai-modality-files`. |
+| **python-docx** (`>=1.1`) | python-openxml | MIT | DOCX text extraction in `personalai-modality-files`. |
+| **rapidocr-onnxruntime** (`>=1.2`) | RapidAI | Apache-2.0 | OCR fallback for scanned / image-only PDFs (PaddleOCR models via ONNX Runtime). Runs fully on-device; models ship in the wheel, no egress or key. |
+| **pypdfium2** (`>=4.0`) | pypdfium2-team (PDFium by Google) | Apache-2.0 / BSD-3-Clause | Rasterizes PDF pages to images to feed RapidOCR. Permissive PDFium binding (the AGPL PyMuPDF alternative was avoided). |
+| **faster-whisper** (`>=1.1`) | SYSTRAN | MIT | In-process local speech-to-text (CTranslate2) in `personalai-provider-whisper-local`; default transcribe provider, multilingual. Weights fetched once from Hugging Face, then run offline. |
 
-## 5. Client / desktop / extension
+## 5. Client / desktop
 
-| Component | Maintainer / Org | License | Maturity | Status | Reason | Security notes | Alternatives |
-|---|---|---|---|---|---|---|---|
-| **Tauri** | Tauri Programme (Commons Conservancy) | MIT / Apache-2.0 | Mature (~70k★) | **adopted** (M0-6, scaffold) | Small, secure, capability-based desktop shell (ADR-0006) | Capability opt-in by default; built locally (no Rust in CI yet) | Electron |
-| **Electron** | OpenJS Foundation | MIT | Very mature | evaluating | Fallback if WebView issues block delivery | Larger attack surface (Node in renderer) | Tauri |
-| **React** | Meta | MIT | Very mature | **adopted** (M0-6) | SPA framework (ADR-0006) | Sanitize untrusted render; strict CSP | Svelte |
-| **react-dom** | Meta | MIT | Very mature | adopted (M0-6) | React DOM renderer | — | — |
-| **react-markdown** | unified / remark collective (Titus Wormer) | MIT | Mature | adopted (UX) | Render assistant replies as Markdown | No raw HTML (no rehype-raw); default urlTransform strips `javascript:` | markdown-it + sanitizer |
-| **remark-gfm** | unified / remark collective | MIT | Mature | adopted (UX) | GFM (tables, task lists, strikethrough) for react-markdown | — | — |
-| **Svelte** | Svelte (Rich Harris et al.) | MIT | Mature | rejected | Considered for the SPA; React chosen (ADR-0006) | — | React |
-| **@vitejs/plugin-react** | Vite team (VoidZero) | MIT | Mature | adopted (M0-6) | React support for Vite | — | — |
+| Component | Maintainer | License | Used for |
+|---|---|---|---|
+| **Tauri 2** | Tauri Programme (Commons Conservancy) | MIT / Apache-2.0 | Capability-based desktop shell (`apps/ui/src-tauri`, ADR-0006) wrapping the React SPA. |
+| **React** (`^19`) | Meta | MIT | UI framework for the SPA in `apps/ui`. |
+| **react-dom** (`^19`) | Meta | MIT | React DOM renderer. |
+| **react-markdown** (`^9`) | unified / remark collective | MIT | Renders assistant replies as Markdown. No raw HTML (no rehype-raw); default URL transform strips `javascript:`. |
+| **remark-gfm** (`^4`) | unified / remark collective | MIT | GFM tables, task lists, and strikethrough for react-markdown. |
+| **react-force-graph-2d** (`^1.29`) | Vasco Asturiano | MIT | 2D force-directed graph visualization in the UI (knowledge/graph view). |
+| **gpt-tokenizer** (`^3.4`) | dqbd | MIT | Pure-JS, in-browser BPE tokenizer (o200k_base) used UI-only to render an approximate token visualization of the assembled-context panel. No network, no weights. |
+| **zod** (`^3.23`) | Colin McDonnell | MIT | TS runtime validation in `packages/contracts`, aligned with the Python/JSON-Schema contracts. |
 
-## 6. Tooling: protocol, sandbox, security, observability
+> **Tauri 2 reproducibility gap:** the Rust shell (`apps/ui/src-tauri/Cargo.toml`) declares
+> `tauri`/`tauri-build` at major version `2`, but **no `Cargo.lock` is committed**, so the
+> Rust dependency graph is not pinned and the desktop build is not byte-reproducible. The
+> Tauri/Rust build is also not run in CI (see section 7). Pinning a `Cargo.lock` is the fix.
 
-| Component | Maintainer / Org | License | Maturity | Status | Reason | Security notes | Alternatives |
-|---|---|---|---|---|---|---|---|
-| **Model Context Protocol (MCP)** | Anthropic + community | Open standard (MIT SDKs) | Maturing, active | planned | Tool/MCP interop standard | Spec does NOT enforce security — implementor's job; CVE history (e.g. CVE-2025-6514) | Bespoke tool API |
-| **gVisor** | Google | Apache-2.0 | Mature | evaluating | Syscall-isolation sandbox tier | Linux-centric | Firecracker, containers |
-| **Firecracker** | AWS | Apache-2.0 | Mature | evaluating | microVM isolation for untrusted code | Linux/KVM | Kata, gVisor |
-| **Wasmtime** | Bytecode Alliance | Apache-2.0 | Mature | evaluating | WASM capability-sandboxed plugins | Capability-deny by default | WasmEdge |
-| **OpenTelemetry** | CNCF | Apache-2.0 | Mature | planned | Traces/metrics/logs | — | Vendor APMs |
-| **Langfuse** | Langfuse | MIT (OSS core) | Maturing | evaluating | Local agent-trace observability | Self-host | OTel only |
-| **CycloneDX / SPDX** | OWASP / Linux Foundation | Apache-2.0 / CC | Standard | planned | SBOM formats | — | — |
-| **Trivy** | Aqua Security | Apache-2.0 | Mature | planned | Vulnerability & SBOM scanning | — | Grype |
-| **Grype** | Anchore | Apache-2.0 | Mature | evaluating | Vulnerability scanning | — | Trivy |
-| **Sigstore / cosign** | OpenSSF / Linux Foundation | Apache-2.0 | Mature | **adopted** (M0-9) | Keyless release signing + CI signing smoke | Keyless via GitHub OIDC; verify on consume | GPG signing |
-| **cosign-installer (action)** | sigstore | Apache-2.0 | Mature | adopted (M0-9) | Installs cosign in CI | Pinned to major `@v3` | manual install |
+## 6. Release signing
 
-## 7. Build & development tooling (adopted)
+| Component | Maintainer | License | Used for |
+|---|---|---|---|
+| **Sigstore / cosign** | OpenSSF / Linux Foundation | Apache-2.0 | Signing the release artifacts and SBOM (keyless via GitHub OIDC in `release.yml`), plus an offline signing smoke test in CI. |
+| **cosign-installer** (action) | sigstore | Apache-2.0 | Installs cosign in CI; pinned to major `@v3`. |
 
-Dev/build/test toolchain in use from M0-1/M0-3. Not shipped to end users but part of the
-supply chain (build integrity).
+## 7. Build, test & supply-chain tooling (dev group)
 
-| Component | Maintainer / Org | License | Maturity | Status | Reason | Security notes | Alternatives |
-|---|---|---|---|---|---|---|---|
-| **uv** | Astral | Apache-2.0 / MIT | Mature, very active | adopted (M0-1) | Python workspace + reproducible installs | Lockfile committed | Poetry, pip-tools |
-| **Ruff** | Astral | MIT | Mature | adopted (M0-1) | Lint + format | — | flake8/black/isort |
-| **mypy** | Python / mypy team | MIT | Mature | adopted (M0-1) | Strict static typing | — | pyright |
-| **pytest / pytest-cov** | pytest-dev | MIT | Mature | adopted (M0-1) | Tests + coverage gate | — | unittest |
-| **import-linter** | David Seddon | BSD-2-Clause | Mature | adopted (M0-1) | Enforces hexagonal dependency direction | — | custom checks |
-| **hatchling** | PyPA (Hatch) | MIT | Mature | adopted (M0-1) | Build backend | — | setuptools, flit |
-| **pnpm** | pnpm (OpenJS-adjacent) | MIT | Mature | adopted (M0-1) | JS workspaces, strict isolation | Lockfile committed; approve build scripts explicitly | npm, yarn |
-| **TypeScript** | Microsoft | Apache-2.0 | Very mature | adopted (M0-3) | Typed TS contracts/UI | — | — |
-| **Vitest** | Vitest team (VoidZero) | MIT | Mature | adopted (M0-3, `>=4.1.0`) | TS unit tests | Pinned `>=4.1.0` to clear GHSA-5xrq-8626-4rwp (UI-server RCE) | Jest |
-| **Vite** | Vite team (VoidZero) | MIT | Mature | adopted (M0-8, via Vitest 4) | Build/test toolchain for Vitest 4 | — | — |
-| **esbuild** | Evan Wallace | MIT | Mature | adopted (M0-3, transitive via Vite/Vitest) | TS transform for tests | Build script approved in pnpm-workspace.yaml | — |
-| **pip-audit** | PyPA | Apache-2.0 | Mature | adopted (M0-8) | Python vulnerability scanning in CI | Queries PyPI advisory DB | Trivy, Grype |
-| **cyclonedx-bom** | CycloneDX (OWASP) | Apache-2.0 | Mature | adopted (M0-8) | Generates the CycloneDX SBOM | — | Syft |
-| **detect-secrets** | Yelp | Apache-2.0 | Mature | adopted (M0-10) | Secret scanning (pre-commit + CI) with a committed baseline | Baseline reviewed on change | gitleaks, trufflehog |
-| **pre-commit** | pre-commit (Anthony Sottile) | MIT | Mature | adopted (M0-10) | Local git hooks (secret scan, ruff) | Hooks call pinned uv tools | — |
-| **fpdf2** | PyFPDF / Lucas Cimon | LGPL-3.0 (lib) | Mature | adopted (M3-2, dev) | Generate sample PDFs in tests | Test-only; not shipped | reportlab |
-| **types-jsonschema** | python/typeshed | Apache-2.0 | Mature | adopted (M5-1, dev) | Type stubs for jsonschema | Test/type-only | — |
-| **Playwright** | Microsoft | Apache-2.0 | Mature | adopted (M0-6) | UI e2e (Chromium) | Browsers pinned via lockfile; installed in CI | Cypress |
-| **Testing Library (react, jest-dom)** | Testing Library (Kent C. Dodds et al.) | MIT | Mature | adopted (M0-6) | React component tests | — | — |
-| **jsdom** | jsdom | MIT | Mature | adopted (M0-6) | DOM env for Vitest | — | happy-dom |
-| **respx** | Jonas Lundberg | BSD-3-Clause | Mature | adopted (M1) | Mock httpx in tests (Ollama provider) | — | pytest-httpx |
+Declared in the root `pyproject.toml` `dev` group (Python) and `apps/ui` / `packages/contracts`
+devDependencies (JS). Not shipped to end users, but part of build integrity.
+
+**Python (uv `dev` group):**
+
+| Component | Maintainer | License | Used for |
+|---|---|---|---|
+| **uv** | Astral | Apache-2.0 / MIT | Python workspace resolver + installer; `uv.lock` committed. |
+| **Ruff** (`>=0.6`) | Astral | MIT | Lint + format (replaces black/isort/flake8). |
+| **mypy** (`>=1.11`) | mypy team | MIT | Strict static typing. |
+| **pytest / pytest-cov** (`>=8.2` / `>=5.0`) | pytest-dev | MIT | Tests + coverage gate. |
+| **import-linter** (`>=2.0`) | David Seddon | BSD-2-Clause | Enforces the hexagonal dependency direction. |
+| **hatchling** | PyPA (Hatch) | MIT | Build backend for the Python packages. |
+| **pip-audit** (`>=2.7`) | PyPA | Apache-2.0 | Python vulnerability scanning in CI (PyPI advisory DB). |
+| **cyclonedx-bom** (`>=4.0`) | CycloneDX (OWASP) | Apache-2.0 | Generates the CycloneDX SBOM (`cyclonedx-py requirements`). |
+| **detect-secrets** (`>=1.5`) | Yelp | Apache-2.0 | Secret scanning (pre-commit + CI) against a committed baseline. |
+| **pre-commit** (`>=3.7`) | Anthony Sottile | MIT | Local git hooks (secret scan, ruff). |
+| **respx** (`>=0.21`) | Jonas Lundberg | BSD-3-Clause | Mocks httpx in tests. |
+| **fpdf2** (`>=2.7`) | Lucas Cimon (PyFPDF) | LGPL-3.0 | Generates sample PDFs in tests (test-only, not shipped). |
+| **types-jsonschema** (`>=4.21`) | python/typeshed | Apache-2.0 | Type stubs for jsonschema (type-only). |
+
+**JS/TS (pnpm devDependencies):**
+
+| Component | Maintainer | License | Used for |
+|---|---|---|---|
+| **TypeScript** (`^5.5`) | Microsoft | Apache-2.0 | Typed TS for the UI and contracts. |
+| **Vite** (`^6`) | VoidZero / Vite team | MIT | Build + dev server for the UI; test runner backend for Vitest. |
+| **Vitest** (`^4`) | VoidZero / Vitest team | MIT | TS unit tests. |
+| **@vitejs/plugin-react** (`^5`) | VoidZero / Vite team | MIT | React support for Vite. |
+| **@playwright/test** (`^1.48`) | Microsoft | Apache-2.0 | UI end-to-end tests (Chromium). |
+| **@testing-library/react, @testing-library/jest-dom** | Testing Library | MIT | React component tests. |
+| **jsdom** (`^25`) | jsdom | MIT | DOM environment for Vitest. |
+| **@types/react, @types/react-dom** (`^19`) | DefinitelyTyped | MIT | React type definitions (type-only). |
+
+**pnpm security overrides** (in `pnpm-workspace.yaml`): the transitive `esbuild` is forced to
+`>=0.28.1` (high-severity RCE advisory in `<0.28.1`, pulled via Vite) and `form-data` to
+`>=4.0.6` (CRLF-injection advisory, pulled via jsdom/Vitest, dev/test only).
 
 ---
 
-## 8. How this register is kept up to date
+## Supply-chain controls (what runs in CI)
 
-1. Any PR that touches dependencies updates this file **and** the generated SBOM in the same change.
-2. CI fails if a manifest changes but this register / SBOM does not (drift check — added at M0/M7).
-3. Each entry must keep: maintainer, license, maturity, status, reason, security notes, alternatives.
-4. License claims are re-verified from upstream `LICENSE` at pin time; uncertain ones are marked `(verify)`.
-5. Quarterly review of `evaluating` entries to promote, keep, or `reject` them.
+Exactly six controls are wired today, across `.github/workflows/ci.yml` and `release.yml`:
+
+1. **CycloneDX SBOM** — `scripts/generate_sbom.sh` runs
+   `uv export --no-dev --format requirements-txt --no-emit-workspace`, then
+   `cyclonedx-py requirements` into `sbom/python.cdx.json` (uploaded as a CI artifact).
+   **Covers Python runtime dependencies only.** JS/TS and Rust/Tauri are **not** in any SBOM
+   today — an honest gap.
+2. **pip-audit** — `uv run pip-audit --skip-editable`; Python vulnerability audit against the
+   PyPI advisory DB.
+3. **pnpm audit** — `pnpm audit --audit-level high`; JS vulnerability audit.
+4. **Register drift check** — `scripts/check_supply_chain_drift.sh` (PR only); **fails the PR**
+   if a manifest or lockfile changed without a corresponding edit to this register.
+5. **detect-secrets** — `scripts/scan_secrets.sh` against the committed `.secrets.baseline`;
+   secret scan.
+6. **cosign signing** — in `ci.yml`, a signing smoke test (`scripts/signing_smoke.sh`) that
+   signs and verifies a test artifact with an **offline ephemeral key** (`--tlog-upload=false`,
+   no Fulcio/Rekor); in `release.yml`, **keyless Sigstore signing** (GitHub OIDC) of `dist/*`
+   and the SBOM, with the signatures and certs attached to the release.
+
+**Not in CI:** there is **no** syft, Trivy, Grype, or SPDX SBOM/scanner, **no** OpenTelemetry,
+and **no** Rust/Tauri build. The SBOM is CycloneDX (Python-only) and vulnerability scanning is
+pip-audit (Python) plus pnpm audit (JS).
+
+---
+
+## How this register is maintained
+
+The register is kept honest by the **drift check** (control 4 above): any PR that edits a
+manifest (`pyproject.toml`, `package.json`) or lockfile (`uv.lock`, `pnpm-lock.yaml`) must edit
+this file in the same change, or CI fails. When a dependency is added, removed, or upgraded,
+update the relevant table here and regenerate the SBOM in the same PR.

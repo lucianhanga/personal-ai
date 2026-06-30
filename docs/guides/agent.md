@@ -3,11 +3,11 @@
 PersonalAI has two agent runtimes that share the same safety seams. Which one runs is set by the
 per-tenant **agent mode** (`agent_mode`), configured in the UI **Settings → Agents** panel:
 
-- **single** (M6, default) — the **single-agent loop**: with **Use tools** on, the model calls
+- **single** (default) — the **single-agent loop**: with **Use tools** on, the model calls
   tools, reads the results, reasons, and continues until a final answer — all streamed live.
-- **multi** (M8.1, ADR-0012) — the **multi-agent graph**: a LangGraph graph **planner → researcher
+- **multi** (ADR-0012) — the **multi-agent graph**: a LangGraph graph **planner → researcher
   → critic → finalize** with a **bounded reflection loop** and an optional **durable human approval
-  gate** before the answer is committed. See [Multi-agent graph (M8.1)](#multi-agent-graph-m81).
+  gate** before the answer is committed. See [Multi-agent graph](#multi-agent-graph).
 - **custom** — reserved for user-defined agents (future); behaves like the configured graph today.
 
 The legacy `agent_graph_enabled` boolean still works for env-based config and maps to
@@ -65,7 +65,7 @@ language the user used**.
   failing.
 - Tool output is **untrusted data**, never instructions.
 
-## Multi-agent graph (M8.1)
+## Multi-agent graph
 
 With `agent_mode = "multi"` (Settings → Agents, or `PERSONALAI_AGENT_MODE=multi`), a chat turn runs
 as a LangGraph graph instead of the single loop. The graph is defined in
@@ -88,8 +88,8 @@ START → planner → [gather → merge →] researcher → [egress_gate → res
   is kept in a distinct state key so a later researcher answer can't clobber it — the critic and
   verifier judge against it. With no sources these nodes aren't added and the topology is unchanged.
 - **researcher** — the single-agent loop (`run_agent`), informed by the plan and grounded on the
-  merged evidence; streams reasoning, answer, and tool steps exactly as the M6 loop does. **It is the
-  only agent that uses tools** in the loop sense.
+  merged evidence; streams reasoning, answer, and tool steps exactly as the single-agent loop does.
+  **It is the only agent that uses tools** in the loop sense.
 - **critic** — one model call reviewing the answer **against the retrieved sources as ground truth**;
   it begins with `OK`, `REVISE`, or `REPLAN` and adds a short explanation, then emits a `critique`
   step. The critique streams to the **reasoning pane only and never modifies the answer** — the
@@ -257,7 +257,7 @@ deployment default. The env vars below set those deployment defaults (all prefix
 | `PERSONALAI_AGENT_TIMEOUT_SECONDS` | 300 | whole-turn wall-clock cap (30–3600); the turn fails with a timeout on expiry |
 | `PERSONALAI_AGENT_GRAPH_ENABLED` | false | legacy flag; `true` maps to `agent_mode=multi` |
 | `PERSONALAI_AGENT_HUMAN_GATE` | false | with the graph + a DB: suspend each turn for approve/reject |
-| `PERSONALAI_AGENT_ACCURACY_MODE` | standard | `standard` / `accurate` — verification-ladder depth (M8.2) |
+| `PERSONALAI_AGENT_ACCURACY_MODE` | standard | `standard` / `accurate` — verification-ladder depth |
 | `PERSONALAI_AGENT_VERIFIER_CHECK` | true | arm the [judge fact-check](#judge-fact-check) (a bounded independent RAG/KAG/memory lookup + a verify-only tool pass) |
 
 ## Verify against a real model
@@ -267,7 +267,7 @@ PERSONALAI_OLLAMA_IT=1 uv run pytest apps/backend/tests/test_agent_integration.p
 ```
 (Opt-in; skipped in CI. Needs a local Ollama with a `tools`-capable model, e.g. qwen3.)
 
-## Verification ladder (M8.2)
+## Verification ladder
 
 The **accuracy mode** (`PERSONALAI_AGENT_ACCURACY_MODE`, or the per-tenant `agent_accuracy_mode`
 setting) controls how deeply the multi-agent graph verifies an answer:
@@ -307,6 +307,6 @@ judging against the researcher's evidence, so it never blocks finalizing.
 
 ## What's next
 
-Third-party **MCP servers** (M7) plug into the same gateway as additional tool sources — sandboxed
+Third-party **MCP servers** plug into the same gateway as additional tool sources — sandboxed
 (ADR-0007) — so "ask it to search / browse / act" extends to the whole MCP ecosystem in either
 runtime.

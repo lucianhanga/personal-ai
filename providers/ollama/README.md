@@ -14,14 +14,14 @@ never imports the core or other adapters (ADR-0001).
 Registered in the backend composition root under the name `ollama`. The default chat model and
 host are set in `CoreConfig` (`PERSONALAI_DEFAULT_MODEL`, `PERSONALAI_OLLAMA_HOST`).
 
-## Ollama 0.30 notes
+## Ollama notes
 
 Validated against Ollama 0.30.x. Cloud models (entries with `remote_host`, e.g. `*:cloud`) are
-reported as `local=False`; calling them logs a warning (Ollama proxies them off-machine) until
-explicit remote-provider routing lands in M2.
+reported as `local=False`; calling them logs a warning (Ollama proxies them off-machine). Opt-in
+remote/cloud generation is handled by the separate `openai_compat` provider.
 
-**Planned (need contract changes, deferred):**
-- **M2:** explicit remote/cloud routing; `think` string levels (`low`/`medium`/`high`) — `bool` works today.
-- **M4 (tools):** `tool_calls` / `tool_call_id` on `ChatMessage`; handle streaming tool-call chunks; wire a `tools` request field.
-- **M5 (vision):** `images` on `ChatMessage`. Note: `llama3.2-vision` is unsupported on 0.30 (`mllama`); use `qwen3-vl`.
-- **Optional:** `embed(dimensions=)` (Matryoshka); the `insert` (FIM) capability.
+Tool calling (a `tools` request field plus `tool_calls` parsing) and vision (`images` on
+`ChatMessage`) are both supported — for vision use `qwen3-vl` (`llama3.2-vision`/`mllama` is
+unsupported on 0.30).
+
+**Optional, not yet wired:** `embed(dimensions=)` (Matryoshka); the `insert` (FIM) capability.

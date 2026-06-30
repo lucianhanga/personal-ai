@@ -5,8 +5,8 @@ capability-tier leaderboard. It drives the backend over HTTP through the non-str
 `POST /api/v1/assistant/execute` endpoint, so it stays decoupled from the app internals (it imports
 no `personalai-*` package) and could even point at a remote deployment.
 
-Phase 1 is **local-only** (no frontier API keys). Phase 2 adds frontier-model adapters (Claude / GPT
-/ Gemini), a tool-equipped wrapper for them, and cost/latency-adjusted leaderboards.
+The **local-model** side needs no API keys. **Frontier-model** adapters (Claude / GPT / Gemini), a
+tool-equipped wrapper for them, and cost/latency-adjusted leaderboards run only when keys are present.
 
 ## Run it
 
@@ -57,7 +57,7 @@ Run it with `--env-file .env` so the spawned `compare` inherits the frontier API
 `PARTIAL` / "Partial run" in the output and both reports. Handy for long `--models groq,gemini,…`
 sweeps: stop once you've seen enough and still get a leaderboard of the results so far.
 
-## Phase 2: frontier comparison + LLM judge
+## Frontier comparison + LLM judge
 
 `compare` runs PersonalAI (across its modes) **and** each frontier model that has an API key (raw
 tier) over the same tasks, then writes one combined leaderboard grouped by capability tier.
@@ -99,15 +99,15 @@ Output: `results.json` (full per-run bundle + reproducibility metadata) and `lea
 - **Tasks** (`tasks/*.yaml`) — declarative: `id, category, capability_tier, input, expected|rubric,
   version, metadata`. Independent of any model. Grading: `expected` (programmatic; `metadata.match` =
   `includes` (default) | `exact` | `regex`) or `rubric: {type: model_graded, criteria: ...}` (LLM
-  judge — Phase 2). Beyond reasoning/tool-use/quality, `communication.yaml` covers everyday assistant
+  judge). Beyond reasoning/tool-use/quality, `communication.yaml` covers everyday assistant
   work — **tone reformulation** (business / casual / friendly), **email composition** (subject +
   body from a brief), and **email reply**; each rubric scores named per-dimension 1–5 anchors against
   a reference answer and explicitly rewards content over length to curb the judge's verbosity bias.
 - **Modes** (`modes.py`) — named override sets sent to `/assistant/execute`, each with a
-  `capability_tier`. Phase 1: `single_no_tools`, `single_tools_mcp`, `multi_tools_mcp`, plus
+  `capability_tier`: `single_no_tools`, `single_tools_mcp`, `multi_tools_mcp`, plus
   **memory-on** variants (`*_memory`).
 - **Adapters** (`adapters.py`) — `PersonalIAAdapter` calls the endpoint; the `SystemUnderTest`
-  protocol lets Phase 2 frontier adapters slot in unchanged.
+  protocol lets frontier adapters slot in unchanged.
 - **Scoring** (`scoring.py`) — `exact` / `includes` / `regex` now; `model_graded` (injected judge).
 - **Runner / report** — runs tasks × modes, records each result with reproducibility metadata (git
   commit, timestamp, platform), and renders a tier-grouped Markdown leaderboard + JSON.
@@ -124,7 +124,7 @@ axis: a memory-on mode gets a `…+memory` tier so it isn't blended with the mem
   `category`, a `capability_tier`, and either `expected` or a `rubric`.
 - **Add a mode**: add a `Mode(...)` in `modes.py` and register it in `ALL_MODES`. Use `with_memory(...)`
   for a memory-on variant.
-- **Add a provider/system** (Phase 2): implement the `SystemUnderTest` protocol (a `name` + a
+- **Add a provider/system**: implement the `SystemUnderTest` protocol (a `name` + a
   `run(messages, overrides) -> RunResult`) and pass it to `run_suite`.
 
 ## Reading the leaderboard
@@ -149,8 +149,8 @@ gap to it (e.g. `-0.20`). Below each tier table the HTML report draws a horizont
 mean score per system (artificialanalysis-style), so the spread is readable at a glance; the Markdown
 report uses a text bar for the same.
 
-### Raw-LLM vs assistant-mode (Phase 2)
+### Raw-LLM vs assistant-mode
 
-Phase 1 only benchmarks personalIA (assistant mode). Phase 2 adds raw-LLM adapters (frontier APIs
-with no tools/memory) under a `raw` tier and tool-equipped wrappers under the matching tool tiers, so
-the leaderboard can show "raw model" vs "full assistant" honestly, labelled by capability.
+Beyond assistant mode, raw-LLM adapters (frontier APIs with no tools/memory) run under a `raw` tier
+and tool-equipped wrappers under the matching tool tiers, so the leaderboard can show "raw model" vs
+"full assistant" honestly, labelled by capability.

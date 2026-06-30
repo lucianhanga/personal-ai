@@ -1,4 +1,4 @@
-# Remote / Frontier Providers (M2)
+# Remote / Frontier Providers
 
 PersonalAI is local-first, but you can **opt into** a remote OpenAI-compatible provider (OpenAI,
 Azure OpenAI, Together, Groq, OpenRouter, or a local vLLM/llama.cpp server). It plugs into the same

@@ -2,8 +2,7 @@
 
 Actionable rules for writing PersonalAI code so that changes stay modular, typed, validated, and
 testable. These reflect the **actual** tool configuration in `pyproject.toml`, `.importlinter`,
-and `.github/workflows/ci.yml`. Where a rule depends on something not yet built, it is marked
-*planned (Mx)*.
+and `.github/workflows/ci.yml`.
 
 ## Source of truth
 
@@ -35,8 +34,9 @@ A violation fails the build — it is not a style suggestion.
 Every boundary carries validatable data, not free text
 ([ADR-0003](../architecture/adr/0003-structured-output-first.md)):
 
-- JSON Schema is the canonical interchange; Pydantic (Python) authors/validates it. *(Schema
-  layer is M0-3 — until then, ports carry typed dataclasses and `json_schema` passthrough.)*
+- JSON Schema is the canonical interchange; Pydantic (Python) authors/validates it. Ports also
+  carry typed dataclasses and a `json_schema` passthrough at boundaries that don't yet need a
+  versioned contract.
 - Validate at **every** hop (model -> backend, tool -> backend, backend -> UI).
 - On invalid output: bounded repair retry -> deterministic repair if safe -> **fail closed**.
 - Never execute an unvalidated tool call. `ToolResult` is fail-closed (`ok=False` on error).
@@ -64,8 +64,8 @@ Every boundary carries validatable data, not free text
   `field(default_factory=dict)` for mutable defaults.
 - Enums are `enum.StrEnum` (e.g. `Role`, `ModalityKind`) so values serialize as plain strings and
   compare to strings directly.
-- Keep ports minimal and OpenAI-compatible where applicable; omit speculative methods (streaming
-  was deliberately left out until M1).
+- Keep ports minimal and OpenAI-compatible where applicable; omit speculative methods — add a
+  method only when an adapter needs it.
 - Full inventory: [contracts-and-ports.md](../reference/contracts-and-ports.md).
 
 ## 5. Async conventions
@@ -106,8 +106,8 @@ Every boundary carries validatable data, not free text
   `--import-mode=importlib` means tests resolve packages from the installed/`src` layout — do not
   rely on implicit `sys.path` or `__init__.py` test packages.
 - `testpaths = ["contracts/tests", "core/tests", "apps/backend/tests"]`.
-- Coverage: `branch = true`; **`fail_under = 90`** (a hard gate; raised as real logic lands, see
-  M0-7). `exclude_also` ignores `if TYPE_CHECKING:`, `raise NotImplementedError`, and `...`.
+- Coverage: `branch = true`; **`fail_under = 90`** (a hard gate). `exclude_also` ignores
+  `if TYPE_CHECKING:`, `raise NotImplementedError`, and `...`.
 
 Patterns to follow (from `contracts/tests/test_ports.py`):
 
@@ -149,5 +149,5 @@ an ADR when it affects a stable port or message contract. Update docs to match b
 
 ## Last updated notes
 
-- 2026-06-05: Initial standards aligned to the M0 toolchain. Schema authoring (M0-3) and the
-  registry/DI layer (M0-4) referenced as upcoming.
+- 2026-06-05: Initial standards aligned to the toolchain, covering schema authoring and the
+  registry/DI layer.

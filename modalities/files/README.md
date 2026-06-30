@@ -1,6 +1,6 @@
 # modalities/files (`personalai_modality_files`)
 
-Lightweight, pure file parsers + chunking for ingestion (M3-2). Depends inward on
+Lightweight, pure file parsers + chunking for ingestion. Depends inward on
 `personalai_contracts` only (ADR-0001).
 
 - `parse_document(content, filename)` -> `ParsedDocument(text, mime)` for **txt / markdown**
