@@ -11,8 +11,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 
-from personalai_backend.rag import HybridVectorStoreRetriever, ProviderEmbeddings
-from personalai_contracts.ports import EmbeddingResult, VectorMatch
+from langchain_core.documents import Document
+
+from personalai_backend.rag import (
+    HybridVectorStoreRetriever,
+    ProviderEmbeddings,
+    rerank_documents,
+)
+from personalai_contracts.ports import EmbeddingResult, RetrievedItem, VectorMatch
 from personalai_contracts.ports.storage import GLOBAL_SCOPE, Scope
 from personalai_contracts.testing import FakeModelProvider, InMemoryVectorRepository
 
@@ -146,3 +152,48 @@ def test_retriever_returns_empty_when_no_embedding() -> None:
     docs = asyncio.run(retriever.ainvoke("q"))
     assert docs == []
     assert vectors.last_text is None  # hybrid_query never called
+
+
+# --- rerank_documents (#492): the single-agent-path counterpart to VectorSource's rerank step ---
+
+
+class _FakeReranker:
+    """A Reranker that reorders items by a content->score map (highest first) and records calls."""
+
+    name = "fake"
+
+    def __init__(self, scores: dict[str, float]) -> None:
+        self._scores = scores
+        self.calls: list[str] = []
+
+    async def rerank(
+        self, query: str, items: Sequence[RetrievedItem], top_n: int | None = None
+    ) -> Sequence[RetrievedItem]:
+        self.calls.append(query)
+        ordered = sorted(items, key=lambda it: self._scores.get(it.content, 0.0), reverse=True)
+        return ordered if top_n is None else ordered[:top_n]
+
+
+def _doc(text: str, score: float) -> Document:
+    return Document(
+        page_content=text,
+        metadata={"citation": {"source_id": text, "locator": "l", "score": score, "name": text}},
+    )
+
+
+def test_rerank_documents_reorders_by_reranker_score() -> None:
+    # Vector order is a, b, c; the reranker prefers b, c, a.
+    docs = [_doc("a", 0.9), _doc("b", 0.1), _doc("c", 0.5)]
+    rr = _FakeReranker({"a": 0.0, "b": 1.0, "c": 0.5})
+    out = asyncio.run(rerank_documents(rr, "q", docs))
+    assert [d.page_content for d in out] == ["b", "c", "a"]
+    assert rr.calls == ["q"]
+    # The reranked list holds the ORIGINAL Document instances, just reordered (identity preserved),
+    # so the caller's citation/context building over doc.metadata is unchanged.
+    assert out[0] is docs[1] and out[1] is docs[2] and out[2] is docs[0]
+
+
+def test_rerank_documents_empty_is_noop() -> None:
+    rr = _FakeReranker({})
+    assert asyncio.run(rerank_documents(rr, "q", [])) == []
+    assert rr.calls == []  # never invoked on empty input (no warm load triggered)

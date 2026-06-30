@@ -56,6 +56,7 @@ from personalai_backend.rag import (
     ProviderEmbeddings,
     VectorItemRetriever,
     disable_langchain_tracing,
+    rerank_documents,
 )
 from personalai_backend.tenant_querier import TenantQuerier
 from personalai_backend.turn import run_turn
@@ -66,6 +67,7 @@ from personalai_contracts.ports import (
     ChatMessage,
     GenerationRequest,
     ModelProvider,
+    Reranker,
     Role,
     ToolCall,
 )
@@ -1370,6 +1372,17 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             ok=True, data={"default_model": config.default_model, "models": models}
         )
 
+    def _resolve_reranker(config: CoreConfig) -> Reranker | None:
+        """Build the cross-encoder reranker when ``RERANK_ENABLED`` is set (#492); ``None`` else.
+
+        Loaded on-demand so transformers/torch carry no footprint when reranking is off. Shared by
+        the single-agent RAG path (``_retrieve_context``) and the multi-source ``VectorSource``."""
+        if not config.rerank_enabled:
+            return None
+        from personalai_provider_hf_reranker import HFReranker  # noqa: PLC0415
+
+        return HFReranker(model=config.rerank_model)
+
     async def _retrieve_context(
         req: ChatRequest,
         query: str | None = None,
@@ -1426,6 +1439,12 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     )
                 )
             return [], []
+        # Reranking stage (#492): when RERANK_ENABLED, re-score the hybrid hits with the
+        # cross-encoder and reorder before they become context/citations. Off by default (no
+        # footprint). Mirrors the multi-source VectorSource so both paths rerank identically.
+        reranker = _resolve_reranker(config)
+        if reranker is not None:
+            docs = await rerank_documents(reranker, effective_query, docs)
         # Retrieved text is untrusted DATA, not instructions (prompt-injection guardrail).
         context = "\n\n".join(f"[{i + 1}] {doc.page_content}" for i, doc in enumerate(docs))
         system = ChatMessage(
@@ -1497,11 +1516,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             # Wrap the LangChain retriever in our non-LangChain adapter at the seam boundary, so the
             # core VectorSource never imports langchain (ADR-0012). Scope/RLS/anti-bleed unchanged.
             # Resolve reranker from the boot config — loaded on-demand, no warm footprint when off.
-            _reranker = None
-            if config.rerank_enabled:
-                from personalai_provider_hf_reranker import HFReranker  # noqa: PLC0415
-
-                _reranker = HFReranker(model=config.rerank_model)
+            _reranker = _resolve_reranker(config)
             sources.append(
                 VectorSource(
                     VectorItemRetriever(retriever),

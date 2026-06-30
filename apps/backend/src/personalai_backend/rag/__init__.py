@@ -22,6 +22,7 @@ from personalai_backend.rag.embeddings import ProviderEmbeddings
 from personalai_backend.rag.retriever import (
     HybridVectorStoreRetriever,
     VectorItemRetriever,
+    rerank_documents,
 )
 from personalai_backend.rag.tracing import disable_langchain_tracing
 
@@ -30,4 +31,5 @@ __all__ = [
     "ProviderEmbeddings",
     "VectorItemRetriever",
     "disable_langchain_tracing",
+    "rerank_documents",
 ]
