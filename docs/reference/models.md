@@ -134,9 +134,10 @@ as built, not as once proposed:
 - **No GLiNER (or any dedicated NER model architecture).** Entity extraction is plain
   LLM structured output over the document text using the NER model. See the
   [extraction pipeline](../architecture/extraction-pipeline.md).
-- **No reranker / cross-encoder.** Ranking is Reciprocal Rank Fusion (RRF, `k = 60`) ---
-  inside the hybrid vector source (dense + lexical) and, on the multi-source path, across
-  sources. See [how context is built](../architecture/context-assembly.md).
+- **No reranker model in the default retrieval path.** Ranking is Reciprocal Rank Fusion
+  (RRF, `k = 60`) --- inside the hybrid vector source (dense + lexical) and, on the
+  multi-source path, across sources. See
+  [how context is built](../architecture/context-assembly.md).
 
 ## Relevant Files
 
@@ -158,5 +159,5 @@ as built, not as once proposed:
 Verified against the code on 2026-06-30. Key facts confirmed in source: chat default
 `qwen3.6:35b-a3b` with `default_reasoning="low"`; embeddings `qwen3-embedding:0.6b`; NER
 `qwen3:14b` at `ner_num_ctx=8192`, `ner_memory_fraction=0.75` (env-only, dedicated
-loopback runner); STT `large-v3-turbo` (`local`); TTS browser-side. No GLiNER, no
-reranker.
+loopback runner); STT `large-v3-turbo` (`local`); TTS browser-side. No GLiNER; no
+reranker model in the default retrieval path (ranking is RRF).
