@@ -104,7 +104,7 @@ test("the Entities section lists entities by type, filters by type, and opens an
   );
 
   await page.goto("/");
-  await expect(page.getByTestId("model-select")).toHaveValue("qwen3-vl:8b");
+  await expect(page.getByTestId("composer")).toBeVisible();
   await page.getByTestId("nav-settings").click();
 
   // The Entities region lists grouped entities.
