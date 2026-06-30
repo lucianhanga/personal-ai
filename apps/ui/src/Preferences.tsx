@@ -32,14 +32,6 @@ interface Group {
 // Declarative layout. Field names match the backend; a blank/Default value sends null (inherit).
 const GROUPS: Group[] = [
   {
-    title: "Model",
-    note: "The active model is chosen in the top bar (it persists as your default).",
-    fields: [
-      { key: "ollama_num_ctx", label: "Ollama context window", kind: "number" },
-      { key: "ollama_keep_alive", label: "Ollama keep-alive", kind: "text", help: '"30m", "-1"' },
-    ],
-  },
-  {
     title: "Agent",
     note: "Agent mode, prompts, and per-agent tools are configured in the Agents panel.",
     fields: [
