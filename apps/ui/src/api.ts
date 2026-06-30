@@ -794,6 +794,8 @@ export interface TenantSettings {
   embed_model: string | null;
   openai_base_url: string | null;
   agent_mode: "single" | "multi" | "custom" | null;
+  /** @deprecated Backend-only legacy flag, superseded by `agent_mode` (#290). Still echoed by the
+   * settings API, but no UI component reads or writes it — do not surface it in any panel (#513). */
   agent_graph_enabled: boolean | null;
   agent_human_gate: boolean | null;
   agent_accuracy_mode: "standard" | "accurate" | null;
