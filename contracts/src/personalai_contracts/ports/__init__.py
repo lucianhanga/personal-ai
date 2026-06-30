@@ -37,6 +37,7 @@ from personalai_contracts.ports.model_provider import (
     ToolCallRequest,
     ToolSpec,
 )
+from personalai_contracts.ports.reranker import Reranker
 from personalai_contracts.ports.retriever import (
     SOURCE_KIND_GRAPH,
     SOURCE_KIND_MEMORY,
@@ -102,6 +103,8 @@ __all__ = [
     "Role",
     "ToolCallRequest",
     "ToolSpec",
+    # reranker
+    "Reranker",
     # retriever
     "SOURCE_KIND_GRAPH",
     "SOURCE_KIND_MEMORY",

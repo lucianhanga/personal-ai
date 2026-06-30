@@ -16,6 +16,7 @@ from personalai_contracts.ports import (
     SOURCE_KIND_VECTOR,
     AgentContext,
     Evidence,
+    Reranker,
     RetrievalQuery,
     RetrievedItem,
 )
@@ -39,10 +40,18 @@ class VectorSource:
 
     kind = SOURCE_KIND_VECTOR
 
-    def __init__(self, retriever: _ItemRetriever, *, top_k: int = 5, name: str = "vector") -> None:
+    def __init__(
+        self,
+        retriever: _ItemRetriever,
+        *,
+        top_k: int = 5,
+        name: str = "vector",
+        reranker: Reranker | None = None,
+    ) -> None:
         self._retriever = retriever
         self._top_k = top_k
         self.name = name
+        self._reranker = reranker
 
     async def select(self, query: str, ctx: AgentContext | None) -> float | None:
         # Vector is a cheap, always-on grounded source: no opinion -> the planner/heuristic floors
@@ -53,6 +62,8 @@ class VectorSource:
         self, query: str, budget: int, ctx: AgentContext | None
     ) -> Sequence[Evidence]:
         items = await self._retriever.retrieve(RetrievalQuery(text=query, top_k=self._top_k))
+        if self._reranker is not None:
+            items = await self._reranker.rerank(query, items)
         evidence: list[Evidence] = []
         spent = 0
         for item in items:

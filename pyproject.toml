@@ -3,7 +3,7 @@
 # docs/architecture/PersonalAI-Architecture-Research.md (Section 22).
 
 [tool.uv.workspace]
-members = ["contracts", "core", "apps/backend", "providers/ollama", "providers/openai_compat", "providers/whisper_local", "storage/postgres", "modalities/files", "tools/builtin", "tools/mcp", "benchmarks"]
+members = ["contracts", "core", "apps/backend", "providers/ollama", "providers/openai_compat", "providers/whisper_local", "providers/hf_reranker", "storage/postgres", "modalities/files", "tools/builtin", "tools/mcp", "benchmarks"]
 
 [dependency-groups]
 dev = [
@@ -60,7 +60,7 @@ warn_unused_configs = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 show_error_codes = true
-mypy_path = ["contracts/src", "core/src", "apps/backend/src", "providers/ollama/src", "providers/openai_compat/src", "providers/whisper_local/src", "storage/postgres/src", "modalities/files/src", "tools/builtin/src", "tools/mcp/src", "benchmarks/src"]
+mypy_path = ["contracts/src", "core/src", "apps/backend/src", "providers/ollama/src", "providers/openai_compat/src", "providers/whisper_local/src", "providers/hf_reranker/src", "storage/postgres/src", "modalities/files/src", "tools/builtin/src", "tools/mcp/src", "benchmarks/src"]
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
@@ -69,6 +69,11 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "faster_whisper.*"
+ignore_missing_imports = true
+
+# Reranker ML stack (#492) is an optional extra; not installed in the base env.
+[[tool.mypy.overrides]]
+module = ["torch.*", "transformers.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

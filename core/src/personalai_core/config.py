@@ -92,6 +92,8 @@ _ENV_FIELDS = {
     "AUDIT_LOG_PATH": "audit_log_path",
     "SESSION_IDLE_SECONDS": "session_idle_seconds",
     "SESSION_ABSOLUTE_SECONDS": "session_absolute_seconds",
+    "RERANK_ENABLED": "rerank_enabled",
+    "RERANK_MODEL": "rerank_model",
 }
 
 _INT_FIELDS = {
@@ -140,6 +142,7 @@ _BOOL_FIELDS = {
     "transcribe_enabled",
     "tts_enabled",
     "runaway_guard_enabled",
+    "rerank_enabled",
 }
 
 _CSV_FIELDS = {"allowed_origins", "allowed_egress_hosts"}
@@ -285,6 +288,10 @@ class CoreConfig(StrictModel):
     evidence_budget: int = 6000
     # Inject a grounding/anti-hallucination system prompt (ground in context/tools; admit doubt).
     grounding_enabled: bool = True
+    # Reranking stage (#492): flag-gated cross-encoder rerank after vector retrieval.
+    # Off by default — no warm memory footprint, identical behaviour to pre-492 when off.
+    rerank_enabled: bool = False
+    rerank_model: str = "Qwen/Qwen3-Reranker-0.6B"
     # Append-only JSONL audit sink path (survives restart); empty = in-memory only.
     audit_log_path: str = ""
     # Session lifetimes (ADR-0010): sliding idle window + hard absolute cap, in seconds.

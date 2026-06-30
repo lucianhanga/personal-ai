@@ -22,7 +22,7 @@ format: ## Ruff format (Python)
 	uv run ruff format .
 
 typecheck: ## mypy type check (Python)
-	uv run mypy contracts core apps/backend providers/ollama providers/openai_compat providers/whisper_local storage/postgres modalities/files tools/builtin tools/mcp benchmarks
+	uv run mypy contracts core apps/backend providers/ollama providers/openai_compat providers/whisper_local providers/hf_reranker storage/postgres modalities/files tools/builtin tools/mcp benchmarks
 
 test: ## Run Python tests with coverage
 	uv run pytest

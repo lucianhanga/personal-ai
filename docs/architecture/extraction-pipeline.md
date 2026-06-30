@@ -173,8 +173,9 @@ shared-document count (`_rank_cooccurring`).
 
 ## Common Mistakes
 
-- Assuming GLiNER does the NER. It does not --- extraction is LLM structured output. The
-  default retrieval path has no reranker model either; ranking is RRF.
+- Assuming GLiNER does the NER. It does not --- extraction is LLM structured output. By
+  default the retrieval path has no reranker (ranking is RRF); an optional cross-encoder
+  reranker can be enabled with `RERANK_ENABLED` (off by default).
 - Confusing `ingestion.py`'s `_maybe_extract_entities` seam (a deliberate no-op) with the
   active KAG path. The real entity indexing runs via `_make_entity_indexer` in `app.py`
   (and folder sync), not through that seam.

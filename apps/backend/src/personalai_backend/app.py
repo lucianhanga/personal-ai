@@ -1496,7 +1496,19 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             )
             # Wrap the LangChain retriever in our non-LangChain adapter at the seam boundary, so the
             # core VectorSource never imports langchain (ADR-0012). Scope/RLS/anti-bleed unchanged.
-            sources.append(VectorSource(VectorItemRetriever(retriever), top_k=req.rag_top_k))
+            # Resolve reranker from the boot config — loaded on-demand, no warm footprint when off.
+            _reranker = None
+            if config.rerank_enabled:
+                from personalai_provider_hf_reranker import HFReranker  # noqa: PLC0415
+
+                _reranker = HFReranker(model=config.rerank_model)
+            sources.append(
+                VectorSource(
+                    VectorItemRetriever(retriever),
+                    top_k=req.rag_top_k,
+                    reranker=_reranker,
+                )
+            )
         if req.use_memory and not incognito:
             sources.append(
                 MemorySource(
