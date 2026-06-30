@@ -38,6 +38,7 @@ When this document and the code disagree, the code wins.
 | Chat / generation | `qwen3.6:35b-a3b` | `ollama` | `default_model` | Yes (`default_model`) | The strong model. Drives the single-agent loop and the multi-agent researcher, the standalone-query rewrite, vision captioning, the NER prompts (model id aside), STM summarization, and the memory/judge verdicts. |
 | Reasoning amount | `low` | n/a | `default_reasoning` | Yes (`default_reasoning`) | How hard the chat model thinks when a turn does not specify: `off` / `low` / `medium` / `high`. `low` keeps thinking on but bounded so large models do not over-deliberate. |
 | Embeddings | `qwen3-embedding:0.6b` | `ollama` | `embed_model` / `embed_provider` | Yes (`embed_model`, `embed_provider`) | Embeds chunks at RAG ingest and embeds the query at retrieval and long-term-memory recall. |
+| Reranker (optional) | `Qwen/Qwen3-Reranker-0.6B` | `hf_reranker` (cross-encoder) | `rerank_enabled` (default `False`), `rerank_model` | No (env-only: `RERANK_ENABLED` / `RERANK_MODEL`) | Optional cross-encoder that re-scores the vector source's hits after retrieval. **Off by default** — when disabled (the default), ranking is RRF only and the heavy ML stack (transformers/torch) is not installed. |
 | NER / entity extraction | `qwen3:14b` | `ollama` (dedicated loopback runner) | `ner_model`, `ner_num_ctx` (8192), `ner_memory_fraction` (0.75) | No (env-only) | Extracts named entities and relations for the knowledge graph (KAG). Runs on its OWN small model on a dedicated loopback Ollama runner, NOT the chat model. |
 | Vision | the active chat model **if** `caps.vision` | `ollama` | `default_model` (runtime capability check) | Indirectly (pick a vision-capable chat model) | Captions attached images. Gated by a runtime capability check; a non-vision chat model returns `E_NO_VISION_MODEL`. |
 | Judge / validation | the turn's chat model (no dedicated default) | follows chat | `default_model` | Follows chat model | Critic/verifier verdicts and the post-turn memory-consolidation verdict. |
@@ -128,15 +129,15 @@ How capabilities are detected:
 
 ## What we deliberately do NOT use
 
-Two components from earlier plans are intentionally absent; the docs describe the system
-as built, not as once proposed:
+The docs describe the system as built, not as once proposed:
 
 - **No GLiNER (or any dedicated NER model architecture).** Entity extraction is plain
   LLM structured output over the document text using the NER model. See the
   [extraction pipeline](../architecture/extraction-pipeline.md).
-- **No reranker model in the default retrieval path.** Ranking is Reciprocal Rank Fusion
-  (RRF, `k = 60`) --- inside the hybrid vector source (dense + lexical) and, on the
-  multi-source path, across sources. See
+- **No reranker in the default path.** Ranking is Reciprocal Rank Fusion (RRF, `k = 60`)
+  --- inside the hybrid vector source (dense + lexical) and, on the multi-source path,
+  across sources. An optional cross-encoder reranker (see the model table above) can be
+  enabled with `RERANK_ENABLED`, but it is off by default. See
   [how context is built](../architecture/context-assembly.md).
 
 ## Relevant Files
@@ -159,5 +160,6 @@ as built, not as once proposed:
 Verified against the code on 2026-06-30. Key facts confirmed in source: chat default
 `qwen3.6:35b-a3b` with `default_reasoning="low"`; embeddings `qwen3-embedding:0.6b`; NER
 `qwen3:14b` at `ner_num_ctx=8192`, `ner_memory_fraction=0.75` (env-only, dedicated
-loopback runner); STT `large-v3-turbo` (`local`); TTS browser-side. No GLiNER; no
-reranker model in the default retrieval path (ranking is RRF).
+loopback runner); STT `large-v3-turbo` (`local`); TTS browser-side. No GLiNER; ranking is
+RRF by default, with an optional flag-gated cross-encoder reranker (`RERANK_ENABLED`, off
+by default, `Qwen/Qwen3-Reranker-0.6B`).

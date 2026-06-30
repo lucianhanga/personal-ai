@@ -63,6 +63,8 @@ workspace (`apps/ui`, `packages/contracts`).
 | **PostgreSQL** | PostgreSQL Global Dev Group | PostgreSQL License | Relational + vector spine. Dev/CI use the `pgvector/pgvector` Docker image; prod connects via the `PERSONALAI_DATABASE_URL` secret. (Service dependency, not a Python package.) |
 | **pgvector** | Andrew Kane | PostgreSQL License | Vector storage/search (cosine/HNSW) inside the same Postgres store. Ships in the dev/CI Docker image. |
 | **asyncpg** (`>=0.29`) | MagicStack | Apache-2.0 | Async Postgres driver behind the storage adapters in `personalai-storage-postgres`. Parameterized queries only. |
+| **transformers** (`>=4.51`, optional) | Hugging Face | Apache-2.0 | Cross-encoder reranker in `personalai-provider-hf-reranker` (`RERANK_MODEL`, default `Qwen/Qwen3-Reranker-0.6B`). **Optional, flag-gated** (`RERANK_ENABLED`, off by default); installed only via the package's `ml` extra, so the heavy ML stack has no footprint unless reranking is enabled. Weights fetched once from Hugging Face, then run locally. |
+| **torch** (`>=2.4`, optional) | PyTorch Foundation (Linux Foundation) | BSD-3-Clause | Inference backend for the optional cross-encoder reranker (`ml` extra of `personalai-provider-hf-reranker`). Same flag gate (`RERANK_ENABLED`, off by default); not installed in the default footprint. |
 
 ## 4. Ingestion, OCR & audio
 
