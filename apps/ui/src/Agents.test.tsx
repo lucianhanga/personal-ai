@@ -26,6 +26,7 @@ const SETTINGS: TenantSettings = {
   agent_timeout_seconds: null,
   memory_enabled: null,
   grounding_enabled: null,
+  rich_output_enabled: null,
   max_upload_bytes: null,
   egress_enabled: null,
   allowed_egress_hosts: null,

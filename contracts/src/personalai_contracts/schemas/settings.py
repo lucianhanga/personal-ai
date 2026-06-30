@@ -54,6 +54,8 @@ class TenantSettings(StrictModel):
     # --- Behaviour ---
     memory_enabled: bool | None = None
     grounding_enabled: bool | None = None
+    # opt-in; lets the model emit Mermaid diagrams / rich markdown
+    rich_output_enabled: bool | None = None
     max_upload_bytes: int | None = Field(default=None, ge=1, le=1_000_000_000)
 
     # --- Voice / speech-to-text (M9.2) ---

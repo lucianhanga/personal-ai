@@ -36,6 +36,7 @@ const GROUPS: Group[] = [
     fields: [
       { key: "memory_enabled", label: "Long-term memory", kind: "bool" },
       { key: "grounding_enabled", label: "Grounding prompt", kind: "bool" },
+      { key: "rich_output_enabled", label: "Rich output (diagrams & images)", kind: "bool" },
       { key: "max_upload_bytes", label: "Max upload (bytes)", kind: "number" },
     ],
   },

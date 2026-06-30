@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from personalai_backend import create_app
 from personalai_backend.app import (
+    _RICH_OUTPUT,
     _sanitize_activities,
     _sanitize_attachments,
     _sanitize_display_content,
@@ -1041,3 +1042,192 @@ def test_sanitize_attachments_mixed_valid_and_invalid() -> None:
         "text",
     )
     assert [i["name"] for i in out] == ["good.pdf", "also-good.pdf"]
+
+
+# --- Rich-output injection tests (#517) ---
+
+def test_rich_output_system_message_injected_when_enabled() -> None:
+    """_RICH_OUTPUT system message is present in the generation request when enabled."""
+    captured: list[GenerationRequest] = []
+
+    class _Recorder(FakeModelProvider):
+        async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+            captured.append(request)
+            yield GenerationChunk(delta="ok")
+            yield GenerationChunk(done=True, finish_reason="stop")
+
+    config = CoreConfig(
+        auth_token=TOKEN,
+        model_provider="rec",
+        rich_output_enabled=True,
+        grounding_enabled=False,  # isolate; don't mix with the grounding system msg
+    )
+    boot = bootstrap(config=config)
+    boot.registries.model_providers.register("rec", _Recorder(name="rec"), overwrite=True)
+    client = TestClient(create_app(boot))
+
+    with client.stream(
+        "POST",
+        "/api/v1/chat",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={"messages": [{"role": "user", "content": "draw me a diagram"}], "provider": "rec"},
+    ) as resp:
+        assert resp.status_code == 200
+        "".join(resp.iter_text())
+
+    assert captured, "provider never called"
+    system_contents = [m.content for m in captured[0].messages if m.role == "system"]
+    assert any(_RICH_OUTPUT in c for c in system_contents), (
+        f"_RICH_OUTPUT not found in system messages: {system_contents}"
+    )
+
+
+def test_rich_output_system_message_absent_when_disabled() -> None:
+    """_RICH_OUTPUT system message is NOT present when rich_output_enabled=False."""
+    captured: list[GenerationRequest] = []
+
+    class _Recorder(FakeModelProvider):
+        async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
+            captured.append(request)
+            yield GenerationChunk(delta="ok")
+            yield GenerationChunk(done=True, finish_reason="stop")
+
+    config = CoreConfig(
+        auth_token=TOKEN,
+        model_provider="rec",
+        rich_output_enabled=False,  # explicit off (default is now on, #517)
+    )
+    boot = bootstrap(config=config)
+    boot.registries.model_providers.register("rec", _Recorder(name="rec"), overwrite=True)
+    client = TestClient(create_app(boot))
+
+    with client.stream(
+        "POST",
+        "/api/v1/chat",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={"messages": [{"role": "user", "content": "hello"}], "provider": "rec"},
+    ) as resp:
+        assert resp.status_code == 200
+        "".join(resp.iter_text())
+
+    assert captured, "provider never called"
+    system_contents = [m.content for m in captured[0].messages if m.role == "system"]
+    assert not any(_RICH_OUTPUT in c for c in system_contents), (
+        f"_RICH_OUTPUT unexpectedly present in system messages: {system_contents}"
+    )
+
+
+# --- Image-localise endpoint tests (#517) ------------------------------------
+
+
+def _coro(value: object) -> object:
+    """Return a coroutine that immediately resolves to *value*.
+
+    Used to replace async functions with monkeypatch when the replacement must
+    return an awaitable (FastAPI awaits the endpoint dependency internally).
+    """
+
+    async def _inner() -> object:
+        return value
+
+    return _inner()
+
+
+def _localize_client(
+    *, egress_enabled: bool = True, allowed_hosts: tuple[str, ...] = ()
+) -> TestClient:
+    """Build a TestClient configured for the localize endpoint tests."""
+    config = CoreConfig(
+        auth_token=TOKEN,
+        egress_enabled=egress_enabled,
+        allowed_egress_hosts=allowed_hosts,
+        egress_allow_any=not allowed_hosts and egress_enabled,
+    )
+    return TestClient(create_app(bootstrap(config=config)))
+
+
+_PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+
+
+def test_localize_image_needs_approval_when_host_not_allowlisted() -> None:
+    # Egress enabled but the host is not on the allowlist -> needs_approval signal.
+    client = _localize_client(egress_enabled=True, allowed_hosts=("other.example.com",))
+    resp = client.post(
+        "/api/v1/images/localize",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={"url": "https://cdn.example.com/img.png"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    # The response carries both an error code and a data payload so the UI can
+    # distinguish the "needs approval" gate from a hard failure.
+    assert body["error"]["code"] == "E_EGRESS_APPROVAL_NEEDED"
+    assert body["data"]["needs_approval"] is True
+    assert body["data"]["host"] == "cdn.example.com"
+
+
+def test_localize_image_success_returns_data_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    # With egress allowed (allow_any=True) and a monkeypatched fetch, the endpoint
+    # returns a data: URL.
+    monkeypatch.setattr(
+        "personalai_backend.app._ssrf.fetch_image",
+        lambda url, **kw: _coro(("image/png", _PNG_BYTES)),
+    )
+    client = _localize_client(egress_enabled=True)
+    resp = client.post(
+        "/api/v1/images/localize",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={"url": "https://cdn.example.com/img.png"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    data_url: str = body["data"]["data_url"]
+    assert data_url.startswith("data:image/png;base64,")
+
+
+def test_localize_image_blocked_returns_e_image_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
+    # fetch_image raises SsrfBlockedError -> endpoint returns E_IMAGE_BLOCKED (not a 5xx).
+    from personalai_core.security.ssrf import SsrfBlockedError as _SsrfErr
+
+    async def _raise(url: str, **kw: object) -> tuple[str, bytes]:
+        raise _SsrfErr("image could not be fetched")
+
+    monkeypatch.setattr("personalai_backend.app._ssrf.fetch_image", _raise)
+    client = _localize_client(egress_enabled=True)
+    resp = client.post(
+        "/api/v1/images/localize",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={"url": "https://cdn.example.com/img.png"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "E_IMAGE_BLOCKED"
+
+
+def test_localize_image_requires_token() -> None:
+    client = _localize_client(egress_enabled=True)
+    resp = client.post(
+        "/api/v1/images/localize",
+        json={"url": "https://cdn.example.com/img.png"},
+    )
+    assert resp.status_code == 401
+
+
+def test_localize_image_egress_disabled_returns_needs_approval() -> None:
+    # Egress entirely disabled -> same needs_approval gate (the user must allow the host first).
+    client = _localize_client(egress_enabled=False)
+    resp = client.post(
+        "/api/v1/images/localize",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={"url": "https://cdn.example.com/img.png"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "E_EGRESS_APPROVAL_NEEDED"
+    assert body["data"]["needs_approval"] is True
+
+

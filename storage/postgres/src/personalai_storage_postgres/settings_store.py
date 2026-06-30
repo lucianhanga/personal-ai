@@ -31,6 +31,7 @@ _FIELDS = (
     "agent_timeout_seconds",
     "memory_enabled",
     "grounding_enabled",
+    "rich_output_enabled",
     "max_upload_bytes",
     "egress_enabled",
     "allowed_egress_hosts",

@@ -89,6 +89,7 @@ _ENV_FIELDS = {
     "MEMORY_ENABLED": "memory_enabled",
     "MEMORY_TOP_K": "memory_top_k",
     "GROUNDING_ENABLED": "grounding_enabled",
+    "RICH_OUTPUT_ENABLED": "rich_output_enabled",
     "AUDIT_LOG_PATH": "audit_log_path",
     "SESSION_IDLE_SECONDS": "session_idle_seconds",
     "SESSION_ABSOLUTE_SECONDS": "session_absolute_seconds",
@@ -136,6 +137,7 @@ _BOOL_FIELDS = {
     "memory_enabled",
     "egress_allow_any",
     "grounding_enabled",
+    "rich_output_enabled",
     "agent_graph_enabled",
     "agent_human_gate",
     "agent_verifier_check",
@@ -288,6 +290,9 @@ class CoreConfig(StrictModel):
     evidence_budget: int = 6000
     # Inject a grounding/anti-hallucination system prompt (ground in context/tools; admit doubt).
     grounding_enabled: bool = True
+    # On by default (#517): lets the model emit Mermaid diagrams and inline images. Image display
+    # still requires per-host egress consent, so this default does not by itself enable any egress.
+    rich_output_enabled: bool = True
     # Reranking stage (#492): flag-gated cross-encoder rerank after vector retrieval.
     # Off by default — no warm memory footprint, identical behaviour to pre-492 when off.
     rerank_enabled: bool = False

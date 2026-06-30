@@ -1676,6 +1676,7 @@ export function Chat({
               onCopyToComposer={copyToComposer}
               onEditResubmit={(fromId, text) => void editResubmit(fromId, text)}
               onDelete={(fromId) => void deleteFrom(fromId)}
+              token={token}
             />
 
             {!atBottom && (

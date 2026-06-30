@@ -19,6 +19,7 @@ from personalai_core.security.egress import (
     effective_egress_config,
 )
 from personalai_core.security.redaction import REDACTED, redact
+from personalai_core.security.ssrf import SsrfBlockedError, fetch_image
 
 __all__ = [
     "REDACTED",
@@ -26,11 +27,13 @@ __all__ = [
     "AuditLog",
     "EgressBlockedError",
     "SecurityContextError",
+    "SsrfBlockedError",
     "assert_egress_allowed",
     "current_conversation",
     "current_egress",
     "current_security",
     "effective_egress_config",
+    "fetch_image",
     "redact",
     "require_security",
 ]

@@ -13,7 +13,7 @@
 > this file and the [Dependency Policy](../policies/DEPENDENCY-POLICY.md)). The generated
 > CycloneDX SBOM (`sbom/python.cdx.json`) is the machine-readable companion to this register.
 
-- **Last reviewed:** 2026-06-30 (added `mermaid`, `dompurify`, `@types/dompurify` for chat diagram/image rendering).
+- **Last reviewed:** 2026-06-30 (added `mermaid`, `dompurify`, `@types/dompurify` for chat diagram/image rendering; `httpx` now a direct `personalai-core` dep + capped `<0.29` for the SSRF image-localize floor, #517).
 
 ---
 
@@ -54,7 +54,7 @@ workspace (`apps/ui`, `packages/contracts`).
 | **python-dotenv** (`>=1.0`) | theskumar (Saurabh Kumar) | BSD-3-Clause | Loads `PERSONALAI_*` from a local `.env` at backend startup. `load_dotenv()` does not override the real environment, so prod/CI are unaffected. |
 | **watchdog** (`>=4.0`) | gorakhargosh | Apache-2.0 | Cross-platform filesystem watcher (FSEvents/inotify/ReadDirectoryChangesW + polling fallback) for Settings -> Documents folder sync in `personalai-backend`. Observes user-allowlisted roots only; the sync worker is local-provider-only and fail-closed (no egress). |
 | **mcp** (Python SDK) (`>=1.0`) | Model Context Protocol (Anthropic) | MIT | MCP client in `personalai-tool-mcp`: connect to MCP servers (stdio/HTTP), list and call tools, wrapped behind the gateway. Third-party MCP servers themselves are treated as untrusted. |
-| **httpx** (`>=0.27`) | Encode | BSD-3-Clause | Runtime HTTP client shared by `providers/ollama`, `providers/openai_compat`, and `tools/builtin`; also the FastAPI TestClient transport. |
+| **httpx** (`>=0.27,<0.29`) | Encode | BSD-3-Clause | Runtime HTTP client shared by `providers/ollama`, `providers/openai_compat`, `tools/builtin`, and now `personalai-core` directly (the SSRF floor `security/ssrf.py` that backs the image-localize endpoint); also the FastAPI TestClient transport. Capped `<0.29` because the SSRF floor pins TLS via httpcore's `sni_hostname` request extension — a deliberate bump + security re-review is required before crossing it (#517). |
 
 ## 3. Storage & retrieval
 
