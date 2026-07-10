@@ -42,6 +42,52 @@ Key points:
 The instance name must be 2-24 characters: lowercase letters, digits and
 hyphens, starting with a letter (validated by Terraform).
 
+## Finding available instances
+
+"Available" means two different things - which one you want decides the command:
+
+**1. Instances that already exist (what is running right now).** Use the
+compact inventory table - one row per instance, discovered directly from Azure
+(resource groups named `ai-<name>-a100-rg`), so it always reflects reality, not
+stale local Terraform state:
+
+```bash
+infra/scripts/monitor.sh --list
+```
+
+```
+===============================================================
+ A100 GPU dev VMs - inventory   (2026-07-10 13:16:09)
+ Subscription   : AI research
+===============================================================
+ INSTANCE               REGION             STATUS    RESOURCES                STANDING $/mo
+ ---------------------- ------------------ --------- ------------------------ ------------
+ germanywestcentralvm   germanywestcentral running   vm, ip, disk, nic, vnet        $25.33
+===============================================================
+ Instances: 1    Combined standing: $25.33 /mo (bills 24/7)
+ partial = resources exist but no VM (incomplete/failed provision still billing).
+===============================================================
+```
+
+- `STATUS` is `running`, `stopped`, `partial` (resources exist but no VM - an
+  incomplete or failed provision that is **still billing**), or `empty`.
+- `STANDING $/mo` is the IP + disk cost that accrues 24/7 even while the VM is
+  stopped; a running VM also accrues hourly compute on top of it.
+- Drill into one with `infra/scripts/monitor.sh --name <name>`, add `--watch 10`
+  for a live-refreshing table, and connect with
+  `infra/scripts/connect.sh -n <name>`.
+
+**2. Where you can provision a new one (SKU + quota by region).** Before
+`provision.sh`, survey which regions actually offer the A100 SKU and whether your
+subscription has the vCPU quota (Regular and Spot):
+
+```bash
+infra/scripts/check-quota.sh
+```
+
+It reports each region as `available` / `restricted` / `absent` for the SKU and
+`OK` / not for quota; pick a region that shows `available`.
+
 ## Scripts at a glance
 
 The five core lifecycle verbs:
