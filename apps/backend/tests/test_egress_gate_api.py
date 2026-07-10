@@ -133,12 +133,18 @@ class _ResearcherFetches(FakeModelProvider):
         return GenerationResult(text="ok", model=request.model)
 
 
-def _app(tool: RegisteredTool, provider: FakeModelProvider) -> TestClient:
+def _app(
+    tool: RegisteredTool, provider: FakeModelProvider, agent_mode: str = "multi"
+) -> TestClient:
     boot = bootstrap(
         config=CoreConfig(
             app_mode="hosted",
-            agent_mode="multi",
-            agent_human_gate=True,
+            agent_mode=agent_mode,
+            # The egress-approval gate is now independent of the answer gate (#377 decouple): enable
+            # ONLY it, so these tests exercise an egress suspension without also pausing at the
+            # answer gate before finalize. It works in BOTH agent modes (single-agent routes through
+            # the minimal gated graph), so the same suite runs with agent_mode="single" too.
+            agent_egress_gate=True,
             database_url=DB_URL,  # same DB the raw-pool helpers read (conftest isolates to _test)
         )
     )
@@ -215,6 +221,31 @@ def test_egress_block_suspends_with_egress_approval_payload_and_no_leak() -> Non
         assert "frame" not in payload  # server-only resume frame must NOT reach the client
         assert "subject_id" not in payload  # nor the run's subject
         assert '"done": true' not in body  # suspended, not finished
+
+
+def test_single_agent_egress_block_suspends_and_resumes() -> None:
+    # The egress gate works in single-agent mode too (#377 single-agent gated graph): a blocked host
+    # durably suspends with the same approval_request, and allow_once resumes + retries the call.
+    with _app(
+        RegisteredTool(BLOCKED_FETCH, _BlockedFetch()),
+        _ResearcherFetches("blocked_fetch"),
+        agent_mode="single",
+    ) as client:
+        _signup_login(client, f"a-{uuid.uuid4().hex[:8]}@x.com")
+        run_id, cid, body = _start_blocked_turn(client, "blocked_fetch")
+        payload = _approval_payload(body)
+        assert payload["reason"] == "egress_approval"
+        assert payload["blocked_host"] == BLOCKED_HOST
+        assert "subject_id" not in payload  # server-only frame is whitelisted out of the client SSE
+        with client.stream(
+            "POST",
+            f"/api/v1/chat/{run_id}/resume",
+            headers=_csrf(client),
+            json={"decision": "egress_allow_once", "conversation_id": cid, "provider": "fake"},
+        ) as resp:
+            assert resp.status_code == 200
+            resumed = "".join(resp.iter_text())
+        assert "blocked_fetch" in resumed  # retried after the allow and proceeded
 
 
 def test_resume_allow_once_retries_and_does_not_persist_the_host() -> None:

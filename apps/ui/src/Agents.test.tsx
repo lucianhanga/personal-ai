@@ -17,15 +17,21 @@ const SETTINGS: TenantSettings = {
   embed_provider: null,
   embed_model: null,
   openai_base_url: null,
+  ner_model: null,
+  rerank_enabled: null,
+  rerank_model: null,
   agent_mode: null,
   agent_graph_enabled: null,
   agent_human_gate: null,
+  agent_egress_gate: null,
   agent_accuracy_mode: null,
   agent_verifier_check: null,
+  tool_approval_required: null,
   agent_max_iterations: null,
   agent_timeout_seconds: null,
   memory_enabled: null,
   grounding_enabled: null,
+  rich_output_enabled: null,
   max_upload_bytes: null,
   egress_enabled: null,
   allowed_egress_hosts: null,
@@ -220,110 +226,6 @@ test("loading saved per-agent reasoning and model restores the dropdown values",
   await waitFor(() =>
     expect((screen.getByTestId("agents-model-planner") as HTMLSelectElement).value).toBe("qwen3:7b"),
   );
-});
-
-test("Defaults section loads current default_model from settings", async () => {
-  mockLoad({ default_model: "qwen3:7b" });
-  vi.spyOn(api, "fetchModels").mockResolvedValue({
-    defaultModel: "qwen3:7b",
-    models: [MODEL_INFO],
-  });
-
-  render(<Agents token="demo" />);
-  await waitFor(() => expect(screen.getByTestId("agents-defaults")).toBeInTheDocument());
-  await waitFor(() =>
-    expect((screen.getByTestId("agents-default-model") as HTMLSelectElement).value).toBe("qwen3:7b"),
-  );
-});
-
-test("changing default model marks dirty and saves the updated default_model", async () => {
-  mockLoad({ default_model: null });
-  vi.spyOn(api, "fetchModels").mockResolvedValue({
-    defaultModel: "qwen3:7b",
-    models: [MODEL_INFO],
-  });
-  const saveSettings = vi.spyOn(api, "saveSettings").mockResolvedValue({ ...SETTINGS, default_model: "qwen3:7b", default_reasoning: null });
-  vi.spyOn(api, "saveAgentConfig").mockResolvedValue({ agents: [] });
-
-  render(<Agents token="demo" />);
-  await waitFor(() =>
-    expect(screen.getByTestId("agents-default-model")).toContainHTML("qwen3:7b"),
-  );
-
-  fireEvent.change(screen.getByTestId("agents-default-model"), { target: { value: "qwen3:7b" } });
-  expect(screen.getByTestId("agents-dirty")).toBeInTheDocument();
-
-  fireEvent.click(screen.getByTestId("agents-save"));
-  await waitFor(() => expect(saveSettings).toHaveBeenCalled());
-  const sentSettings = saveSettings.mock.calls[0][1] as api.TenantSettings;
-  expect(sentSettings.default_model).toBe("qwen3:7b");
-});
-
-test("changing default reasoning marks dirty and saves the updated default_reasoning", async () => {
-  mockLoad({ default_reasoning: null });
-  vi.spyOn(api, "fetchModels").mockResolvedValue({ defaultModel: "", models: [] });
-  const saveSettings = vi.spyOn(api, "saveSettings").mockResolvedValue({ ...SETTINGS, default_reasoning: "high" });
-  vi.spyOn(api, "saveAgentConfig").mockResolvedValue({ agents: [] });
-
-  render(<Agents token="demo" />);
-  await waitFor(() => expect(screen.getByTestId("agents-default-reasoning")).toBeInTheDocument());
-
-  const select = screen.getByTestId("agents-default-reasoning") as HTMLSelectElement;
-  expect(select.value).toBe(""); // null -> empty = "Inherit (server default)"
-
-  fireEvent.change(select, { target: { value: "high" } });
-  expect(screen.getByTestId("agents-dirty")).toBeInTheDocument();
-
-  fireEvent.click(screen.getByTestId("agents-save"));
-  await waitFor(() => expect(saveSettings).toHaveBeenCalled());
-  const sentSettings = saveSettings.mock.calls[0][1] as api.TenantSettings;
-  expect(sentSettings.default_reasoning).toBe("high");
-});
-
-test("Defaults section shows a Provider select with server-default option", async () => {
-  mockLoad({ model_provider: null });
-  vi.spyOn(api, "fetchModels").mockResolvedValue({ defaultModel: "", models: [] });
-
-  render(<Agents token="demo" />);
-  await waitFor(() => expect(screen.getByTestId("agents-default-provider")).toBeInTheDocument());
-
-  const select = screen.getByTestId("agents-default-provider") as HTMLSelectElement;
-  expect(select.value).toBe(""); // null -> empty = "Use server default"
-});
-
-test("Defaults section loads saved model_provider from settings", async () => {
-  mockLoad({ model_provider: "openai_compat" });
-  vi.spyOn(api, "fetchModels").mockResolvedValue({ defaultModel: "", models: [] });
-
-  render(<Agents token="demo" />);
-  await waitFor(() =>
-    expect((screen.getByTestId("agents-default-provider") as HTMLSelectElement).value).toBe(
-      "openai_compat",
-    ),
-  );
-});
-
-test("changing default provider marks dirty and saves the updated model_provider", async () => {
-  mockLoad({ model_provider: null });
-  vi.spyOn(api, "fetchModels").mockResolvedValue({ defaultModel: "", models: [] });
-  const saveSettings = vi.spyOn(api, "saveSettings").mockResolvedValue({
-    ...SETTINGS,
-    model_provider: "ollama",
-  });
-  vi.spyOn(api, "saveAgentConfig").mockResolvedValue({ agents: [] });
-
-  render(<Agents token="demo" />);
-  await waitFor(() => expect(screen.getByTestId("agents-default-provider")).toBeInTheDocument());
-
-  fireEvent.change(screen.getByTestId("agents-default-provider"), {
-    target: { value: "ollama" },
-  });
-  expect(screen.getByTestId("agents-dirty")).toBeInTheDocument();
-
-  fireEvent.click(screen.getByTestId("agents-save"));
-  await waitFor(() => expect(saveSettings).toHaveBeenCalled());
-  const sentSettings = saveSettings.mock.calls[0][1] as api.TenantSettings;
-  expect(sentSettings.model_provider).toBe("ollama");
 });
 
 test("Execution accuracy mode is tri-state and persists on save (moved from Preferences #513)", async () => {

@@ -23,7 +23,7 @@ from personalai_core.security import (
 )
 
 if TYPE_CHECKING:
-    from personalai_tool_builtin import WebSearchProvider
+    from personalai_tool_builtin import ImageSearchProvider, WebSearchProvider
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +68,44 @@ def _build_web_search_provider(config: CoreConfig) -> WebSearchProvider:
     if provider != "duckduckgo":
         logger.warning("unknown web_search provider %r; falling back to DuckDuckGo.", provider)
     return DuckDuckGoSearch()
+
+
+def _build_image_search_provider(config: CoreConfig) -> ImageSearchProvider:
+    """Select the image_search backend from config (#491 follow-up).
+
+    - ``wikimedia`` (default): Wikimedia Commons only — encyclopedic, free, no key.
+    - ``tavily``: broad-web Tavily image search — finds people/companies Commons does not carry;
+      needs the Tavily key (shared with web_search: ``web_search_api_key``).
+    - ``wikimedia+tavily``: try Commons first, fall back to Tavily when it returns nothing — the
+      best of both. Degrades to Commons-only when no Tavily key is set (logged).
+    An unknown provider falls back to Commons. The Tavily key is reused from web_search."""
+    from personalai_tool_builtin import (
+        FallbackImageSearch,
+        TavilyImageSearch,
+        WikimediaCommonsImageSearch,
+    )
+
+    provider = (config.image_search_provider or "wikimedia").strip().lower()
+    wikimedia = WikimediaCommonsImageSearch()
+    tavily_key = config.web_search_api_key
+    wants_tavily = provider in ("tavily", "wikimedia+tavily")
+
+    if wants_tavily and not tavily_key:
+        logger.warning(
+            "image_search provider %r needs a Tavily key (web_search_api_key); "
+            "falling back to Wikimedia Commons only.",
+            provider,
+        )
+        return wikimedia
+    if provider == "tavily":
+        return TavilyImageSearch(tavily_key or "")
+    if provider == "wikimedia+tavily":
+        return FallbackImageSearch(wikimedia, TavilyImageSearch(tavily_key or ""))
+    if provider != "wikimedia":
+        logger.warning(
+            "unknown image_search provider %r; falling back to Wikimedia Commons.", provider
+        )
+    return wikimedia
 
 
 def register_adapters(registries: Registries, config: CoreConfig) -> None:
@@ -132,7 +170,9 @@ def register_adapters(registries: Registries, config: CoreConfig) -> None:
         HTTP_FETCH_MANIFEST,
         Calculator,
         HttpFetch,
+        ImageSearch,
         WebSearch,
+        image_search_manifest,
         web_search_manifest,
     )
 
@@ -146,6 +186,20 @@ def register_adapters(registries: Registries, config: CoreConfig) -> None:
         RegisteredTool(
             web_search_manifest(search_provider.host),
             WebSearch(search_provider, max_results=config.web_search_max_results),
+        ),
+    )
+
+    # image_search: same pattern as web_search — build the manifest with the ACTIVE provider's
+    # egress host(s) so the gateway enforces the allowlist against the host(s) actually contacted. A
+    # Wikimedia+Tavily fallback contacts BOTH, so both hosts are listed. The returned image_url
+    # values are real, fetchable URLs the model could not construct itself.
+    image_provider = _build_image_search_provider(config)
+    image_hosts = getattr(image_provider, "egress_hosts", None) or (image_provider.host,)
+    registries.tools.register(
+        "image_search",
+        RegisteredTool(
+            image_search_manifest(*image_hosts),
+            ImageSearch(image_provider, max_results=config.image_search_max_results),
         ),
     )
 

@@ -793,17 +793,23 @@ export interface TenantSettings {
   embed_provider: "ollama" | "openai_compat" | null;
   embed_model: string | null;
   openai_base_url: string | null;
+  ner_model: string | null;
+  rerank_enabled: boolean | null;
+  rerank_model: string | null;
   agent_mode: "single" | "multi" | "custom" | null;
   /** @deprecated Backend-only legacy flag, superseded by `agent_mode` (#290). Still echoed by the
    * settings API, but no UI component reads or writes it — do not surface it in any panel (#513). */
   agent_graph_enabled: boolean | null;
   agent_human_gate: boolean | null;
+  agent_egress_gate: boolean | null;
   agent_accuracy_mode: "standard" | "accurate" | null;
   agent_verifier_check: boolean | null;
+  tool_approval_required: boolean | null;
   agent_max_iterations: number | null;
   agent_timeout_seconds: number | null;
   memory_enabled: boolean | null;
   grounding_enabled: boolean | null;
+  rich_output_enabled: boolean | null;
   max_upload_bytes: number | null;
   egress_enabled: boolean | null;
   allowed_egress_hosts: string[] | null;
@@ -850,6 +856,37 @@ export async function saveSettings(
   if (!res.ok) throw new Error(`save settings failed: ${res.status}`);
   const body = (await res.json()) as { data?: { settings: TenantSettings } };
   return body.data!.settings;
+}
+
+/** Localize a remote image server-side so the browser never loads the remote URL directly.
+ * Returns a flat shape: ok + data_url on success; needs_approval + host when the server asks for
+ * consent; error on blocked/transport failure. */
+export async function localizeImage(
+  token: string,
+  url: string,
+): Promise<{ ok: boolean; data_url?: string; needs_approval?: boolean; host?: string; error?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/images/localize`, {
+      method: "POST",
+      credentials: CREDS,
+      headers: { "Content-Type": "application/json", ...authHeaders(token) },
+      body: JSON.stringify({ url }),
+    });
+    const body = (await res.json()) as {
+      ok?: boolean;
+      data?: { data_url?: string; needs_approval?: boolean; host?: string };
+      error?: { code?: string; message?: string };
+    };
+    if (body.ok === true && body.data?.data_url) {
+      return { ok: true, data_url: body.data.data_url };
+    }
+    if (body.ok === false && body.data?.needs_approval) {
+      return { ok: false, needs_approval: true, host: body.data.host };
+    }
+    return { ok: false, error: body.error?.message ?? `localize failed: ${res.status}` };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "localize failed" };
+  }
 }
 
 /** Allow one egress host (interactive allow-on-deny): adds it to the allowlist + enables egress. */

@@ -19,6 +19,7 @@ import hashlib
 import json
 import logging
 import time
+import urllib.parse
 import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
@@ -103,12 +104,15 @@ from personalai_core import (
 from personalai_core.reasoning import resolve_reasoning
 from personalai_core.registries import Registries
 from personalai_core.security import (
+    EgressBlockedError,
+    SsrfBlockedError,
     assert_egress_allowed,
     current_conversation,
     current_egress,
     current_security,
     effective_egress_config,
 )
+from personalai_core.security import ssrf as _ssrf
 from personalai_modality_files import UnsupportedFileTypeError, parse_document
 from personalai_provider_ollama import OllamaProvider
 from personalai_storage_postgres import (
@@ -292,6 +296,7 @@ class ExecuteRequest(BaseModel):
     # dimensions. None inherits the tenant's effective config.
     memory_enabled: bool | None = None
     grounding: bool | None = None
+    rich_output: bool | None = None
     max_iterations: int | None = None
     accuracy_mode: Literal["standard", "accurate"] | None = None
     verifier_check: bool | None = None
@@ -422,6 +427,12 @@ class EgressAllow(BaseModel):
     """Request body for allowing a single egress host (interactive allow-on-deny)."""
 
     host: str
+
+
+class LocalizeImageRequest(BaseModel):
+    """Request body for server-side image fetch (no-egress image localisation)."""
+
+    url: str
 
 
 class GrantIn(BaseModel):
@@ -857,6 +868,28 @@ _GROUNDING = (
     "say so plainly instead of guessing; never fabricate facts, names, dates, numbers, URLs, or "
     "citations. When you used tools or documents, cite the sources you relied on. For creative or "
     "opinion requests, respond normally. Reply in the same language the user used."
+)
+
+# Rich-output instruction (config.rich_output_enabled). Opt-in: gates Mermaid diagram emission and
+# safe image-reference guidance without changing default behaviour for tenants that leave it off.
+_RICH_OUTPUT = (
+    "You can include a Mermaid diagram when a diagram is genuinely the clearest way to answer a "
+    "process, hierarchy, sequence, state machine, or relationship that prose would explain worse. "
+    "Emit it as a fenced ```mermaid code block with valid Mermaid syntax (flowchart, "
+    "sequenceDiagram, classDiagram, stateDiagram, or erDiagram); keep node ids simple and quote "
+    "any label containing special characters. Do not add a diagram when plain prose answers the "
+    "question. "
+    "You can also display an image inline with standard markdown image syntax — "
+    "![short alt text](image_url) — when an image genuinely helps the answer (for example a "
+    "portrait, chart, photo, or figure the user asked about). To do this you MUST first get a real "
+    "image URL from the `image_search` tool; NEVER write, guess, or construct an image URL "
+    "yourself — hand-built URLs are almost always wrong and fail to load. Call `image_search` "
+    "with a concise query, pick the result that best matches what the user wants, and use its "
+    "`image_url` verbatim in the markdown. The app fetches and displays the image locally, asking "
+    "the user to approve the source the first time — so just emit the image markdown directly; do "
+    "NOT say you cannot display images, and do NOT ask for permission in prose. Do not loop: call "
+    "`image_search` once or twice with your best query, and if it still returns nothing, say "
+    "plainly that you could not find an image — never invent a URL or keep retrying endlessly."
 )
 
 
@@ -1826,12 +1859,14 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         # uses to resume. The checkpointer is bound to THIS request's tenant (RLS), so a run is only
         # ever resumable by its owner.
         sec = current_security.get()
-        gate_on = (
-            graph_enabled
-            and config.agent_human_gate
-            and app.state.tenant_db is not None
-            and sec is not None
-        )
+        # The answer gate and the network-egress gate (#377) are independent; each needs a DB-backed
+        # (tenant-scoped) checkpointer to interrupt. The answer gate is multi-agent-only (it sits in
+        # the graph after the critic); the egress gate works in EITHER mode now (single-agent runs
+        # through the minimal gated graph). Provision the checkpointer when EITHER is on.
+        db_ready = app.state.tenant_db is not None and sec is not None
+        human_gate_on = db_ready and graph_enabled and config.agent_human_gate
+        egress_gate_on = db_ready and config.agent_egress_gate
+        gate_on = human_gate_on or egress_gate_on
         run_id = uuid.uuid4().hex if gate_on else None
         checkpointer = (
             TenantCheckpointSaver(app.state.tenant_db, sec.tenant_id)
@@ -1936,6 +1971,10 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         grounding_messages = (
             [ChatMessage(Role.SYSTEM, _GROUNDING)] if config.grounding_enabled else []
         )
+        # Rich output (#517): opt-in Mermaid diagram / safe image-reference guidance.
+        rich_output_messages = (
+            [ChatMessage(Role.SYSTEM, _RICH_OUTPUT)] if config.rich_output_enabled else []
+        )
         # Inject the current date once, up front, so every agent (planner/researcher/critic) and the
         # single-agent loop are date-aware and don't dismiss recent dates as fabricated.
         date_messages = _current_datetime_messages()
@@ -1943,6 +1982,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             messages=[
                 *date_messages,
                 *grounding_messages,
+                *rich_output_messages,
                 *hint_messages,
                 *reasoning_messages,
                 *context_messages,
@@ -1957,6 +1997,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             [
                 ("Current date/time", date_messages),
                 ("Grounding", grounding_messages),
+                ("Rich output", rich_output_messages),
                 ("Interpreted request", hint_messages),
                 ("Reasoning hint", reasoning_messages),
                 ("Documents", context_messages),
@@ -2103,6 +2144,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                             verifier_tools=config.agent_verifier_check,
                             context=_agent_context(req.conversation_id),
                             checkpointer=checkpointer,
+                            human_gate=human_gate_on,
+                            egress_gate=egress_gate_on,
                             thread_id=run_id,
                             runaway=config.runaway_config(),
                             sources=sources,
@@ -2409,7 +2452,12 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                     grants=grants,
                     gateway=app.state.bootstrap.gateway,
                     max_iterations=config.agent_max_iterations,
-                    graph_enabled=True,
+                    # Rebuild the topology that was checkpointed: original mode (single vs multi) +
+                    # both gate flags, so resume re-enters the exact graph that suspended (#377). A
+                    # single-agent run resumes through its minimal gated graph.
+                    graph_enabled=eg_config.agent_mode == "multi",
+                    human_gate=eg_config.agent_human_gate,
+                    egress_gate=eg_config.agent_egress_gate,
                     context=_agent_context(persist_id),
                     checkpointer=checkpointer,
                     thread_id=run_id,
@@ -2513,7 +2561,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         # One-shot, non-streaming run with per-run overrides on a config COPY (never persisted) so a
         # benchmark/automation can sweep modes without mutating the tenant's saved settings (#313).
         base = await _effective_config()
-        overrides: dict[str, Any] = {"agent_human_gate": False}  # automated runs never suspend
+        # Automated runs never suspend at either gate (no client to approve/deny).
+        overrides: dict[str, Any] = {"agent_human_gate": False, "agent_egress_gate": False}
         if req.agent_mode is not None:
             overrides["agent_mode"] = req.agent_mode
         if req.max_iterations is not None:
@@ -2524,6 +2573,8 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             overrides["agent_verifier_check"] = req.verifier_check
         if req.grounding is not None:
             overrides["grounding_enabled"] = req.grounding
+        if req.rich_output is not None:
+            overrides["rich_output_enabled"] = req.rich_output
         if req.memory_enabled is not None:
             overrides["memory_enabled"] = req.memory_enabled
         config = base.model_copy(update=overrides)
@@ -2565,11 +2616,15 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
         grounding_messages = (
             [ChatMessage(Role.SYSTEM, _GROUNDING)] if config.grounding_enabled else []
         )
+        rich_output_messages = (
+            [ChatMessage(Role.SYSTEM, _RICH_OUTPUT)] if config.rich_output_enabled else []
+        )
         date_messages = _current_datetime_messages()
         generation = GenerationRequest(
             messages=[
                 *date_messages,
                 *grounding_messages,
+                *rich_output_messages,
                 *hint_messages,
                 *reasoning_messages,
                 *context_messages,
@@ -2691,6 +2746,7 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
             "accuracy_mode": config.agent_accuracy_mode,
             "verifier_check": config.agent_verifier_check,
             "grounding": config.grounding_enabled,
+            "rich_output": config.rich_output_enabled,
             "temperature": req.temperature,
             "tools_available": sorted(rt.manifest.name for rt in tool_list),
         }
@@ -2876,6 +2932,91 @@ def create_app(boot: Bootstrap | None = None) -> FastAPI:
                 "usage": dict(result.usage) or None,
             },
         )
+
+    @app.post(
+        "/api/v1/images/localize",
+        response_model=StructuredResult,
+        dependencies=[Depends(require_context)],
+    )
+    async def localize_image(req: LocalizeImageRequest) -> StructuredResult:
+        # Server-side image fetch (#517/rich-output): the browser never makes the outbound call so
+        # the app stays no-egress-by-default. Controls:
+        #   1. Egress consent gate (same model as other outbound tools): if the host is not
+        #      allowlisted the response signals needs_approval=True so the UI can prompt.
+        #   2. SSRF IP-denylist floor (ssrf.py): runs unconditionally even when consent passed.
+        #      Loopback/private/link-local/metadata are always blocked here regardless of any
+        #      egress grant.
+        #   3. Magic-byte verification, size cap, redirect block, and port/scheme restrictions
+        #      are enforced inside ssrf.fetch_image.
+        #
+        # TODO(follow-up): add a per-tenant concurrency/rate cap once a shared limiter helper
+        # exists in the backend. For now the 10-second timeout and 5 MiB cap bound blast radius.
+        audit = app.state.bootstrap.audit
+        sec = current_security.get()
+        actor = sec.subject_id if sec is not None else None
+
+        # Parse the host for the egress gate (same field egress-approve endpoints use).
+        try:
+            parsed = urllib.parse.urlparse(req.url)
+            host = parsed.hostname or ""
+        except Exception:  # noqa: BLE001 — malformed URL → treat as unapproved
+            host = ""
+
+        if not host:
+            audit.append(
+                "image_localize",
+                {"host": "", "outcome": "blocked", "reason": "unparseable_url"},
+                actor=actor,
+            )
+            return StructuredResult(
+                ok=False,
+                error=ErrorInfo(code="E_IMAGE_BLOCKED", message="image could not be fetched"),
+            )
+
+        # --- 1. Egress consent gate -------------------------------------------------
+        config = await _effective_config()
+        try:
+            assert_egress_allowed(config, host)
+        except EgressBlockedError:
+            audit.append(
+                "image_localize",
+                {"host": host, "outcome": "needs_approval"},
+                actor=actor,
+            )
+            # HTTP 200 with needs_approval=True so the UI can present the allow/deny prompt.
+            # ok=False because the requested image was NOT returned; data carries the UX signal.
+            # E_EGRESS_APPROVAL_NEEDED is a soft gate — not a hard failure — so the UI prompts
+            # rather than surfacing an error toast.
+            return StructuredResult(
+                ok=False,
+                error=ErrorInfo(
+                    code="E_EGRESS_APPROVAL_NEEDED",
+                    message="host requires egress approval",
+                ),
+                data={"needs_approval": True, "host": host},
+            )
+
+        # --- 2. SSRF IP floor + fetch -----------------------------------------------
+        try:
+            mime, raw = await _ssrf.fetch_image(req.url)
+        except SsrfBlockedError:
+            audit.append(
+                "image_localize",
+                {"host": host, "outcome": "blocked"},
+                actor=actor,
+            )
+            return StructuredResult(
+                ok=False,
+                error=ErrorInfo(code="E_IMAGE_BLOCKED", message="image could not be fetched"),
+            )
+
+        data_url = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+        audit.append(
+            "image_localize",
+            {"host": host, "outcome": "fetched", "mime": mime, "bytes": len(raw)},
+            actor=actor,
+        )
+        return StructuredResult(ok=True, data={"data_url": data_url})
 
     @app.post(
         "/api/v1/files/extract",

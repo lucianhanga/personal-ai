@@ -69,7 +69,12 @@ export function MermaidDiagram({ definition }: MermaidDiagramProps): ReactElemen
           startOnLoad: false,
           securityLevel: "strict",
           theme: "base",
+          // Render labels as SVG <text>, never HTML in <foreignObject> (which the sanitizer strips —
+          // it was the cause of "missing text"). Also closes the HTML-in-label injection vector.
+          htmlLabels: false,
+          flowchart: { htmlLabels: false },
           themeVariables: {
+            background: "#f6f7f9",
             primaryColor: "#e8f5e9",
             primaryBorderColor: "#1a7f37",
             primaryTextColor: "#1a3320",
@@ -82,9 +87,15 @@ export function MermaidDiagram({ definition }: MermaidDiagramProps): ReactElemen
         });
 
         const { svg: renderedSvg } = await mermaid.render(diagramId, definition);
+        // Keep Mermaid's own <style> block (DOMPurify sanitizes its CSS) — it carries the edge
+        // strokes, text fills, and node/background colors, so forbidding it left the diagram unstyled
+        // (black bg, missing edges). Still block the real XSS sinks: script, foreignObject (no HTML
+        // labels, see htmlLabels:false), iframe, anchors, and event-handler/href attrs. With
+        // securityLevel:"strict" + the pinned mermaid (CVE-2025-54880/54881), this is the safe combo.
         const clean = DOMPurify.sanitize(renderedSvg, {
           USE_PROFILES: { svg: true, svgFilters: true },
-          FORBID_TAGS: ["foreignObject", "script", "style", "iframe", "a"],
+          ADD_TAGS: ["style"],
+          FORBID_TAGS: ["foreignObject", "script", "iframe", "a"],
           FORBID_ATTR: ["onload", "onerror", "onclick", "onmouseover", "href", "xlink:href"],
         });
 

@@ -101,13 +101,30 @@ export function ToolIO({
           padding: "1px 0",
           textAlign: "left",
           font: "inherit",
+          // Keep the whole summary on ONE line; the args hint truncates with an ellipsis when long.
+          whiteSpace: "nowrap",
+          overflow: "hidden",
         }}
       >
-        <span style={{ color: READABLE, fontSize: "0.72rem" }}>{open ? "▾" : "▸"}</span>
-        <span style={{ color: TOOL, fontWeight: 600 }}>Tool</span>
-        <span style={{ color: "#1f2937" }}>{tool}</span>
-        {hint && <span style={{ color: READABLE, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis" }}>{hint}</span>}
-        <span style={{ marginLeft: "auto" }}>
+        <span style={{ color: READABLE, fontSize: "0.72rem", flexShrink: 0 }}>{open ? "▾" : "▸"}</span>
+        <span style={{ color: TOOL, fontWeight: 600, flexShrink: 0 }}>Tool</span>
+        <span style={{ color: "#1f2937", flexShrink: 0 }}>{tool}</span>
+        {hint && (
+          <span
+            style={{
+              color: READABLE,
+              fontStyle: "italic",
+              minWidth: 0,
+              flex: "0 1 auto",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {hint}
+          </span>
+        )}
+        <span style={{ marginLeft: "auto", flexShrink: 0 }}>
           <StatusPill ok={ok} hasResult={hasResult} />
         </span>
       </button>

@@ -385,6 +385,8 @@ def _build_graph(
     think: bool | None,
     max_iterations: int,
     checkpointer: BaseCheckpointSaver[Any] | None,
+    human_gate_enabled: bool = True,
+    egress_gate_enabled: bool = True,
     prompts: Mapping[str, str] | None = None,
     reasoning_levels: Mapping[str, str] | None = None,
     model_overrides: Mapping[str, str] | None = None,
@@ -410,6 +412,12 @@ def _build_graph(
     ``query`` is the standalone retrieval query the sources are run against. With NO sources the
     topology is exactly today's (planner -> researcher -> ...) — a strict, safe superset.
     """
+    # Durable gates (#377) need the checkpointer to interrupt(). They are independent: the answer
+    # gate (human_gate) and the network-egress gate (egress_gate) can each be on alone. A turn with
+    # NO checkpointer degrades both to the inline, non-suspending path.
+    human_enabled = human_gate_enabled and checkpointer is not None
+    egress_enabled = egress_gate_enabled and checkpointer is not None
+
     agent_prompts = resolve_prompts(prompts)
     _levels = dict(reasoning_levels or {})
     _models = dict(model_overrides or {})
@@ -733,12 +741,12 @@ def _build_graph(
             if blocked is None:
                 break
             frame_state = _frame_state(blocked)
-            if checkpointer is not None:
+            if egress_enabled:
                 # Durable gate: persist the frame and hand off to egress_gate (it interrupts).
                 # ``attempts``/``answer`` are not advanced; the resumed researcher completes them.
                 return {"evidence": evidence, "egress_pending": frame_state}
-            # No checkpointer: degrade to today's non-blocking behavior (retry denied -> egress
-            # error) without interrupting (interrupt() requires a checkpointer).
+            # Egress gate off (or no checkpointer): degrade to today's non-blocking behavior (retry
+            # denied -> egress error) without interrupting (interrupt() requires a checkpointer).
             agent_iter = _resume_iter(frame_state)
 
         attempt = state.get("attempts", 0) + 1
@@ -976,13 +984,14 @@ def _build_graph(
     builder.add_node("researcher", researcher)
     builder.add_node("critic", critic)
     builder.add_node("finalize", finalize)
-    if checkpointer is not None:
+    if human_enabled:
         builder.add_node("human_gate", human_gate)
-        # The egress-approval gate (#377): a SECOND durable gate, reached only when the researcher
-        # blocks on egress. The researcher persists the resume frame into ``egress_pending`` and a
-        # conditional edge routes here; this node interrupts, then routes BACK to the researcher,
-        # which sees ``egress_pending`` and retries only the blocked call. It needs the checkpointer
-        # (interrupt()); without one, the researcher degrades to a non-blocking egress error inline.
+    if egress_enabled:
+        # The egress-approval gate (#377): a SECOND, INDEPENDENT durable gate, reached only when the
+        # researcher blocks on egress. The researcher persists the resume frame into
+        # ``egress_pending`` and a conditional edge routes here; this node interrupts, then routes
+        # BACK to the researcher, which sees ``egress_pending`` and retries only the blocked call.
+        # Needs the checkpointer (interrupt()); when off, the researcher degrades to inline error.
         builder.add_node("egress_gate", egress_gate)
         builder.add_edge("egress_gate", "researcher")
     if verify:
@@ -994,10 +1003,10 @@ def _build_graph(
         builder.add_edge("merge", "researcher")
     else:
         builder.add_edge("planner", "researcher")
-    if checkpointer is not None:
+    if egress_enabled:
         # Route to the egress gate when the researcher suspended on an egress block; else to the
-        # critic. (Without a checkpointer the researcher never sets ``egress_pending`` — it degrades
-        # inline — so the plain researcher->critic edge below applies.)
+        # critic. (When the egress gate is off the researcher never sets ``egress_pending`` — it
+        # degrades inline — so the plain researcher->critic edge below applies.)
         def _route_after_researcher(state: GraphState) -> str:
             return "egress_gate" if state.get("egress_pending") else "critic"
 
@@ -1008,9 +1017,10 @@ def _build_graph(
         )
     else:
         builder.add_edge("researcher", "critic")
-    # The gate (a SECURITY step) is never accuracy-gated: it always sits before finalize when a
-    # checkpointer is supplied, regardless of the verification ladder depth.
-    gate_or_finalize = "human_gate" if checkpointer is not None else "finalize"
+    # The answer gate (a SECURITY step) is never accuracy-gated: it always sits before finalize when
+    # enabled, regardless of the verification ladder depth. The egress gate is independent (it sits
+    # off the researcher), so only the human/answer gate decides this hop.
+    gate_or_finalize = "human_gate" if human_enabled else "finalize"
     # Where the critic proceeds when it is NOT asking for a revision: into the verifier (accurate
     # mode), else straight to the gate/finalize (standard mode).
     after_critic = "verifier" if verify else gate_or_finalize
@@ -1047,8 +1057,152 @@ def _build_graph(
             _route_after_verify,
             {"researcher": "researcher", gate_or_finalize: gate_or_finalize},
         )
-    if checkpointer is not None:
+    if human_enabled:
         builder.add_edge("human_gate", "finalize")
+    builder.add_edge("finalize", END)
+    return builder.compile(checkpointer=checkpointer)
+
+
+def _build_single_agent_graph(
+    *,
+    messages: Sequence[ChatMessage],
+    provider: ModelProvider,
+    model: str,
+    gateway: ToolGateway,
+    tools: Sequence[RegisteredTool],
+    grants: Sequence[Permission],
+    approved: bool,
+    think: bool | None,
+    max_iterations: int,
+    runaway: RunawayConfig | None,
+    checkpointer: BaseCheckpointSaver[Any] | None,
+    system_prompt: str,
+) -> Any:
+    """A minimal single-node graph wrapping the single-agent loop (``run_agent``) with the SAME
+    durable egress-approval gate (#377) the multi-agent graph uses. This gives ``agent_mode=single``
+    the allow/deny-and-resume pause that previously only existed for the multi-agent path: the agent
+    node forwards ``run_agent``'s events (INCLUDING answer deltas, so token streaming is preserved),
+    and on a blocked outbound host it persists the resume frame and routes to ``egress_gate`` (which
+    ``interrupt()``s). On resume it re-enters ``run_agent`` with ``resume_from`` to retry ONLY the
+    blocked call. Without a checkpointer (egress gate off) the caller uses bare ``run_agent``, so
+    the common path is unchanged. Topology: START -> agent -> [egress_gate] -> finalize -> END."""
+    egress_enabled = checkpointer is not None
+
+    async def agent_node(state: GraphState) -> dict[str, Any]:
+        writer = get_stream_writer()
+        answer, usage = "", {}
+
+        def _consume(ev: AgentEvent) -> None:
+            nonlocal answer, usage
+            if ev.type == "final":
+                # Capture the completed answer/usage; finalize emits the single terminal `final`.
+                answer = ev.answer or ""
+                usage = dict(ev.usage or {})
+                return
+            # Forward everything else — reasoning, tool steps, AND answer deltas (streaming intact).
+            writer(ev)
+
+        def _frame_state(blocked: AgentEvent) -> dict[str, Any]:
+            out = dict(blocked.output or {})
+            return {
+                "convo": out.get("convo", []),
+                "blocked_call": {
+                    "name": blocked.tool,
+                    "version": out.get("version", "1.0.0"),
+                    "arguments": dict(blocked.args or {}),
+                },
+                "blocked_host": out.get("blocked_host", ""),
+                "subject_id": _state_subject(state),
+            }
+
+        def _resume_iter(frame: Mapping[str, Any]) -> AsyncIterator[AgentEvent]:
+            return run_agent(
+                messages=(),
+                provider=provider,
+                model=model,
+                gateway=gateway,
+                tools=tools,
+                grants=grants,
+                approved=approved,
+                think=think,
+                max_iterations=max_iterations,
+                runaway=runaway,
+                resume_from=ResumeFrame(
+                    convo=deserialize_convo(frame["convo"]),
+                    blocked_call=BlockedCall(
+                        name=frame["blocked_call"]["name"],
+                        version=frame["blocked_call"]["version"],
+                        arguments=dict(frame["blocked_call"]["arguments"]),
+                    ),
+                ),
+            )
+
+        async def _drive(agent_iter: AsyncIterator[AgentEvent]) -> AgentEvent | None:
+            async for ev in agent_iter:
+                if ev.type == "egress_blocked":
+                    return ev
+                _consume(ev)
+            return None
+
+        pending = state.get("egress_pending")
+        if pending is not None:
+            agent_iter: AsyncIterator[AgentEvent] = _resume_iter(pending)
+        else:
+            convo = [ChatMessage(Role.SYSTEM, system_prompt), *messages]
+            agent_iter = run_agent(
+                messages=convo,
+                provider=provider,
+                model=model,
+                gateway=gateway,
+                tools=tools,
+                grants=grants,
+                approved=approved,
+                think=think,
+                max_iterations=max_iterations,
+                runaway=runaway,
+            )
+
+        while True:
+            blocked = await _drive(agent_iter)
+            if blocked is None:
+                break
+            frame = _frame_state(blocked)
+            if egress_enabled:
+                return {"egress_pending": frame}
+            agent_iter = _resume_iter(frame)  # degrade inline (no checkpointer to interrupt)
+        return {"answer": answer, "usage": usage, "egress_pending": None, "egress_decision": ""}
+
+    async def egress_gate(state: GraphState) -> dict[str, Any]:
+        pending = state.get("egress_pending") or {}
+        resume_value = interrupt(_egress_interrupt_payload(pending))
+        return {"egress_decision": _resume_decision(resume_value)}
+
+    async def finalize(state: GraphState) -> dict[str, Any]:
+        # The answer already streamed as deltas from the agent node, so emit ONLY the terminal final
+        # (no re-emitted answer event). ``answer`` rides along so a resumed stream re-delivers it.
+        writer = get_stream_writer()
+        final = AgentEvent(
+            type="final", answer=state.get("answer", ""), usage=state.get("usage", {})
+        )
+        writer(final)
+        return {}
+
+    builder = StateGraph(GraphState)
+    builder.add_node("agent", agent_node)
+    builder.add_node("finalize", finalize)
+    builder.add_edge(START, "agent")
+    if egress_enabled:
+        builder.add_node("egress_gate", egress_gate)
+        builder.add_edge("egress_gate", "agent")
+
+        def _route_after_agent(state: GraphState) -> str:
+            return "egress_gate" if state.get("egress_pending") else "finalize"
+
+        builder.add_conditional_edges(
+            "agent", _route_after_agent, {"egress_gate": "egress_gate", "finalize": "finalize"}
+        )
+    else:
+        builder.add_edge("agent", "finalize")
     builder.add_edge("finalize", END)
     return builder.compile(checkpointer=checkpointer)
 
@@ -1100,6 +1254,10 @@ async def run_graph(
     think: bool | None = None,
     context: AgentContext | None = None,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
+    human_gate: bool = True,
+    egress_gate: bool = True,
+    single_agent: bool = False,
+    single_agent_prompt: str = "",
     thread_id: str | None = None,
     resume: Any | None = None,
     prompts: Mapping[str, str] | None = None,
@@ -1127,6 +1285,37 @@ async def run_graph(
     unified provenance (``source_kind``/``merged_from``). With NO sources this is exactly today's
     behavior.
     """
+    # Single-agent mode with the egress gate on (#377): a minimal one-node graph wrapping run_agent,
+    # so agent_mode="single" gets the same durable allow/deny-and-resume pause as the multi-agent
+    # path. Everything else (the resume driver below) is shared.
+    if single_agent:
+        graph = _build_single_agent_graph(
+            messages=messages,
+            provider=provider,
+            model=model,
+            gateway=gateway,
+            tools=tools,
+            grants=grants,
+            approved=approved,
+            think=think,
+            max_iterations=max_iterations,
+            runaway=runaway,
+            checkpointer=checkpointer if egress_gate else None,
+            system_prompt=single_agent_prompt,
+        )
+        if checkpointer is None or not egress_gate:
+            async for ev in graph.astream({"context": context}, stream_mode="custom"):
+                yield ev
+            return
+        sa_config = {"configurable": {"thread_id": thread_id}}
+        sa_input: Any = Command(resume=resume) if resume is not None else {"context": context}
+        async for ev in graph.astream(sa_input, sa_config, stream_mode="custom"):
+            yield ev
+        snapshot = await graph.aget_state(sa_config)
+        if snapshot.interrupts:
+            yield AgentEvent(type="approval_request", output=dict(snapshot.interrupts[0].value))
+        return
+
     graph = _build_graph(
         messages=messages,
         provider=provider,
@@ -1138,6 +1327,8 @@ async def run_graph(
         think=think,
         max_iterations=max_iterations,
         checkpointer=checkpointer,
+        human_gate_enabled=human_gate,
+        egress_gate_enabled=egress_gate,
         prompts=prompts,
         reasoning_levels=reasoning_levels,
         model_overrides=model_overrides,

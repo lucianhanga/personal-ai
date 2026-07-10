@@ -8,6 +8,7 @@ import {
   fetchConversations,
   fetchFiles,
   fetchMemories,
+  fetchSettings,
   allowEgressHost,
   fetchTranscribeEnabled,
   fetchTtsEnabled,
@@ -492,6 +493,22 @@ export function Chat({
   const patchChat = (key: string, fn: (s: ChatState) => ChatState): void => {
     setChats((prev) => ({ ...prev, [key]: fn(prev[key] ?? EMPTY_CHAT) }));
   };
+
+  useEffect(() => {
+    let active = true;
+    // The "approve tools" composer default follows the Security policy (#tool_approval_required):
+    // when approval is required, start unchecked so HIGH-risk tools don't auto-run. Best-effort; the
+    // user can still flip it per turn. Falls back to the on-by-default if settings are unavailable.
+    fetchSettings(token)
+      .then(({ settings, defaults }) => {
+        if (!active) return;
+        setApproveTools(!(settings.tool_approval_required ?? defaults.tool_approval_required));
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [token]);
 
   useEffect(() => {
     let active = true;
@@ -1676,6 +1693,7 @@ export function Chat({
               onCopyToComposer={copyToComposer}
               onEditResubmit={(fromId, text) => void editResubmit(fromId, text)}
               onDelete={(fromId) => void deleteFrom(fromId)}
+              token={token}
             />
 
             {!atBottom && (

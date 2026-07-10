@@ -30,6 +30,12 @@ class TenantSettings(StrictModel):
     embed_provider: Literal["ollama", "openai_compat"] | None = None
     embed_model: str | None = Field(default=None, min_length=1, max_length=200)
     openai_base_url: str | None = Field(default=None, min_length=1, max_length=500)
+    # Layered model stack (#491): per-task models beyond chat. ner_model is the Ollama model for
+    # entity/relation extraction (KAG); rerank_enabled gates the post-retrieval cross-encoder rerank
+    # (#492); rerank_model is its HF id. None on any inherits the deployment default (CoreConfig).
+    ner_model: str | None = Field(default=None, min_length=1, max_length=200)
+    rerank_enabled: bool | None = None
+    rerank_model: str | None = Field(default=None, min_length=1, max_length=200)
 
     # --- Agent (M8) ---
     # Agentic mode (#290): "single" = single-agent loop, "multi" = planner/researcher/critic graph,
@@ -38,11 +44,17 @@ class TenantSettings(StrictModel):
     agent_mode: Literal["single", "multi", "custom"] | None = None
     agent_graph_enabled: bool | None = None
     agent_human_gate: bool | None = None
+    # Network-egress approval gate (#377), independent of the answer gate (agent_human_gate): pause
+    # the turn to allow/deny a tool's call to a non-allowlisted host. None inherits the default.
+    agent_egress_gate: bool | None = None
     agent_accuracy_mode: Literal["standard", "accurate"] | None = None
     # Judge fact-check (#465): when on, the final judge runs ONE bounded independent RAG/KAG
     # retrieval to fact-check the answer — the verifier in accurate mode, else the critic. None
     # inherits the deployment default.
     agent_verifier_check: bool | None = None
+    # Tool-approval policy: require explicit per-turn approval of HIGH-risk tools before they run
+    # (the composer's "approve tools" default follows this). None inherits the deployment default.
+    tool_approval_required: bool | None = None
     agent_max_iterations: int | None = Field(default=None, ge=1, le=50)
     # Whole-turn wall-clock cap in seconds (E_TIMEOUT on expiry). 30s..1h.
     agent_timeout_seconds: int | None = Field(default=None, ge=30, le=3600)
@@ -54,6 +66,8 @@ class TenantSettings(StrictModel):
     # --- Behaviour ---
     memory_enabled: bool | None = None
     grounding_enabled: bool | None = None
+    # opt-in; lets the model emit Mermaid diagrams / rich markdown
+    rich_output_enabled: bool | None = None
     max_upload_bytes: int | None = Field(default=None, ge=1, le=1_000_000_000)
 
     # --- Voice / speech-to-text (M9.2) ---

@@ -56,6 +56,13 @@ def test_settings_round_trip_and_partial_inherit() -> None:
                 saved = await store.upsert(
                     TenantSettings(
                         default_model="qwen3:14b",
+                        default_reasoning="high",
+                        ner_model="qwen3:14b",
+                        rerank_enabled=True,
+                        rerank_model="Qwen/Qwen3-Reranker-0.6B",
+                        agent_egress_gate=True,
+                        agent_verifier_check=False,
+                        tool_approval_required=True,
                         agent_graph_enabled=True,
                         agent_max_iterations=12,
                         grounding_enabled=False,
@@ -70,6 +77,18 @@ def test_settings_round_trip_and_partial_inherit() -> None:
                     )
                 )
                 assert saved.default_model == "qwen3:14b"
+                # Model-stack defaults round-trip (#491): these columns were added in 0031 and were
+                # previously missing from the store (default_reasoning silently failed to persist).
+                assert saved.default_reasoning == "high"
+                assert saved.ner_model == "qwen3:14b"
+                assert saved.rerank_enabled is True
+                assert saved.rerank_model == "Qwen/Qwen3-Reranker-0.6B"
+                # Security gates round-trip (0032): egress gate decoupled from the answer gate, and
+                # the persisted high-risk tool-approval policy.
+                assert saved.agent_egress_gate is True
+                # 0033: agent_verifier_check had the same never-persisted bug as default_reasoning.
+                assert saved.agent_verifier_check is False
+                assert saved.tool_approval_required is True
                 assert saved.agent_graph_enabled is True
                 assert saved.agent_max_iterations == 12
                 assert saved.grounding_enabled is False

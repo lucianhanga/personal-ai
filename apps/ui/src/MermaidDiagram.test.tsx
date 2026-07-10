@@ -35,17 +35,25 @@ test("renders diagram after successful render", async () => {
   });
 });
 
-test("calls DOMPurify.sanitize with strict config", async () => {
+test("calls DOMPurify.sanitize with the safe SVG config", async () => {
   const { default: DOMPurify } = await import("dompurify");
   render(<MermaidDiagram definition="graph TD\nA-->B" />);
   await waitFor(() => {
-    expect(DOMPurify.sanitize).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        USE_PROFILES: { svg: true, svgFilters: true },
-        FORBID_TAGS: expect.arrayContaining(["foreignObject", "script", "style", "iframe", "a"]),
-        FORBID_ATTR: expect.arrayContaining(["onload", "onerror", "onclick", "onmouseover", "href", "xlink:href"]),
-      })
+    const call = (DOMPurify.sanitize as ReturnType<typeof vi.fn>).mock.calls[0];
+    const opts = call[1] as {
+      USE_PROFILES: unknown;
+      ADD_TAGS: string[];
+      FORBID_TAGS: string[];
+      FORBID_ATTR: string[];
+    };
+    expect(opts.USE_PROFILES).toEqual({ svg: true, svgFilters: true });
+    // <style> is KEPT (Mermaid's theme CSS: edge strokes, text fills, fills) so the diagram renders;
+    // the real XSS sinks stay forbidden.
+    expect(opts.ADD_TAGS).toContain("style");
+    expect(opts.FORBID_TAGS).toEqual(expect.arrayContaining(["foreignObject", "script", "iframe", "a"]));
+    expect(opts.FORBID_TAGS).not.toContain("style");
+    expect(opts.FORBID_ATTR).toEqual(
+      expect.arrayContaining(["onload", "onerror", "onclick", "onmouseover", "href", "xlink:href"]),
     );
   });
 });

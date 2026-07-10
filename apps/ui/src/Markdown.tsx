@@ -1,6 +1,7 @@
 import { isValidElement, useMemo, useState, type ReactElement, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { LocalizedImage } from "./LocalizedImage";
 import { MermaidDiagram } from "./MermaidDiagram";
 import "./markdown.css";
 
@@ -34,43 +35,71 @@ function safeUrlTransform(url: string): string {
   return "";
 }
 
-// SafeImage: allow inline images only for data:image/, blob:, or same-origin/relative URLs.
-// Any http(s), javascript:, data:text/html, or other scheme renders an inert fallback span.
-function SafeImage({ src, alt }: { src?: string; alt?: string }): ReactElement {
+// SafeImage: allow inline images for data:image/, blob:, or same-origin/relative URLs directly.
+// Remote http(s) URLs are routed through LocalizedImage (server-side fetch, no direct browser egress)
+// whenever the component is rendered inside a chat (a token prop is present — note local zero-login
+// passes an EMPTY string, which is still a valid auth context). A `Markdown` used WITHOUT a token
+// prop (e.g. standalone doc previews) leaves the token undefined and remote images fall back inert.
+// All other schemes (javascript:, data:text/html, etc.) render the inert fallback span.
+function SafeImage({
+  src,
+  alt,
+  token,
+}: {
+  src?: string;
+  alt?: string;
+  token?: string;
+}): ReactElement {
   const [showFallback, setShowFallback] = useState(false);
 
-  const isAllowed = (() => {
-    if (!src) return false;
-    if (src.startsWith("data:image/")) return true;
-    if (src.startsWith("blob:")) return true;
-    if (src.startsWith("/") || src.startsWith("./") || src.startsWith("../")) return true;
-    if (!src.includes(":")) return true; // no scheme -> relative path
-    return false;
-  })();
+  if (!src) return <span className="md-img-fallback">{alt}</span>;
 
-  if (!isAllowed || showFallback) {
-    return <span className="md-img-fallback">{alt ?? src}</span>;
+  // data:image/ and blob: are safe to render directly.
+  if (src.startsWith("data:image/") || src.startsWith("blob:")) {
+    if (showFallback) return <span className="md-img-fallback">{alt ?? src}</span>;
+    return (
+      <img
+        src={src}
+        alt={alt}
+        loading="lazy"
+        style={{ maxWidth: "100%", height: "auto" }}
+        onError={() => setShowFallback(true)}
+      />
+    );
   }
 
-  return (
-    <img
-      src={src}
-      alt={alt}
-      loading="lazy"
-      style={{ maxWidth: "100%", height: "auto" }}
-      onError={() => setShowFallback(true)}
-    />
-  );
+  // Same-origin / relative paths are safe to render directly.
+  if (src.startsWith("/") || src.startsWith("./") || src.startsWith("../") || !src.includes(":")) {
+    if (showFallback) return <span className="md-img-fallback">{alt ?? src}</span>;
+    return (
+      <img
+        src={src}
+        alt={alt}
+        loading="lazy"
+        style={{ maxWidth: "100%", height: "auto" }}
+        onError={() => setShowFallback(true)}
+      />
+    );
+  }
+
+  // Remote http(s): localize server-side whenever we have an auth context (token defined, incl. the
+  // empty-string local zero-login token). Only a `Markdown` rendered with NO token prop stays inert.
+  if ((src.startsWith("http://") || src.startsWith("https://")) && token !== undefined) {
+    return <LocalizedImage url={src} alt={alt} token={token} />;
+  }
+
+  // Other schemes (javascript:, data:text/html, …) or a tokenless standalone Markdown: inert fallback.
+  return <span className="md-img-fallback">{alt ?? src}</span>;
 }
 
-function makeComponents(streaming: boolean): Components {
+function makeComponents(streaming: boolean, token?: string): Components {
   return {
     a: ({ href, children }) => (
       <a href={href} target="_blank" rel="noopener noreferrer">
         {children}
       </a>
     ),
-    img: ({ src, alt }) => <SafeImage src={src} alt={alt} />,
+    img: ({ src, alt }) => <SafeImage src={src} alt={alt} token={token} />,
     pre: ({ children }) => {
       // Inspect direct code-element child to detect fenced mermaid blocks.
       const codeEl = isValidElement(children)
@@ -97,11 +126,15 @@ function makeComponents(streaming: boolean): Components {
 export function Markdown({
   content,
   streaming = false,
+  token,
 }: {
   content: string;
   streaming?: boolean;
+  /** Auth token for server-side image localization. When absent, remote http(s) images fall back to
+   * the inert span (no direct browser egress either way). */
+  token?: string;
 }): ReactElement {
-  const components = useMemo(() => makeComponents(streaming), [streaming]);
+  const components = useMemo(() => makeComponents(streaming, token), [streaming, token]);
   return (
     <div className="md" data-testid="markdown">
       <ReactMarkdown

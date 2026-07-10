@@ -112,6 +112,26 @@ def test_effective_config_no_overrides_returns_base() -> None:
     assert effective_config(base, TenantSettings()) is base
 
 
+def test_rich_output_enabled_default_is_true() -> None:
+    # On by default (#517); image display still gates on per-host egress consent.
+    assert CoreConfig().rich_output_enabled is True
+
+
+def test_from_env_parses_rich_output_enabled() -> None:
+    config = CoreConfig.from_env({"PERSONALAI_RICH_OUTPUT_ENABLED": "true"})
+    assert config.rich_output_enabled is True
+    config_off = CoreConfig.from_env({"PERSONALAI_RICH_OUTPUT_ENABLED": "false"})
+    assert config_off.rich_output_enabled is False
+
+
+def test_effective_config_overlays_rich_output_enabled() -> None:
+    base = CoreConfig(rich_output_enabled=False)
+    eff = effective_config(base, TenantSettings(rich_output_enabled=True))
+    assert eff.rich_output_enabled is True
+    # Base is left untouched.
+    assert base.rich_output_enabled is False
+
+
 def test_agent_mode_default_is_single() -> None:
     assert CoreConfig().agent_mode == "single"
 

@@ -567,6 +567,8 @@ interface MessageListProps {
   onCopyToComposer?: (payload: CopyPayload) => void;
   onEditResubmit?: (fromMessageId: number, text: string) => void;
   onDelete?: (fromMessageId: number) => void;
+  /** Auth token forwarded to Markdown for server-side image localization (#517). */
+  token?: string;
 }
 
 /** The scrollable transcript: user + assistant messages with reasoning/tool details + citations. */
@@ -583,6 +585,7 @@ export function MessageList({
   onCopyToComposer,
   onEditResubmit,
   onDelete,
+  token,
 }: MessageListProps): React.ReactElement {
   // Per-message collapsed state, keyed by the USER message index. Questions default to expanded.
   const [collapsed, setCollapsed] = useState<Record<number, boolean>>({});
@@ -630,7 +633,7 @@ export function MessageList({
               defaultOpen={busy && i === lastIndex}
               onAllowHost={onAllowHost}
             />
-            <Markdown content={m.content} streaming={busy && i === lastIndex} />
+            <Markdown content={m.content} streaming={busy && i === lastIndex} token={token} />
             {citations[i]?.length ? (
               <div data-testid="citations" style={{ fontSize: "0.75rem", color: "#555" }}>
                 Sources:{" "}

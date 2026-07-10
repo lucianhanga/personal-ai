@@ -5,8 +5,9 @@ import { DocumentsPanel } from "./DocumentsPanel";
 import { KnowledgePanel } from "./KnowledgePanel";
 import { McpPanel } from "./McpPanel";
 import { Memory } from "./Memory";
-import { Network } from "./Network";
+import { ModelStack } from "./ModelStack";
 import { Preferences } from "./Preferences";
+import { Security } from "./Security";
 import { Tools } from "./Tools";
 import type { DocumentInfo } from "./api";
 
@@ -15,20 +16,23 @@ type SectionId =
   | "tools"
   | "mcp"
   | "agents"
+  | "models"
   | "memory"
   | "knowledge"
-  | "network"
-  | "preferences";
+  | "preferences"
+  | "security";
 
 const SECTIONS: { id: SectionId; label: string }[] = [
+  { id: "models", label: "Model stack" },
   { id: "documents", label: "Documents" },
-  { id: "tools", label: "Tools" },
   { id: "mcp", label: "MCP servers" },
+  { id: "tools", label: "Tools" },
   { id: "agents", label: "Agents" },
   { id: "memory", label: "Memory" },
   { id: "knowledge", label: "Knowledge" },
-  { id: "network", label: "Network" },
   { id: "preferences", label: "Preferences" },
+  // Security sits last and is flagged red — egress + the human-in-the-loop approval gates.
+  { id: "security", label: "Security" },
 ];
 
 interface SettingsViewProps {
@@ -59,6 +63,9 @@ export function SettingsView(props: SettingsViewProps): React.ReactElement {
       >
         {SECTIONS.map((s) => {
           const active = section === s.id;
+          // Security is flagged red so it reads as the "danger zone" of settings.
+          const danger = s.id === "security";
+          const accent = danger ? "#b00020" : "#1a7f37";
           return (
             <button
               key={s.id}
@@ -72,9 +79,10 @@ export function SettingsView(props: SettingsViewProps): React.ReactElement {
                 padding: "0.4rem 0.6rem",
                 border: "none",
                 cursor: "pointer",
-                borderLeft: active ? "3px solid #1a7f37" : "3px solid transparent",
-                background: active ? "#f0f6f1" : "none",
-                fontWeight: active ? 600 : 400,
+                borderLeft: active ? `3px solid ${accent}` : "3px solid transparent",
+                background: active ? (danger ? "#fbeaec" : "#f0f6f1") : "none",
+                color: danger ? "#b00020" : undefined,
+                fontWeight: active || danger ? 600 : 400,
                 fontSize: "0.88rem",
               }}
             >
@@ -98,10 +106,11 @@ export function SettingsView(props: SettingsViewProps): React.ReactElement {
         {section === "tools" && <Tools token={token} />}
         {section === "mcp" && <McpPanel token={token} />}
         {section === "agents" && <Agents token={token} />}
+        {section === "models" && <ModelStack token={token} />}
         {section === "memory" && <Memory token={token} />}
         {section === "knowledge" && <KnowledgePanel token={token} />}
-        {section === "network" && <Network token={token} />}
         {section === "preferences" && <Preferences token={token} onToken={onToken} />}
+        {section === "security" && <Security token={token} />}
       </div>
     </div>
   );
