@@ -62,12 +62,26 @@ On the VM, run the app with `make db` then `make run-backend` (port 8765) and
 infra/scripts/sync-data.sh   -n devel            # push Postgres (replaces remote DB)
 infra/scripts/sync-data.sh   -n devel --no-docs  # everything EXCEPT document corpus + KAG
 infra/scripts/sync-data.sh   -n devel --pull     # bring remote DB back to local
-infra/scripts/sync-claude.sh -n devel            # push Claude settings/commands/MCP config
+infra/scripts/sync-claude.sh -n devel            # push Claude config: agents, agent-memory, settings, MCP
+infra/scripts/sync-claude.sh -n devel --dry-run  # preview what sync-claude would change
+infra/scripts/sync-claude.sh -n devel --pull     # bring remote Claude config back to local
 ```
 
 `sync-data.sh` does a Postgres dump/restore over SSH; the project's `make db`
 Postgres container must be running on both ends. `--push` is the default and
 replaces the destination DB.
+
+`sync-claude.sh` carries your **agent definitions** (`~/.claude/agents/`) along
+with agent memory, global `CLAUDE.md`, `settings.json`, and user-scoped MCP
+servers — run it whenever you add or edit an agent locally. To push **only the
+agents** without touching the rest of the remote config, rsync that one directory
+(resolve the VM IP first via `connect.sh`, or reuse the last known IP):
+
+```bash
+rsync -a -e "ssh -i ~/.ssh/ai-a100-devel" \
+  ~/.claude/agents/ azureuser@<vm-ip>:~/.claude/agents/
+# add --itemize-changes to preview, -n for a dry-run, --delete to prune removed agents
+```
 
 ### 4. stop — pause billing, keep data
 
