@@ -61,6 +61,7 @@ def test_settings_round_trip_and_partial_inherit() -> None:
                         rerank_enabled=True,
                         rerank_model="Qwen/Qwen3-Reranker-0.6B",
                         agent_egress_gate=True,
+                        agent_verifier_check=False,
                         tool_approval_required=True,
                         agent_graph_enabled=True,
                         agent_max_iterations=12,
@@ -85,6 +86,8 @@ def test_settings_round_trip_and_partial_inherit() -> None:
                 # Security gates round-trip (0032): egress gate decoupled from the answer gate, and
                 # the persisted high-risk tool-approval policy.
                 assert saved.agent_egress_gate is True
+                # 0033: agent_verifier_check had the same never-persisted bug as default_reasoning.
+                assert saved.agent_verifier_check is False
                 assert saved.tool_approval_required is True
                 assert saved.agent_graph_enabled is True
                 assert saved.agent_max_iterations == 12

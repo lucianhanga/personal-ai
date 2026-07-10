@@ -887,8 +887,9 @@ _RICH_OUTPUT = (
     "with a concise query, pick the result that best matches what the user wants, and use its "
     "`image_url` verbatim in the markdown. The app fetches and displays the image locally, asking "
     "the user to approve the source the first time — so just emit the image markdown directly; do "
-    "NOT say you cannot display images, and do NOT ask for permission in prose. If `image_search` "
-    "returns no suitable result, say so plainly instead of inventing a URL."
+    "NOT say you cannot display images, and do NOT ask for permission in prose. Do not loop: call "
+    "`image_search` once or twice with your best query, and if it still returns nothing, say "
+    "plainly that you could not find an image — never invent a URL or keep retrying endlessly."
 )
 
 

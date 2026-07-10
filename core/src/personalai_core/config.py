@@ -389,9 +389,14 @@ class CoreConfig(StrictModel):
     )
     # Image search provider: the built-in image_search tool's backend. The model calls it to obtain
     # real, fetchable image URLs instead of guessing them (a hand-built image URL is almost always
-    # wrong and never renders). "wikimedia" = Wikimedia Commons API, zero-setup, no key, egress
-    # commons.wikimedia.org (the default). An unknown provider falls back to wikimedia (logged).
-    image_search_provider: str = Field(default="wikimedia", description="wikimedia")
+    # wrong and never renders). "wikimedia" = Wikimedia Commons API, zero-setup, no key (the
+    # default, encyclopedic but only broadly-notable subjects). "tavily" = broad-web Tavily image
+    # search (finds people/private companies Commons lacks; reuses web_search_api_key).
+    # "wikimedia+tavily" = try Commons first, fall back to Tavily when empty (best coverage; needs
+    # the Tavily key, else degrades to Commons-only). An unknown provider falls back to wikimedia.
+    image_search_provider: str = Field(
+        default="wikimedia", description="wikimedia | tavily | wikimedia+tavily"
+    )
     image_search_max_results: int = Field(
         default=5, description="Default number of image_search results (the tool caps it at 10)."
     )

@@ -133,7 +133,9 @@ class _ResearcherFetches(FakeModelProvider):
         return GenerationResult(text="ok", model=request.model)
 
 
-def _app(tool: RegisteredTool, provider: FakeModelProvider, agent_mode: str = "multi") -> TestClient:
+def _app(
+    tool: RegisteredTool, provider: FakeModelProvider, agent_mode: str = "multi"
+) -> TestClient:
     boot = bootstrap(
         config=CoreConfig(
             app_mode="hosted",

@@ -4,8 +4,10 @@ from personalai_tool_builtin.calculator import CALCULATOR_MANIFEST, Calculator
 from personalai_tool_builtin.http_fetch import HTTP_FETCH_MANIFEST, EgressAllowed, HttpFetch
 from personalai_tool_builtin.image_search import (
     IMAGE_SEARCH_MANIFEST,
+    FallbackImageSearch,
     ImageSearch,
     ImageSearchProvider,
+    TavilyImageSearch,
     WikimediaCommonsImageSearch,
     image_search_manifest,
 )
@@ -41,8 +43,10 @@ __all__ = [
     "EmbedText",
     "ForgetMemoryTool",
     "HttpFetch",
+    "FallbackImageSearch",
     "ImageSearch",
     "ImageSearchProvider",
+    "TavilyImageSearch",
     "RememberTool",
     "SaveMemory",
     "SearxngSearch",

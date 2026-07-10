@@ -31,6 +31,7 @@ from personalai_contracts.schemas.tools import (
 )
 
 WIKIMEDIA_COMMONS_HOST = "commons.wikimedia.org"
+TAVILY_HOST = "api.tavily.com"
 
 # Hard cap on results regardless of what the caller asks for (bounds payload + provider cost).
 _MAX_RESULTS_CAP = 10
@@ -109,6 +110,10 @@ class WikimediaCommonsImageSearch:
     def host(self) -> str:
         return WIKIMEDIA_COMMONS_HOST
 
+    @property
+    def egress_hosts(self) -> tuple[str, ...]:
+        return (WIKIMEDIA_COMMONS_HOST,)
+
     async def search(self, query: str, max_results: int) -> list[dict[str, object]]:
         client = self._client or httpx.AsyncClient(timeout=self._timeout, follow_redirects=False)
         try:
@@ -182,6 +187,130 @@ def _map_commons_pages(payload: object, max_results: int) -> list[dict[str, obje
     return mapped[:max_results]
 
 
+# --- Tavily (broad-web image search, requires an API key) --------------------------------------
+
+
+class TavilyImageSearch:
+    """Search the broad web for images via the Tavily search API (``POST {base_url}/search`` with
+    ``include_images``). Unlike Wikimedia Commons (encyclopedic, free-media only), this finds photos
+    of people and private companies — e.g. a regional firm's CEO — that Commons does not carry. The
+    returned ``image_url`` is a real, directly-fetchable URL from across the web (the app then
+    localizes it; that fetch is egress-gated per host). Same API key as the Tavily web_search
+    provider (``web_search_api_key``)."""
+
+    name = "tavily"
+
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str = "https://api.tavily.com",
+        *,
+        client: httpx.AsyncClient | None = None,
+        timeout: float = 10.0,
+    ) -> None:
+        self._api_key = api_key
+        self._base_url = base_url.rstrip("/")
+        self._client = client
+        self._timeout = timeout
+
+    @property
+    def host(self) -> str:
+        return TAVILY_HOST
+
+    @property
+    def egress_hosts(self) -> tuple[str, ...]:
+        return (TAVILY_HOST,)
+
+    async def search(self, query: str, max_results: int) -> list[dict[str, object]]:
+        client = self._client or httpx.AsyncClient(timeout=self._timeout, follow_redirects=False)
+        try:
+            try:
+                response = await client.post(
+                    f"{self._base_url}/search",
+                    json={
+                        "api_key": self._api_key,
+                        "query": query,
+                        "max_results": max_results,
+                        "include_images": True,
+                        "include_image_descriptions": True,
+                    },
+                )
+            except httpx.HTTPError as exc:
+                raise ImageSearchError(f"image search unreachable / blocked: {exc}") from exc
+            if response.status_code >= 400:
+                raise ImageSearchError(
+                    f"image search returned HTTP {response.status_code} from {self.host}"
+                )
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise ImageSearchError(f"image search returned non-JSON response: {exc}") from exc
+            return _map_tavily_images(payload, query, max_results)
+        finally:
+            if self._client is None:
+                await client.aclose()
+
+
+def _map_tavily_images(payload: object, query: str, max_results: int) -> list[dict[str, object]]:
+    """Map Tavily's ``images`` (either ``[url, ...]`` or ``[{"url","description"}, ...]`` when
+    ``include_image_descriptions``) to the common result shape. Tavily gives no pixel size or source
+    page, so ``width``/``height`` are 0 and ``page_url`` is empty; ``title`` is the description."""
+    images = payload.get("images") if isinstance(payload, dict) else None
+    if not isinstance(images, list):
+        return []
+    mapped: list[dict[str, object]] = []
+    for item in images:
+        if isinstance(item, str):
+            url, title = item, query
+        elif isinstance(item, dict):
+            url = str(item.get("url") or "")
+            title = str(item.get("description") or query)
+        else:
+            continue
+        if not url.startswith(("http://", "https://")):
+            continue
+        mapped.append({"title": title, "image_url": url, "page_url": "", "width": 0, "height": 0})
+    return mapped[:max_results]
+
+
+# --- Fallback composite (try primary, then a broader fallback) ----------------------------------
+
+
+class FallbackImageSearch:
+    """Run a ``primary`` provider first and, only if it returns NO results, a ``fallback`` provider.
+
+    The default deployment uses Wikimedia Commons (free, clean, no key) as primary and Tavily (broad
+    web, keyed) as fallback: notable subjects get a tidy Commons photo, and everyone else (a private
+    company's CEO, a niche product) still gets a real picture from the wider web. ``egress_hosts``
+    unions both backends' hosts so the gateway allows whichever one is actually contacted."""
+
+    def __init__(self, primary: ImageSearchProvider, fallback: ImageSearchProvider) -> None:
+        self._primary = primary
+        self._fallback = fallback
+        self.name = f"{primary.name}+{fallback.name}"
+
+    @property
+    def host(self) -> str:
+        return self._primary.host
+
+    @property
+    def egress_hosts(self) -> tuple[str, ...]:
+        seen = dict.fromkeys([*_egress_hosts(self._primary), *_egress_hosts(self._fallback)])
+        return tuple(seen)
+
+    async def search(self, query: str, max_results: int) -> list[dict[str, object]]:
+        results = await self._primary.search(query, max_results)
+        if results:
+            return results
+        return await self._fallback.search(query, max_results)
+
+
+def _egress_hosts(provider: ImageSearchProvider) -> tuple[str, ...]:
+    """A provider's egress hosts: its ``egress_hosts`` if present, else just its single ``host``."""
+    hosts = getattr(provider, "egress_hosts", None)
+    return tuple(hosts) if hosts else (provider.host,)
+
+
 # --- Manifest ----------------------------------------------------------------------------------
 
 _DESCRIPTION = (
@@ -235,17 +364,20 @@ IMAGE_SEARCH_MANIFEST = ToolManifest(
 )
 
 
-def image_search_manifest(host: str) -> ToolManifest:
-    """Clone :data:`IMAGE_SEARCH_MANIFEST` with the active provider's egress ``host``.
+def image_search_manifest(*hosts: str) -> ToolManifest:
+    """Clone :data:`IMAGE_SEARCH_MANIFEST` with the active provider's egress ``hosts``.
 
     The gateway iterates ``manifest.egress`` and checks each host against the allowlist, so the
-    egress host MUST match the provider actually contacted. The NETWORK permission scope is set to
-    the same host so the grant matches by exact scope.
+    egress hosts MUST match the provider(s) actually contacted — a fallback composite contacts BOTH
+    its primary and fallback backends, so both hosts are listed. One NETWORK permission per host so
+    each grant matches by exact scope. At least one host is required.
     """
+    if not hosts:
+        raise ValueError("image_search_manifest requires at least one egress host")
     return IMAGE_SEARCH_MANIFEST.model_copy(
         update={
-            "permissions": (Permission(type=PermissionType.NETWORK, scope=host),),
-            "egress": (host,),
+            "permissions": tuple(Permission(type=PermissionType.NETWORK, scope=h) for h in hosts),
+            "egress": tuple(hosts),
         }
     )
 
