@@ -14,11 +14,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Detect whether anything other than Markdown changed. The heavy build/test/scan
-  # jobs are gated on this so a docs-only (**/*.md) change skips them. Skipped jobs
-  # report success to branch protection, so required checks still pass and the PR
-  # stays mergeable without disabling the whole workflow (which would leave required
-  # checks stuck "pending" forever).
+  # Detect whether anything other than pure docs/metadata changed. The heavy
+  # build/test/scan jobs are gated on this so a docs- or metadata-only change skips
+  # them. Skipped jobs report success to branch protection, so required checks still
+  # pass and the PR stays mergeable without disabling the whole workflow (which would
+  # leave required checks stuck "pending" forever). `repo-health` stays always-on and
+  # still guards the governance files listed in the ignore set below.
   changes:
     name: Detect changes
     runs-on: ubuntu-latest
@@ -30,14 +31,29 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Filter non-Markdown changes
+      - name: Filter to code (non docs/metadata) changes
         id: filter
         uses: dorny/paths-filter@v3
         with:
-          # 'code' is true when any changed file is NOT a Markdown file.
+          # 'every' => a changed file counts as "code" only when it matches ALL the
+          # rules below, i.e. it is none of the ignored docs/metadata files. So 'code'
+          # is true iff at least one real source/config/asset file changed. Keep this
+          # list conservative: only files that cannot affect a build, test, or scan.
+          # NOT ignored on purpose (they can affect CI): VERSION, *.txt fixtures,
+          # pyproject.toml, lockfiles, package.json/tsconfig, *.yml/*.yaml, Makefile,
+          # .importlinter, .secrets.baseline, .env.example.
+          predicate-quantifier: 'every'
           filters: |
             code:
               - '!**/*.md'
+              - '!**/.gitkeep'
+              - '!**/.gitignore'
+              - '!**/.gitattributes'
+              - '!.editorconfig'
+              - '!.github/CODEOWNERS'
+              - '!LICENSE'
+              - '!NOTICE'
+              - '!docs/**'
 
   repo-health:
     name: Repository health
